@@ -30,18 +30,7 @@ tree-sitter-languages = [
 
 inspector = []
 
-# Opt-in Pulsar Engine integration: blueprint compiler, diagnostics, LSP
-# helpers, graph editor, replication, and multi-window manager.
-# Enable this when using the library inside Pulsar-Native.
-pulsar-engine = [
-    "dep:blueprint_compiler",
-    "dep:pulsar_diagnostics",
-    "dep:pulsar_lsp",
-    "dep:pulsar_graph",
-    "dep:pulsar_replication",
-    "dep:window_manager",
-    "dep:ui_types_common",
-]
+# (no engine feature flags — all engine deps have been removed)
 
 [dependencies]
 gpui-ce.workspace = true
@@ -120,14 +109,6 @@ tree-sitter-typescript         = { version = "0.23",  optional = true }
 tree-sitter-yaml               = { version = "0.7",   optional = true }
 tree-sitter-zig                = { version = "1.1",   optional = true }
 
-# Pulsar Engine integration (all optional, enabled by pulsar-engine feature)
-blueprint_compiler  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-pulsar_diagnostics  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-pulsar_lsp          = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-pulsar_graph        = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-pulsar_replication  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-window_manager      = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
-ui_types_common     = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

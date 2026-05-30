@@ -237,53 +237,36 @@ impl TabPanel {
             ..Default::default()
         };
 
-        #[cfg(feature = "pulsar-engine")]
-        window_manager::WindowManager::update_global(cx, |wm, cx| {
-            wm.create_window(
-                WindowRequest::DetachedPanel,
-                opts.clone(),
-                move |window: &mut gpui::Window, cx: &mut gpui::App| {
-                    let dock = cx.new(|cx| {
-                        DockArea::new_with_channel(
-                            "detached-dock",
-                            Some(1),
-                            source_channel,
-                            window,
-                            cx,
-                        )
-                    });
-                    let weak = dock.downgrade();
-                    let tp = cx.new(|cx| {
-                        let mut t = Self::new(None, weak.clone(), source_channel, window, cx);
-                        t.closable = true;
-                        t
-                    });
-                    tp.update(cx, |t, cx| t.add_panel(panel.clone(), window, cx));
-                    dock.update(cx, |d, cx| {
-                        d.set_center(
-                            DockItem::Tabs {
-                                view: tp.clone(),
-                                active_ix: 0,
-                                items: vec![panel.clone()],
-                            },
-                            window,
-                            cx,
-                        );
-                    });
-                    cx.new(|cx| Root::new(dock.into(), window, cx))
-                },
-                cx,
-            )
-        });
-        #[cfg(not(feature = "pulsar-engine"))]
         let _ = cx.open_window(opts, {
             let panel = panel.clone();
             move |window, cx| {
-                let dock = cx.new(|cx| DockArea::new_with_channel("detached-dock", Some(1), source_channel, window, cx));
+                let dock = cx.new(|cx| {
+                    DockArea::new_with_channel(
+                        "detached-dock",
+                        Some(1),
+                        source_channel,
+                        window,
+                        cx,
+                    )
+                });
                 let weak = dock.downgrade();
-                let tp = cx.new(|cx| { let mut t = Self::new(None, weak.clone(), source_channel, window, cx); t.closable = true; t });
+                let tp = cx.new(|cx| {
+                    let mut t = Self::new(None, weak.clone(), source_channel, window, cx);
+                    t.closable = true;
+                    t
+                });
                 tp.update(cx, |t, cx| t.add_panel(panel.clone(), window, cx));
-                dock.update(cx, |d, cx| d.set_center(DockItem::Tabs { view: tp.clone(), active_ix: 0, items: vec![panel.clone()] }, window, cx));
+                dock.update(cx, |d, cx| {
+                    d.set_center(
+                        DockItem::Tabs {
+                            view: tp.clone(),
+                            active_ix: 0,
+                            items: vec![panel.clone()],
+                        },
+                        window,
+                        cx,
+                    );
+                });
                 cx.new(|cx| Root::new(dock.into(), window, cx))
             }
         });

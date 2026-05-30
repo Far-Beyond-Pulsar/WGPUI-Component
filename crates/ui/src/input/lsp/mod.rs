@@ -7,29 +7,16 @@ use crate::input::{popovers::ContextMenu, GoToDefinition, InputState, RopeExt, T
 mod autocomplete;
 mod code_actions;
 mod completions;
-#[cfg(feature = "pulsar-engine")]
 mod definitions;
-#[cfg(feature = "pulsar-engine")]
 mod hover;
-#[cfg(feature = "pulsar-engine")]
 mod rust_analyzer;
 
 pub use autocomplete::*;
 pub use code_actions::*;
 pub use completions::*;
-#[cfg(feature = "pulsar-engine")]
 pub use definitions::*;
-#[cfg(feature = "pulsar-engine")]
 pub use hover::*;
-#[cfg(feature = "pulsar-engine")]
 pub use rust_analyzer::*;
-
-// When the pulsar-engine feature is disabled we define minimal local stubs so
-// the Lsp struct and LSP module compile without the pulsar_lsp crate.
-#[cfg(not(feature = "pulsar-engine"))]
-pub trait HoverProvider {}
-#[cfg(not(feature = "pulsar-engine"))]
-pub trait DefinitionProvider {}
 
 /// LSP ServerCapabilities
 ///

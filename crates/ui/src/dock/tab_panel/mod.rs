@@ -27,10 +27,6 @@ use super::{
     PanelState, PanelStyle, PanelView, StackPanel, ToggleZoom,
 };
 
-#[cfg(feature = "pulsar-engine")]
-use ui_types_common::window_types::WindowRequest;
-#[cfg(feature = "pulsar-engine")]
-use window_manager;
 
 pub mod drag_drop;
 pub mod render;

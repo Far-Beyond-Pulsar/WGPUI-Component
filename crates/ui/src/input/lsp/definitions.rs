@@ -10,9 +10,19 @@ use crate::{
     ActiveTheme,
 };
 
-// The DefinitionProvider trait lives in pulsar_lsp to avoid circular dependencies.
-#[cfg(feature = "pulsar-engine")]
-pub use pulsar_lsp::traits::DefinitionProvider;
+/// Provider for LSP textDocument/definition requests.
+///
+/// Implement this trait in your language-server integration and pass an
+/// `Rc<dyn DefinitionProvider>` to [`Lsp::definition_provider`].
+pub trait DefinitionProvider {
+    fn definitions(
+        &self,
+        text: &Rope,
+        offset: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Vec<lsp_types::LocationLink>>>;
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct HoverDefinition {

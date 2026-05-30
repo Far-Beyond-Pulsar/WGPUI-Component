@@ -5,9 +5,19 @@ use std::time::Duration;
 
 use crate::input::{popovers::HoverPopover, InputState, RopeExt};
 
-// The HoverProvider trait lives in pulsar_lsp to avoid circular dependencies.
-#[cfg(feature = "pulsar-engine")]
-pub use pulsar_lsp::traits::HoverProvider;
+/// Provider for LSP textDocument/hover requests.
+///
+/// Implement this trait in your language-server integration and pass an
+/// `Rc<dyn HoverProvider>` to [`Lsp::hover_provider`].
+pub trait HoverProvider {
+    fn hover(
+        &self,
+        text: &Rope,
+        offset: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Option<lsp_types::Hover>>>;
+}
 
 impl InputState {
     /// Handle hover trigger LSP request.

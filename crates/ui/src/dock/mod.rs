@@ -15,10 +15,6 @@ use gpui::{
     SharedString, Styled, Subscription, UpdateGlobal, WeakEntity, Window,
 };
 use std::sync::{Arc, OnceLock};
-#[cfg(feature = "pulsar-engine")]
-use ui_types_common::window_types::WindowRequest;
-#[cfg(feature = "pulsar-engine")]
-use window_manager;
 
 pub use dock::*;
 pub use panel::*;
@@ -1175,70 +1171,42 @@ impl DockArea {
             ..Default::default()
         };
 
-        #[cfg(feature = "pulsar-engine")]
-        let _ = window_manager::WindowManager::update_global(cx, |wm, cx| {
-            wm.create_window(
-                WindowRequest::DetachedPanel,
-                window_options.clone(),
-                move |window: &mut gpui::Window, cx: &mut gpui::App| {
-                    tracing::trace!("[DOCK_AREA] Inside window creation callback");
-
-                    // Create a minimal new dock area for this detached window
-                    let new_dock_area =
-                        cx.new(|cx| DockArea::new("detached-dock", Some(1), window, cx));
-                    let weak_new_dock = new_dock_area.downgrade();
-
-                    // Create a tab panel with just the one panel
-                    let new_tab_panel = cx.new(|cx| {
-                        let channel = weak_new_dock
-                            .upgrade()
-                            .map(|d| d.read(cx).channel)
-                            .unwrap_or_default();
-                        let mut tab_panel =
-                            TabPanel::new(None, weak_new_dock.clone(), channel, window, cx);
-                        tab_panel.closable = true;
-                        tab_panel
-                    });
-
-                    new_tab_panel.update(cx, |view: &mut TabPanel, cx: &mut Context<TabPanel>| {
-                        view.add_panel(panel.clone(), window, cx);
-                    });
-
-                    // Set up the dock area with just this panel
-                    new_dock_area.update(cx, |dock: &mut DockArea, cx: &mut Context<DockArea>| {
-                        let dock_item = DockItem::Tabs {
-                            view: new_tab_panel.clone(),
-                            active_ix: 0,
-                            items: vec![panel.clone()],
-                        };
-                        dock.set_center(dock_item, window, cx);
-                    });
-
-                    tracing::trace!("[DOCK_AREA] Popout window created successfully");
-                    let popout_window = cx.new(|cx| {
-                        PopoutDockWindow::new(new_dock_area, panel.clone(), source, window, cx)
-                    });
-                    cx.new(|cx| crate::Root::new(popout_window.into(), window, cx))
-                },
-                cx,
-            )
-        });
-        #[cfg(not(feature = "pulsar-engine"))]
         let _ = cx.open_window(window_options, move |window, cx| {
-            let new_dock_area = cx.new(|cx| DockArea::new("detached-dock", Some(1), window, cx));
+            tracing::trace!("[DOCK_AREA] Inside window creation callback");
+
+            let new_dock_area =
+                cx.new(|cx| DockArea::new("detached-dock", Some(1), window, cx));
             let weak_new_dock = new_dock_area.downgrade();
+
             let new_tab_panel = cx.new(|cx| {
-                let channel = weak_new_dock.upgrade().map(|d| d.read(cx).channel).unwrap_or_default();
-                let mut tab_panel = TabPanel::new(None, weak_new_dock.clone(), channel, window, cx);
+                let channel = weak_new_dock
+                    .upgrade()
+                    .map(|d| d.read(cx).channel)
+                    .unwrap_or_default();
+                let mut tab_panel =
+                    TabPanel::new(None, weak_new_dock.clone(), channel, window, cx);
                 tab_panel.closable = true;
                 tab_panel
             });
-            new_tab_panel.update(cx, |view, cx| view.add_panel(panel.clone(), window, cx));
-            new_dock_area.update(cx, |dock, cx| {
-                dock.set_center(DockItem::Tabs { view: new_tab_panel.clone(), active_ix: 0, items: vec![panel.clone()] }, window, cx);
+
+            new_tab_panel.update(cx, |view: &mut TabPanel, cx: &mut Context<TabPanel>| {
+                view.add_panel(panel.clone(), window, cx);
             });
-            let popout = cx.new(|cx| PopoutDockWindow::new(new_dock_area, panel.clone(), source, window, cx));
-            cx.new(|cx| crate::Root::new(popout.into(), window, cx))
+
+            new_dock_area.update(cx, |dock: &mut DockArea, cx: &mut Context<DockArea>| {
+                let dock_item = DockItem::Tabs {
+                    view: new_tab_panel.clone(),
+                    active_ix: 0,
+                    items: vec![panel.clone()],
+                };
+                dock.set_center(dock_item, window, cx);
+            });
+
+            tracing::trace!("[DOCK_AREA] Popout window created successfully");
+            let popout_window = cx.new(|cx| {
+                PopoutDockWindow::new(new_dock_area, panel.clone(), source, window, cx)
+            });
+            cx.new(|cx| crate::Root::new(popout_window.into(), window, cx))
         });
     }
 }

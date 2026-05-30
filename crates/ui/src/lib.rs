@@ -3,12 +3,8 @@
 // Engine core types (used by UI components)
 pub mod assets;
 
-// Pulsar Engine integration — only available with the `pulsar-engine` feature.
-#[cfg(feature = "pulsar-engine")]
-pub use blueprint_compiler as compiler;
-#[cfg(feature = "pulsar-engine")]
+// Diagnostic, graph, and replication types — always available, no engine deps.
 pub mod diagnostics;
-#[cfg(feature = "pulsar-engine")]
 pub mod graph;
 pub mod settings;
 pub mod themes;
@@ -85,7 +81,6 @@ pub mod plot;
 pub mod popover;
 pub mod progress;
 pub mod radio;
-#[cfg(feature = "pulsar-engine")]
 pub mod replication; // Multi-user editing and state replication
 pub mod resizable;
 pub mod scroll;
@@ -142,9 +137,6 @@ pub use theme::*;
 
 // Re-export engine types for UI crates
 pub use assets::Assets;
-#[cfg(feature = "pulsar-engine")]
-pub use compiler::*;
-#[cfg(feature = "pulsar-engine")]
 pub use graph::*;
 pub use setting::*;
 pub use settings::*;

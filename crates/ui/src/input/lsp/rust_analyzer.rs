@@ -1,6 +1,4 @@
-/// Rust Analyzer integration for LSP-based code completion (Pulsar Engine only)
-#![cfg(feature = "pulsar-engine")]
-/// (this file is only compiled with the `pulsar-engine` feature)
+/// Rust Analyzer integration for LSP-based code completion
 /// Provides intelligent Rust code completion, goto definition, hover info, etc.
 use anyhow::{anyhow, Result};
 use gpui::{Context, Task, Window};

@@ -3,10 +3,6 @@
 //! Provides a trait-based system for composable UI components similar to React
 
 use gpui::*;
-#[cfg(feature = "pulsar-engine")]
-use ui_types_common::window_types::WindowRequest;
-#[cfg(feature = "pulsar-engine")]
-use window_manager;
 
 /// Configuration for spawning a component in a window
 #[derive(Clone, Debug)]
@@ -63,29 +59,9 @@ pub trait Component: Render + Sized + 'static {
             // always_transparent: false,
         };
 
-        #[cfg(feature = "pulsar-engine")]
-        {
-            window_manager::WindowManager::update_global(
-                cx,
-                |wm: &mut window_manager::WindowManager, cx| {
-                    wm.create_window(
-                        WindowRequest::Component,
-                        options,
-                        move |window: &mut gpui::Window, cx: &mut gpui::App| {
-                            cx.new(|cx| Self::new(config.clone(), window, cx))
-                        },
-                        cx,
-                    )
-                },
-            )
-            .map(|_| ())?;
-        }
-        #[cfg(not(feature = "pulsar-engine"))]
-        {
-            cx.open_window(options, move |window, cx| {
-                cx.new(|cx| Self::new(config.clone(), window, cx))
-            })?;
-        }
+        cx.open_window(options, move |window, cx| {
+            cx.new(|cx| Self::new(config.clone(), window, cx))
+        })?;
 
         Ok(())
     }
