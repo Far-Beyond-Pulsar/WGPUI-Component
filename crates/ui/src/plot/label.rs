@@ -89,7 +89,7 @@ impl Label {
             let text_run = TextRun {
                 len: text.len(),
                 font: window.text_style().highlight(*font_weight).font(),
-                color: *color,
+                color: (*color).into(),
                 background_color: None,
                 underline: None,
                 strikethrough: None,

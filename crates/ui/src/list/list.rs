@@ -165,7 +165,7 @@ where
     }
 
     pub fn focus(&mut self, window: &mut Window, cx: &mut App) {
-        self.focus_handle(cx).focus(window);
+        self.focus_handle(cx).focus(window, cx);
     }
 
     /// Set the selected index of the list,

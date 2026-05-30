@@ -5,7 +5,7 @@ use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, Along, App, AppContext as _, Axis, Background,
     Bounds, Context, Corners, DragMoveEvent, Empty, Entity, EntityId, EventEmitter, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
-    Point, Render, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
+    Point, Render, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, TextColor, Window,
 };
 
 #[derive(Clone)]
@@ -294,7 +294,7 @@ impl Slider {
         start_pos: Pixels,
         is_start: bool,
         bar_color: Background,
-        thumb_color: Hsla,
+        _thumb_color: TextColor,
         radius: Corners<Pixels>,
         window: &mut Window,
         cx: &mut App,
@@ -332,7 +332,7 @@ impl Slider {
                     .flex_shrink_0()
                     .size_full()
                     .corner_radii(radius)
-                    .bg(thumb_color),
+                    .bg(gpui::black()),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation();
@@ -399,7 +399,7 @@ impl RenderOnce for Slider {
             .text
             .clone()
             .and_then(|text| text.color)
-            .unwrap_or_else(|| cx.theme().slider_thumb);
+            .unwrap_or_else(|| cx.theme().slider_thumb.into());
         let corner_radii = self.style.corner_radii.clone();
         let default_radius = px(999.);
         let radius = Corners {

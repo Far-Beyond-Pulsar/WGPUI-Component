@@ -614,7 +614,7 @@ impl TextElement {
                 &[TextRun {
                     len: line_number_len,
                     font: style.font(),
-                    color: gpui::black(),
+                    color: gpui::black().into(),
                     background_color: None,
                     underline: None,
                     strikethrough: None,
@@ -941,7 +941,7 @@ impl Element for TextElement {
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),
-            color: text_color,
+            color: text_color.into(),
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -949,7 +949,7 @@ impl Element for TextElement {
         let marked_run = TextRun {
             len: 0,
             font: style.font(),
-            color: text_color,
+            color: text_color.into(),
             background_color: None,
             underline: Some(UnderlineStyle {
                 thickness: px(1.),
@@ -1042,7 +1042,7 @@ impl Element for TextElement {
                     &[TextRun {
                         len: longtest_line.len(),
                         font: style.font(),
-                        color: gpui::black(),
+                        color: gpui::black().into(),
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -1126,7 +1126,7 @@ impl Element for TextElement {
             let other_line_runs = vec![TextRun {
                 len: line_number_len,
                 font: style.font(),
-                color: cx.theme().muted_foreground,
+                color: cx.theme().muted_foreground.into(),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -1134,7 +1134,7 @@ impl Element for TextElement {
             let current_line_runs = vec![TextRun {
                 len: line_number_len,
                 font: style.font(),
-                color: cx.theme().foreground,
+                color: cx.theme().foreground.into(),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -1341,7 +1341,7 @@ impl Element for TextElement {
             let space_run = TextRun {
                 len: 1,
                 font: text_style.font(),
-                color: gpui::black(),
+                color: gpui::black().into(),
                 background_color: None,
                 underline: None,
                 strikethrough: None,

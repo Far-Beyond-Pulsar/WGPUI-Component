@@ -254,7 +254,8 @@ impl SearchPanel {
         cx: &mut Context<Self>,
     ) {
         self.open = true;
-        self.search_input.read(cx).focus_handle.focus(window);
+        let focus_handle = self.search_input.read(cx).focus_handle.clone();
+        focus_handle.focus(window, cx);
 
         self.search_input.update(cx, |this, cx| {
             if selected_text.len() > 0 {
@@ -286,7 +287,8 @@ impl SearchPanel {
 
     pub(super) fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open = false;
-        self.editor.read(cx).focus_handle.focus(window);
+        let focus_handle = self.editor.read(cx).focus_handle.clone();
+        focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -303,7 +305,8 @@ impl SearchPanel {
     }
 
     fn on_action_tab(&mut self, _: &IndentInline, window: &mut Window, cx: &mut Context<Self>) {
-        self.editor.focus_handle(cx).focus(window);
+        let focus_handle = self.editor.focus_handle(cx);
+        focus_handle.focus(window, cx);
     }
 
     fn prev(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -478,9 +481,11 @@ impl Render for SearchPanel {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.replace_mode = !this.replace_mode;
                                 if this.replace_mode {
-                                    this.replace_input.read(cx).focus_handle.focus(window);
+                                    let focus_handle = this.replace_input.read(cx).focus_handle.clone();
+                                    focus_handle.focus(window, cx);
                                 } else {
-                                    this.search_input.read(cx).focus_handle.focus(window);
+                                    let focus_handle = this.search_input.read(cx).focus_handle.clone();
+                                    focus_handle.focus(window, cx);
                                 }
                                 cx.notify();
                             })),

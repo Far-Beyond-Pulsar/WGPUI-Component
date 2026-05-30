@@ -2202,7 +2202,7 @@ dependencies = [
 [[package]]
 name = "gpui-ce"
 version = "1.0.0"
-source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=0b555af11e80565429af9405ffd9d17fa832e3fe#0b555af11e80565429af9405ffd9d17fa832e3fe"
+source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=c7e7728fade741ef5c14f6a646fab9da9bdd797b#c7e7728fade741ef5c14f6a646fab9da9bdd797b"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2218,6 +2218,7 @@ dependencies = [
  "flume",
  "font-kit",
  "futures",
+ "futures-concurrency",
  "gpui-macros",
  "gpui_collections",
  "gpui_http_client",
@@ -2254,6 +2255,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smol",
+ "smol_str 0.3.6",
  "spin 0.10.0",
  "stacksafe",
  "strum",
@@ -5772,6 +5774,10 @@ name = "smol_str"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+dependencies = [
+ "borsh",
+ "serde_core",
+]
 
 [[package]]
 name = "socket2"

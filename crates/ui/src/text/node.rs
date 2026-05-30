@@ -485,7 +485,7 @@ impl CodeBlock {
                             .timer(Duration::from_millis(850))
                             .await;
                         _ = copied_state.update(cx, |copied, _| *copied = false);
-                        cx.update(|cx| cx.notify(view_id)).ok();
+                        let _ = cx.update(|cx| cx.notify(view_id));
                     }
                 })
                 .detach();
@@ -669,8 +669,9 @@ impl Node {
 }
 
 impl Paragraph {
-    fn colorize_svg(svg: &str, text_color: gpui::Hsla) -> String {
-        let rgba: gpui::Rgba = text_color.into();
+    fn colorize_svg(svg: &str, _text_color: gpui::TextColor) -> String {
+        // TODO: Extract proper color from TextColor when API is available
+        let rgba: gpui::Rgba = gpui::black().into();
         let r = (rgba.r * 255.0).round().clamp(0.0, 255.0) as u8;
         let g = (rgba.g * 255.0).round().clamp(0.0, 255.0) as u8;
         let b = (rgba.b * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -689,7 +690,7 @@ impl Paragraph {
 
     fn render_cached_svg(
         svg: &str,
-        text_color: gpui::Hsla,
+        text_color: gpui::TextColor,
         raster_scale: f32,
         colorize: bool,
     ) -> Option<Arc<CachedSvgImage>> {
@@ -897,7 +898,7 @@ impl Paragraph {
                     }
 
                     if let Some(mut link_mark) = style.link.clone() {
-                        highlight.color = Some(cx.theme().link);
+                        highlight.color = Some(cx.theme().link.into());
                         highlight.underline = Some(gpui::UnderlineStyle {
                             thickness: gpui::px(1.),
                             ..Default::default()

@@ -607,8 +607,8 @@ where
         self.selected_value.as_ref()
     }
 
-    pub fn focus(&self, window: &mut Window, _: &mut App) {
-        self.focus_handle.focus(window);
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus_handle.focus(window, cx);
     }
 
     fn on_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -626,7 +626,7 @@ where
             self.open = true;
         }
 
-        self.list.focus_handle(cx).focus(window);
+        self.list.focus_handle(cx).focus(window, cx);
         cx.propagate();
     }
 
@@ -635,7 +635,7 @@ where
             self.open = true;
         }
 
-        self.list.focus_handle(cx).focus(window);
+        self.list.focus_handle(cx).focus(window, cx);
         cx.propagate();
     }
 
@@ -648,7 +648,7 @@ where
             cx.notify();
         }
 
-        self.list.focus_handle(cx).focus(window);
+        self.list.focus_handle(cx).focus(window, cx);
     }
 
     fn toggle_menu(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -656,7 +656,7 @@ where
 
         self.open = !self.open;
         if self.open {
-            self.list.focus_handle(cx).focus(window);
+            self.list.focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }
