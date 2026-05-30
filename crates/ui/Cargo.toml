@@ -1,0 +1,143 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition.workspace = true
+description = "WGPUI Component library — rich UI primitives built on GPUI"
+homepage = "https://github.com/Far-Beyond-Pulsar/WGPUI-Component"
+keywords = ["GPUI", "application", "desktop", "ui"]
+license = "Apache-2.0"
+publish = true
+
+[lib]
+doctest = false
+
+[features]
+default = []
+
+# Enable syntax highlighting support for the code editor.
+tree-sitter-languages = [
+    "dep:tree-sitter-bash",    "dep:tree-sitter-c",         "dep:tree-sitter-c-sharp",
+    "dep:tree-sitter-cmake",   "dep:tree-sitter-cpp",       "dep:tree-sitter-css",
+    "dep:tree-sitter-diff",    "dep:tree-sitter-elixir",    "dep:tree-sitter-embedded-template",
+    "dep:tree-sitter-go",      "dep:tree-sitter-graphql",   "dep:tree-sitter-html",
+    "dep:tree-sitter-java",    "dep:tree-sitter-javascript","dep:tree-sitter-jsdoc",
+    "dep:tree-sitter-make",    "dep:tree-sitter-md",        "dep:tree-sitter-proto",
+    "dep:tree-sitter-python",  "dep:tree-sitter-ruby",      "dep:tree-sitter-rust",
+    "dep:tree-sitter-scala",   "dep:tree-sitter-sequel",    "dep:tree-sitter-swift",
+    "dep:tree-sitter-toml-ng", "dep:tree-sitter-typescript","dep:tree-sitter-yaml",
+    "dep:tree-sitter-zig",
+]
+
+inspector = []
+
+# Opt-in Pulsar Engine integration: blueprint compiler, diagnostics, LSP
+# helpers, graph editor, replication, and multi-window manager.
+# Enable this when using the library inside Pulsar-Native.
+pulsar-engine = [
+    "dep:blueprint_compiler",
+    "dep:pulsar_diagnostics",
+    "dep:pulsar_lsp",
+    "dep:pulsar_graph",
+    "dep:pulsar_replication",
+    "dep:window_manager",
+    "dep:ui_types_common",
+]
+
+[dependencies]
+gpui-ce.workspace = true
+ui-macros.workspace = true
+
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+directories.workspace = true
+image.workspace = true
+lazy_static.workspace = true
+linkme.workspace = true
+lsp-types.workspace = true
+notify.workspace = true
+once_cell.workspace = true
+open.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+resvg.workspace = true
+ropey.workspace = true
+rust-embed.workspace = true
+rust-i18n.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_repr.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+aho-corasick   = "1.1"
+enum-iterator  = "2.3"
+gpui_sum_tree  = "0.2.2"
+html5ever      = "0.39"
+itertools      = "0.14"
+markdown       = "1.0"
+markup5ever_rcdom = "0.39"
+mathjax-svg-rs = "0.4"
+mermaid-rs-renderer = { version = "0.2.2", default-features = false }
+num-traits     = "0.2"
+paste          = "1"
+rust_decimal   = { version = "1.37", optional = true }
+tree-sitter    = "0.26"
+tree-sitter-json = "0.24.8"
+unicode-segmentation = "1.12"
+
+# Tree-sitter language grammars (all optional, enabled by tree-sitter-languages feature)
+tree-sitter-bash               = { version = "0.25",  optional = true }
+tree-sitter-c                  = { version = "0.24",  optional = true }
+tree-sitter-c-sharp            = { version = "0.23",  optional = true }
+tree-sitter-cmake              = { version = "0.7",   optional = true }
+tree-sitter-cpp                = { version = "0.23",  optional = true }
+tree-sitter-css                = { version = "0.25",  optional = true }
+tree-sitter-diff               = { version = "0.1",   optional = true }
+tree-sitter-elixir             = { version = "0.3",   optional = true }
+tree-sitter-embedded-template  = { version = "0.25",  optional = true }
+tree-sitter-go                 = { version = "0.25",  optional = true }
+tree-sitter-graphql            = { version = "0.1",   optional = true }
+tree-sitter-html               = { version = "0.23",  optional = true }
+tree-sitter-java               = { version = "0.23",  optional = true }
+tree-sitter-javascript         = { version = "0.25",  optional = true }
+tree-sitter-jsdoc              = { version = "0.25",  optional = true }
+tree-sitter-make               = { version = "1.1",   optional = true }
+tree-sitter-md                 = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", tag = "v0.5.3", optional = true }
+tree-sitter-proto              = { version = "0.4",   optional = true }
+tree-sitter-python             = { version = "0.25",  optional = true }
+tree-sitter-ruby               = { version = "0.23",  optional = true }
+tree-sitter-rust               = { version = "0.24",  optional = true }
+tree-sitter-scala              = { version = "0.26",  optional = true }
+tree-sitter-sequel             = { version = "0.3",   optional = true }
+tree-sitter-swift              = { version = "0.7",   optional = true }
+tree-sitter-toml-ng            = { version = "0.7",   optional = true }
+tree-sitter-typescript         = { version = "0.23",  optional = true }
+tree-sitter-yaml               = { version = "0.7",   optional = true }
+tree-sitter-zig                = { version = "1.1",   optional = true }
+
+# Pulsar Engine integration (all optional, enabled by pulsar-engine feature)
+blueprint_compiler  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+pulsar_diagnostics  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+pulsar_lsp          = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+pulsar_graph        = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+pulsar_replication  = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+window_manager      = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+ui_types_common     = { git = "https://github.com/Far-Beyond-Pulsar/Pulsar-Native", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",       "Win32_Graphics_Dxgi_Common",
+    "Win32_Foundation",
+] }
+
+[dev-dependencies]
+indoc = "=2.0.7"
+
+[lints]
+workspace = true

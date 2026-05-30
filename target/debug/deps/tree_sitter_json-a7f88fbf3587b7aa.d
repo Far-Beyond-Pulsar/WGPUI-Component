@@ -1,0 +1,7 @@
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/tree_sitter_json-a7f88fbf3587b7aa.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../src/node-types.json /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../queries/highlights.scm
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libtree_sitter_json-a7f88fbf3587b7aa.rmeta: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../src/node-types.json /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../queries/highlights.scm
+
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/lib.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../src/node-types.json:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tree-sitter-json-0.24.8/bindings/rust/../../queries/highlights.scm:

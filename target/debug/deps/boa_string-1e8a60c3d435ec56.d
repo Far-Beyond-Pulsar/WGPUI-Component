@@ -1,0 +1,10 @@
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/boa_string-1e8a60c3d435ec56.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/builder.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/common.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/display.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/iter.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/str.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libboa_string-1e8a60c3d435ec56.rmeta: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/builder.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/common.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/display.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/iter.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/str.rs
+
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/lib.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/builder.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/common.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/display.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/iter.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/boa_string-0.21.1/src/str.rs:

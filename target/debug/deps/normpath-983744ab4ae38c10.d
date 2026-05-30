@@ -1,0 +1,11 @@
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/normpath-983744ab4ae38c10.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/base.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/cmp.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/error.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/common/mod.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libnormpath-983744ab4ae38c10.rlib: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/base.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/cmp.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/error.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/common/mod.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libnormpath-983744ab4ae38c10.rmeta: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/base.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/cmp.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/error.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/common/mod.rs
+
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/lib.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/base.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/cmp.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/error.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/normpath-1.5.1/src/common/mod.rs:

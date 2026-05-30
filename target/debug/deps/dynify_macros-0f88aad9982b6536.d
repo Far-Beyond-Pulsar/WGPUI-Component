@@ -1,0 +1,9 @@
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/dynify_macros-0f88aad9982b6536.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/utils.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/dynify.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lifetime.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/receiver.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libdynify_macros-0f88aad9982b6536.dylib: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/utils.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/dynify.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lifetime.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/receiver.rs
+
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lib.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/utils.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/dynify.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/lifetime.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dynify-macros-0.1.2/src/receiver.rs:

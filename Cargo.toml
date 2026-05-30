@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ui",
+    "crates/ui-macros",
+]
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+gpui-ce = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI", rev = "0b555af11e80565429af9405ffd9d17fa832e3fe" }
+ui-macros = { path = "crates/ui-macros" }
+
+anyhow        = "1"
+base64        = "0.22"
+chrono        = { version = "0.4", features = ["serde"] }
+directories   = "5"
+image         = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+lazy_static   = "1"
+linkme        = "0.3"
+lsp-types     = "0.97"
+notify        = "6"
+once_cell     = "1"
+open          = "5"
+parking_lot   = "0.12"
+proc-macro2   = "1"
+quote         = "1"
+regex         = "1"
+resvg         = "0.47"
+ropey         = { version = "=2.0.0-beta.1", features = ["metric_utf16", "metric_lines_lf"] }
+rust-embed    = { version = "8", features = ["interpolate-folder-path", "include-exclude"] }
+rust-i18n     = "3"
+schemars      = "1.2.0"
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+serde_repr    = "0.1"
+smallvec      = "1"
+smol          = "2"
+syn           = { version = "2", features = ["full"] }
+toml          = "0.8"
+tracing       = "0.1"
+uuid          = { version = "1", features = ["v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "warn"

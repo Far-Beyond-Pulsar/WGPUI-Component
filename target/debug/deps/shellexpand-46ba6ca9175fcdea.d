@@ -1,0 +1,10 @@
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/shellexpand-46ba6ca9175fcdea.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/strings.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/wtraits.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/funcs.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libshellexpand-46ba6ca9175fcdea.rlib: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/strings.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/wtraits.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/funcs.rs
+
+/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libshellexpand-46ba6ca9175fcdea.rmeta: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/lib.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/strings.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/wtraits.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/funcs.rs
+
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/lib.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/strings.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/wtraits.rs:
+/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/shellexpand-3.1.2/src/funcs.rs:
