@@ -1,8 +1,0 @@
-/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/gpui_http_client-7039796d22add1e9.d: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/http_client.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/async_body.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github_download.rs
-
-/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/deps/libgpui_http_client-7039796d22add1e9.rmeta: /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/http_client.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/async_body.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github.rs /Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github_download.rs
-
-/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/http_client.rs:
-/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/async_body.rs:
-/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github.rs:
-/Users/tristanpoland/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gpui_http_client-0.2.2/src/github_download.rs:

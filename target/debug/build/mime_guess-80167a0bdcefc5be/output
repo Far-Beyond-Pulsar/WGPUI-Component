@@ -1,1 +1,0 @@
-cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/Users/tristanpoland/Documents/GitHub/WGPUI-Component/target/debug/build/mime_guess-80167a0bdcefc5be/out/mime_types_generated.rs
