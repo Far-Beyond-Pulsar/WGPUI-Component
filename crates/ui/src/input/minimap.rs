@@ -424,7 +424,10 @@ fn compute_line_spans(
             .map(|(r, style)| {
                 let start = r.start.saturating_sub(byte_start);
                 let end = r.end.saturating_sub(byte_start).min(line_len);
-                let color: Hsla = style.color.as_ref().map(|_c| default_fg).unwrap_or(default_fg);
+                let color = style
+                    .color
+                    .map(|color| color.to_hsla())
+                    .unwrap_or(default_fg);
                 (start..end, color)
             })
             .collect()
