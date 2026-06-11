@@ -9,8 +9,8 @@ use crate::{
 use gpui::{
     div, prelude::FluentBuilder as _, px, relative, Action, AnyElement, App, ClickEvent, Context,
     Corner, Corners, Div, Edges, ElementId, Hsla, InteractiveElement, Interactivity, IntoElement,
-    ParentElement, Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window,
+    ParentElement, Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window
 };
 use std::rc::Rc;
 
@@ -211,6 +211,8 @@ pub struct Button {
 
     tab_index: isize,
     tab_stop: bool,
+    has_custom_hover: bool,
+    has_custom_active: bool,
 }
 
 impl From<Button> for AnyElement {
@@ -249,6 +251,8 @@ impl Button {
             dropdown_caret: false,
             tab_index: 0,
             tab_stop: true,
+            has_custom_hover: false,
+            has_custom_active: false,
         }
     }
 
@@ -418,6 +422,24 @@ impl InteractiveElement for Button {
     fn interactivity(&mut self) -> &mut Interactivity {
         self.base.interactivity()
     }
+    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        self.has_custom_hover = true;
+        self.base = self.base.hover(f);
+        self
+    }
+}
+
+impl StatefulInteractiveElement for Button {
+    fn focusable(mut self) -> Self {
+        self.base = self.base.focusable();
+        self
+    }
+
+    fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self {
+        self.has_custom_active = true;
+        self.base = self.base.active(f);
+        self
+    }
 }
 
 impl RenderOnce for Button {
@@ -512,17 +534,21 @@ impl RenderOnce for Button {
                 this.border_color(normal_style.border)
                     .bg(normal_style.bg)
                     .when(normal_style.underline, |this| this.text_decoration_1())
-                    .hover(|this| {
-                        let hover_style = style.hovered(self.outline, cx);
-                        this.bg(hover_style.bg)
-                            .border_color(hover_style.border)
-                            .text_color(hover_style.fg)
+                    .when(!self.has_custom_hover, |this| {
+                        this.hover(|this| {
+                            let hover_style = style.hovered(self.outline, cx);
+                            this.bg(hover_style.bg)
+                                .border_color(hover_style.border)
+                                .text_color(hover_style.fg)
+                        })
                     })
-                    .active(|this| {
-                        let active_style = style.active(self.outline, cx);
-                        this.bg(active_style.bg)
-                            .border_color(active_style.border)
-                            .text_color(active_style.fg)
+                    .when(!self.has_custom_active, |this| {
+                        this.active(|this| {
+                            let active_style = style.active(self.outline, cx);
+                            this.bg(active_style.bg)
+                                .border_color(active_style.border)
+                                .text_color(active_style.fg)
+                        })
                     })
             })
             .when(self.disabled, |this| {
