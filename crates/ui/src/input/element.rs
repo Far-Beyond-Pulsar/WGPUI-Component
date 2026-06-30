@@ -618,6 +618,7 @@ impl TextElement {
                     background_color: None,
                     underline: None,
                     strikethrough: None,
+                    letter_spacing: None,
                 }],
                 None,
             );
@@ -945,6 +946,7 @@ impl Element for TextElement {
             background_color: None,
             underline: None,
             strikethrough: None,
+            letter_spacing: None,
         };
         let marked_run = TextRun {
             len: 0,
@@ -957,6 +959,7 @@ impl Element for TextElement {
                 wavy: false,
             }),
             strikethrough: None,
+            letter_spacing: None,
         };
 
         let runs = if !is_empty {
@@ -1046,6 +1049,7 @@ impl Element for TextElement {
                         background_color: None,
                         underline: None,
                         strikethrough: None,
+                        letter_spacing: None,
                     }],
                     wrap_width,
                 )
@@ -1130,6 +1134,7 @@ impl Element for TextElement {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                letter_spacing: None,
             }];
             let current_line_runs = vec![TextRun {
                 len: line_number_len,
@@ -1138,6 +1143,7 @@ impl Element for TextElement {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                letter_spacing: None,
             }];
 
             // build line numbers
@@ -1345,6 +1351,7 @@ impl Element for TextElement {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                letter_spacing: None,
             };
             let shaped_space =
                 window
@@ -1571,8 +1578,9 @@ mod tests {
             background_color: None,
             underline: None,
             strikethrough: None,
+            letter_spacing: None,
         };
-
+        
         // use hello this-is-test
         let runs = vec![
             // use

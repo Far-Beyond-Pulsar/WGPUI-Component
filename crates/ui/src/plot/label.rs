@@ -93,6 +93,7 @@ impl Label {
                 background_color: None,
                 underline: None,
                 strikethrough: None,
+                letter_spacing: None,
             };
 
             if let Ok(text) =

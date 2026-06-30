@@ -59,6 +59,7 @@ pub(super) struct TextWrapper {
     pub(super) longest_row: LongestRow,
     /// The lines by split \n
     pub(super) lines: Vec<LineItem>,
+    letter_spacing: Option<f32>,
 }
 
 #[allow(unused)]
@@ -72,6 +73,7 @@ impl TextWrapper {
             soft_lines: 0,
             longest_row: LongestRow::default(),
             lines: Vec::new(),
+            letter_spacing: None,
         }
     }
 
@@ -129,7 +131,7 @@ impl TextWrapper {
     ) {
         let mut line_wrapper = cx
             .text_system()
-            .line_wrapper(self.font.clone(), self.font_size);
+            .line_wrapper(self.font.clone(), self.font_size, self.letter_spacing);
         self._update(
             changed_text,
             range,
