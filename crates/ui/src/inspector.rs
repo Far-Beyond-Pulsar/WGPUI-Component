@@ -1,9 +1,9 @@
-use std::{cell::OnceCell, collections::HashMap, fmt::Write as _, rc::Rc, sync::OnceLock};
+use std::{cell::OnceCell, collections::HashMap, fmt::Write as _, ops::Range, rc::Rc, sync::OnceLock};
 
 use anyhow::Result;
 use gpui::{
-    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, AnyElement,
-    App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
+    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, size,
+    AnyElement, App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
     InspectorEventListener, InspectorLayoutInfo, InspectorTab, InspectorTreeNode,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Refineable as _, Render,
     SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, Window,
@@ -22,9 +22,8 @@ use crate::{
     h_flex,
     input::{CompletionProvider, InputEvent, InputState, RopeExt, TabSize, TextInput},
     link::Link,
-    render_tree_folder, render_tree_item,
     tab::{Tab, TabBar},
-    v_flex, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
+    v_flex, v_virtual_list, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
 };
 
 actions!(inspector, [ToggleInspector]);
@@ -415,8 +414,7 @@ impl Render for DivInspector {
                 )
                 .child(
                     v_flex()
-                        .flex_1()
-                        .h_2_5()
+                        .h(px(140.))
                         .gap_y_3()
                         .child(
                             h_flex()
@@ -435,7 +433,7 @@ impl Render for DivInspector {
                                 .gap_y_1()
                                 .font_family("JetBrainsMono-Regular")
                                 .text_size(px(12.))
-                                .child(TextInput::new(&self.rust_state.state).h_full())
+                                .child(TextInput::new(&self.rust_state.state).h(px(100.)))
                                 .when_some(self.rust_state.error.clone(), |this, err| {
                                     this.child(Alert::error("rust-error", err).text_xs())
                                 }),
@@ -443,9 +441,8 @@ impl Render for DivInspector {
                 )
                 .child(
                     v_flex()
-                        .flex_1()
+                        .h(px(140.))
                         .gap_y_3()
-                        .h_2_5()
                         .flex_shrink_0()
                         .child(
                             h_flex()
@@ -463,7 +460,7 @@ impl Render for DivInspector {
                                 .gap_y_1()
                                 .font_family("JetBrainsMono-Regular")
                                 .text_size(px(12.))
-                                .child(TextInput::new(&self.json_state.state).h_full())
+                                .child(TextInput::new(&self.json_state.state).h(px(100.)))
                                 .when_some(self.json_state.error.clone(), |this, err| {
                                     this.child(Alert::error("json-error", err).text_xs())
                                 }),
@@ -599,93 +596,141 @@ fn render_elements_tab(
             .into_any_element();
     }
 
-    let selected_id = inspector.active_element_id().cloned();
+    let mut rows: Vec<FlattenedRow> = Vec::new();
+    flatten_rows(&tree, 0, inspector, &mut rows);
 
-    v_flex()
-        .py(px(2.))
-        .children(render_tree_nodes(&tree, 0, &selected_id, inspector, cx))
-        .into_any_element()
+    let item_count = rows.len();
+    let uniform_size = size(px(0.), px(22.));
+    let item_sizes = Rc::new(vec![uniform_size; item_count]);
+
+    let row_data: Vec<FlattenedRow> = rows;
+    let row_data_rc = Rc::new(row_data);
+
+    let entity = cx.entity().clone();
+    let entity_for_list = entity.clone();
+
+    crate::v_virtual_list(
+        entity_for_list,
+        "inspector-element-tree",
+        item_sizes,
+        {
+            let rows = row_data_rc;
+            let entity = entity.clone();
+            move |_inspector: &mut Inspector, range: Range<usize>, window: &mut Window, cx: &mut Context<Inspector>| {
+                let accent = cx.theme().accent;
+                range.map(|i| {
+                    let row = &rows[i];
+                    let indent = row.depth * 14;
+
+                    let mut el = div()
+                        .id(SharedString::from(format!("tree-{}", i)))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(22.))
+                        .pl(px(indent as f32))
+                        .cursor_pointer()
+                        .rounded_sm()
+                        .text_xs()
+                        .hover(|s| s.bg(cx.theme().list_hover))
+                        .when(row.is_selected, |s| s.bg(cx.theme().list_active));
+
+                    if row.has_children {
+                        let entity = entity.clone();
+                        let nid = row.node_id.clone();
+                        el = el.child(
+                            div()
+                                .w(px(14.))
+                                .text_color(accent)
+                                .child(if row.is_expanded { "▼" } else { "▶" })
+                                .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
+                                    if let Some(ref id) = nid {
+                                        entity.update(cx, |i, cx| {
+                                            i.toggle_collapsed(id.clone());
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        );
+                    } else {
+                        el = el.child(div().w(px(14.)));
+                    }
+
+                    el = el.child(div().text_color(accent).child(row.element_type.clone()));
+                    if !row.display_label.is_empty() {
+                        el = el.child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .ml(px(4.))
+                                .child(row.display_label.clone()),
+                        );
+                    }
+
+                    if row.node_id.is_some() {
+                        let entity = entity.clone();
+                        let nid = row.node_id.clone();
+                        let has_ch = row.has_children;
+                        el = el.on_click(move |_, window, cx| {
+                            let entity = entity.clone();
+                            let nid = nid.clone();
+                            entity.update(cx, |i, cx| {
+                                if i.active_element_id() == nid.as_ref() && has_ch {
+                                    if let Some(ref id) = nid {
+                                        i.toggle_collapsed(id.clone());
+                                    }
+                                } else {
+                                    if let Some(ref id) = nid {
+                                        i.set_active_element_id(id.clone(), window);
+                                    }
+                                }
+                                cx.notify();
+                            });
+                        });
+                    }
+
+                    el.into_any_element()
+                }).collect::<Vec<_>>()
+            }
+        },
+    ).into_any_element()
 }
 
-fn render_tree_nodes(
+struct FlattenedRow {
+    depth: usize,
+    has_children: bool,
+    is_expanded: bool,
+    is_selected: bool,
+    node_id: Option<InspectorElementId>,
+    element_type: SharedString,
+    display_label: SharedString,
+}
+
+fn flatten_rows(
     nodes: &[InspectorTreeNode],
     depth: usize,
-    selected_id: &Option<InspectorElementId>,
     inspector: &mut Inspector,
-    cx: &mut Context<Inspector>,
-) -> Vec<AnyElement> {
-    let mut elements = Vec::new();
-
-    for (i, node) in nodes.iter().enumerate() {
-        let is_selected = node.is_selected;
-        let has_children = !node.children.is_empty();
+    out: &mut Vec<FlattenedRow>,
+) {
+    for node in nodes {
         let is_collapsed = node
             .inspector_id
             .as_ref()
             .map_or(false, |id| inspector.is_collapsed(id));
-        let has_id = node.inspector_id.is_some();
 
-        let id = format!("node-{}-{}", depth, i);
+        out.push(FlattenedRow {
+            depth,
+            has_children: !node.children.is_empty(),
+            is_expanded: !is_collapsed,
+            is_selected: node.is_selected,
+            node_id: node.inspector_id.clone(),
+            element_type: node.element_type.clone(),
+            display_label: node.display_label.clone(),
+        });
 
-        if has_children {
-            elements.push(
-                render_tree_folder::<Inspector>(
-                    &id,
-                    &node.element_type,
-                    IconName::ChevronRight,
-                    cx.theme().accent,
-                    depth,
-                    !is_collapsed,
-                    {
-                        let node_id = node.inspector_id.clone();
-                        move |this, _, window, cx| {
-                            if let Some(ref id) = node_id {
-                                if this.active_element_id() == Some(id) {
-                                    this.toggle_collapsed(id.clone());
-                                } else {
-                                    this.set_active_element_id(id.clone(), window);
-                                }
-                                cx.notify();
-                            }
-                        }
-                    },
-                    cx,
-                ),
-            );
-        } else if has_id {
-            elements.push(
-                render_tree_item::<Inspector>(
-                    &id,
-                    &node.element_type,
-                    cx.theme().accent,
-                    depth,
-                    is_selected,
-                    {
-                        let node_id = node.inspector_id.clone();
-                        move |this, _, window, cx| {
-                            if let Some(ref id) = node_id {
-                                this.set_active_element_id(id.clone(), window);
-                                cx.notify();
-                            }
-                        }
-                    },
-                    cx,
-                ),
-            );
-        }
-
-        if has_children && !is_collapsed {
-            elements.extend(render_tree_nodes(
-                &node.children,
-                depth + 1,
-                selected_id,
-                inspector,
-                cx,
-            ));
+        if !is_collapsed && !node.children.is_empty() {
+            flatten_rows(&node.children, depth + 1, inspector, out);
         }
     }
-
-    elements
 }
 
 // ── Styles tab ─────────────────────────────────────────────────────────────

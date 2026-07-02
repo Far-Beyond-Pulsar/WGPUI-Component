@@ -14,7 +14,7 @@
 
 use gpui::*;
 use ui::button::{Button, ButtonVariants as _};
-use ui::ActiveTheme;
+use ui::{ActiveTheme, Root};
 
 struct DemoView;
 
@@ -297,7 +297,10 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_cx| DemoView),
+            |window, cx| {
+                let view = cx.new(|_cx| DemoView);
+                cx.new(|cx| Root::new(view.into(), window, cx))
+            },
         )
         .unwrap();
 
