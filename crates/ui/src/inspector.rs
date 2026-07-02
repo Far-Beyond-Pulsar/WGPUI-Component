@@ -576,7 +576,11 @@ fn render_tab_content(
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
     };
 
-    div().flex_1().overflow_y_scroll().child(content).into_any_element()
+    if tab == InspectorTab::Elements {
+        content
+    } else {
+        div().flex_1().overflow_y_scroll().child(content).into_any_element()
+    }
 }
 
 // ── Elements tab ───────────────────────────────────────────────────────────
@@ -617,7 +621,8 @@ fn render_elements_tab(
             let rows = row_data_rc;
             let entity = entity.clone();
             move |_inspector: &mut Inspector, range: Range<usize>, window: &mut Window, cx: &mut Context<Inspector>| {
-                let accent = cx.theme().accent;
+                let fg = cx.theme().foreground;
+                let muted = cx.theme().muted_foreground;
                 range.map(|i| {
                     let row = &rows[i];
                     let indent = row.depth * 14;
@@ -641,7 +646,7 @@ fn render_elements_tab(
                         el = el.child(
                             div()
                                 .w(px(14.))
-                                .text_color(accent)
+                                .text_color(muted)
                                 .child(if row.is_expanded { "▼" } else { "▶" })
                                 .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
                                     if let Some(ref id) = nid {
@@ -656,7 +661,7 @@ fn render_elements_tab(
                         el = el.child(div().w(px(14.)));
                     }
 
-                    el = el.child(div().text_color(accent).child(row.element_type.clone()));
+                    el = el.child(div().text_color(fg).child(row.element_type.clone()));
                     if !row.display_label.is_empty() {
                         el = el.child(
                             div()
