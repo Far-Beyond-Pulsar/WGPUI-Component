@@ -2,7 +2,7 @@ use std::{cell::OnceCell, collections::HashMap, fmt::Write as _, ops::Range, rc:
 
 use anyhow::Result;
 use gpui::{
-    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, size,
+    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, uniform_list,
     AnyElement, App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
     InspectorEventListener, InspectorLayoutInfo, InspectorTab, InspectorTreeNode,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Refineable as _, Render,
@@ -23,7 +23,7 @@ use crate::{
     input::{CompletionProvider, InputEvent, InputState, RopeExt, TabSize, TextInput},
     link::Link,
     tab::{Tab, TabBar},
-    v_flex, v_virtual_list, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
+    v_flex, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
 };
 
 actions!(inspector, [ToggleInspector]);
@@ -577,13 +577,11 @@ fn render_tab_content(
     };
 
     if tab == InspectorTab::Elements {
-        content
+        div().flex_1().child(content).into_any_element()
     } else {
         div().flex_1().overflow_y_scroll().child(content).into_any_element()
     }
 }
-
-// ── Elements tab ───────────────────────────────────────────────────────────
 
 fn render_elements_tab(
     inspector: &mut Inspector,
@@ -602,102 +600,91 @@ fn render_elements_tab(
 
     let mut rows: Vec<FlattenedRow> = Vec::new();
     flatten_rows(&tree, 0, inspector, &mut rows);
-
     let item_count = rows.len();
-    let uniform_size = size(px(0.), px(22.));
-    let item_sizes = Rc::new(vec![uniform_size; item_count]);
-
-    let row_data: Vec<FlattenedRow> = rows;
-    let row_data_rc = Rc::new(row_data);
 
     let entity = cx.entity().clone();
-    let entity_for_list = entity.clone();
+    let rows_rc = Rc::new(rows);
 
-    crate::v_virtual_list(
-        entity_for_list,
-        "inspector-element-tree",
-        item_sizes,
-        {
-            let rows = row_data_rc;
-            let entity = entity.clone();
-            move |_inspector: &mut Inspector, range: Range<usize>, window: &mut Window, cx: &mut Context<Inspector>| {
-                let fg = cx.theme().foreground;
-                let muted = cx.theme().muted_foreground;
-                range.map(|i| {
-                    let row = &rows[i];
-                    let indent = row.depth * 14;
+    uniform_list("inspector-tree", item_count, {
+        let rows = rows_rc;
+        let entity = entity.clone();
+        move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
+            range.map(|i| {
+                let row = &rows[i];
+                let indent = row.depth * 14;
+                let entity = entity.clone();
+                let mut el = div()
+                    .id(SharedString::from(format!("tree-{}", i)))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .h(px(22.))
+                    .pl(px(indent as f32))
+                    .cursor_pointer()
+                    .rounded_sm()
+                    .text_xs()
+                    .when(row.is_selected, |s| s.bg(gpui::rgba(0x00000033)));
 
-                    let mut el = div()
-                        .id(SharedString::from(format!("tree-{}", i)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .h(px(22.))
-                        .pl(px(indent as f32))
-                        .cursor_pointer()
-                        .rounded_sm()
-                        .text_xs()
-                        .hover(|s| s.bg(cx.theme().list_hover))
-                        .when(row.is_selected, |s| s.bg(cx.theme().list_active));
-
-                    if row.has_children {
-                        let entity = entity.clone();
-                        let nid = row.node_id.clone();
-                        el = el.child(
-                            div()
-                                .w(px(14.))
-                                .text_color(muted)
-                                .child(if row.is_expanded { "▼" } else { "▶" })
-                                .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
-                                    if let Some(ref id) = nid {
-                                        entity.update(cx, |i, cx| {
-                                            i.toggle_collapsed(id.clone());
-                                            cx.notify();
-                                        });
-                                    }
-                                }),
-                        );
-                    } else {
-                        el = el.child(div().w(px(14.)));
-                    }
-
-                    el = el.child(div().text_color(fg).child(row.element_type.clone()));
-                    if !row.display_label.is_empty() {
-                        el = el.child(
-                            div()
-                                .text_color(cx.theme().muted_foreground)
-                                .ml(px(4.))
-                                .child(row.display_label.clone()),
-                        );
-                    }
-
-                    if row.node_id.is_some() {
-                        let entity = entity.clone();
-                        let nid = row.node_id.clone();
-                        let has_ch = row.has_children;
-                        el = el.on_click(move |_, window, cx| {
-                            let entity = entity.clone();
-                            let nid = nid.clone();
-                            entity.update(cx, |i, cx| {
-                                if i.active_element_id() == nid.as_ref() && has_ch {
-                                    if let Some(ref id) = nid {
+                if row.has_children {
+                    let entity_for_toggle = entity.clone();
+                    let nid = row.node_id.clone();
+                    el = el.child(
+                        div()
+                            .w(px(14.))
+                            .text_color(gpui::rgba(0x888888ff))
+                            .child(if row.is_expanded { "▼" } else { "▶" })
+                            .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
+                                if let Some(ref id) = nid {
+                                    entity_for_toggle.update(cx, |i, cx| {
                                         i.toggle_collapsed(id.clone());
-                                    }
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    );
+                } else {
+                    el = el.child(div().w(px(14.)));
+                }
+
+                el = el.child(
+                    div()
+                        .text_color(gpui::rgba(0x8888ffff))
+                        .child(row.element_type.clone()),
+                );
+                if !row.display_label.is_empty() {
+                    el = el.child(
+                        div()
+                            .text_color(gpui::rgba(0x888888ff))
+                            .ml(px(4.))
+                            .child(row.display_label.clone()),
+                    );
+                }
+
+                if row.node_id.is_some() {
+                    let entity_for_click = entity.clone();
+                    let nid = row.node_id.clone();
+                    let has_ch = row.has_children;
+                    el = el.on_click(move |_, window, cx| {
+                        if let Some(ref id) = nid {
+                            entity_for_click.update(cx, |i, cx| {
+                                if i.active_element_id() == Some(id) && has_ch {
+                                    i.toggle_collapsed(id.clone());
                                 } else {
-                                    if let Some(ref id) = nid {
-                                        i.set_active_element_id(id.clone(), window);
-                                    }
+                                    i.set_active_element_id(id.clone(), window);
                                 }
                                 cx.notify();
                             });
-                        });
-                    }
+                        }
+                    });
+                }
 
-                    el.into_any_element()
-                }).collect::<Vec<_>>()
-            }
-        },
-    ).into_any_element()
+                el.into_any_element()
+            }).collect::<Vec<_>>()
+        }
+    })
+    .w_full()
+    .h_full()
+    .into_any_element()
 }
 
 struct FlattenedRow {
