@@ -22,6 +22,8 @@ use crate::{
     h_flex,
     input::{CompletionProvider, InputEvent, InputState, RopeExt, TabSize, TextInput},
     link::Link,
+    render_tree_folder, render_tree_item,
+    tab::{Tab, TabBar},
     v_flex, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
 };
 
@@ -545,42 +547,22 @@ fn render_inspector_tabs(
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
     let active = inspector.active_tab();
+    let tabs = InspectorTab::all();
+    let active_idx = tabs.iter().position(|t| *t == active).unwrap_or(0);
 
-    h_flex()
-        .w_full()
-        .border_b_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().background)
-        .children(InspectorTab::all().iter().map(|tab| {
-            let is_active = *tab == active;
-            let label = tab.label();
-            div()
-                .px(px(8.))
-                .py(px(4.))
-                .text_xs()
-                .cursor_pointer()
-                .text_color(if is_active {
-                    cx.theme().accent
-                } else {
-                    cx.theme().muted_foreground
-                })
-                .border_b_2()
-                .border_color(if is_active {
-                    cx.theme().accent
-                } else {
-                    cx.theme().background
-                })
-                .hover(|style| style.bg(cx.theme().list_hover))
-                .on_click({
-                    let tab = *tab;
-                    cx.listener(move |this, _, _, cx| {
-                        this.set_tab(tab);
-                        cx.notify();
-                    })
-                })
-                .child(label)
-                .into_any_element()
-        }))
+    TabBar::new("inspector-tabs")
+        .underline()
+        .selected_index(active_idx)
+        .on_click({
+            let entity = cx.entity().clone();
+            move |idx, _, cx: &mut App| {
+                entity.update(cx, |inspector, cx| {
+                    inspector.set_tab(tabs[*idx]);
+                    cx.notify();
+                });
+            }
+        })
+        .children(tabs.iter().map(|tab| Tab::new(tab.label())))
         .into_any_element()
 }
 
@@ -590,12 +572,14 @@ fn render_tab_content(
     window: &mut Window,
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
-    match tab {
+    let content = match tab {
         InspectorTab::Elements => render_elements_tab(inspector, window, cx),
         InspectorTab::Styles => render_styles_tab(inspector, window, cx),
         InspectorTab::Layout => render_layout_tab(inspector, window, cx),
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
-    }
+    };
+
+    div().flex_1().overflow_y_scroll().child(content).into_any_element()
 }
 
 // ── Elements tab ───────────────────────────────────────────────────────────
@@ -632,69 +616,63 @@ fn render_tree_nodes(
 ) -> Vec<AnyElement> {
     let mut elements = Vec::new();
 
-    for node in nodes {
-        let indent = depth * 14;
+    for (i, node) in nodes.iter().enumerate() {
         let is_selected = node.is_selected;
+        let has_children = !node.children.is_empty();
         let is_collapsed = node
             .inspector_id
             .as_ref()
             .map_or(false, |id| inspector.is_collapsed(id));
-        let has_children = !node.children.is_empty();
-        let node_id = node.inspector_id.clone();
+        let has_id = node.inspector_id.is_some();
 
-        let row = h_flex()
-            .items_center()
-            .px(px(4.))
-            .py(px(2.))
-            .pl(px(indent as f32))
-            .cursor_pointer()
-            .rounded_sm()
-            .text_xs()
-            .hover(|style| style.bg(cx.theme().list_hover))
-            .when(is_selected, |this| {
-                this.bg(cx.theme().list_active)
-                    .text_color(cx.theme().accent_foreground)
-            })
-            .child(
-                div()
-                    .w(px(12.))
-                    .text_color(if has_children {
-                        cx.theme().foreground
-                    } else {
-                        cx.theme().background
-                    })
-                    .child(if has_children {
-                        SharedString::from(if is_collapsed { "▶" } else { "▼" })
-                    } else {
-                        SharedString::from(" ")
-                    }),
-            )
-            .child(div().text_color(cx.theme().accent).child(node.element_type.clone()))
-            .when(!node.display_label.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_color(cx.theme().muted_foreground)
-                        .ml(px(4.))
-                        .child(node.display_label.clone()),
-                )
-            });
+        let id = format!("node-{}-{}", depth, i);
 
-        let row = if let Some(ref id) = node_id {
-            let id = id.clone();
-            let id_for_click = id.clone();
-            row.on_click(cx.listener(move |this, _, window, cx| {
-                if this.active_element_id() == Some(&id) && has_children {
-                    this.toggle_collapsed(id.clone());
-                } else {
-                    this.set_active_element_id(id_for_click.clone(), window);
-                }
-                cx.notify();
-            }))
-        } else {
-            row
-        };
-
-        elements.push(row.into_any_element());
+        if has_children {
+            elements.push(
+                render_tree_folder::<Inspector>(
+                    &id,
+                    &node.element_type,
+                    IconName::ChevronRight,
+                    cx.theme().accent,
+                    depth,
+                    !is_collapsed,
+                    {
+                        let node_id = node.inspector_id.clone();
+                        move |this, _, window, cx| {
+                            if let Some(ref id) = node_id {
+                                if this.active_element_id() == Some(id) {
+                                    this.toggle_collapsed(id.clone());
+                                } else {
+                                    this.set_active_element_id(id.clone(), window);
+                                }
+                                cx.notify();
+                            }
+                        }
+                    },
+                    cx,
+                ),
+            );
+        } else if has_id {
+            elements.push(
+                render_tree_item::<Inspector>(
+                    &id,
+                    &node.element_type,
+                    cx.theme().accent,
+                    depth,
+                    is_selected,
+                    {
+                        let node_id = node.inspector_id.clone();
+                        move |this, _, window, cx| {
+                            if let Some(ref id) = node_id {
+                                this.set_active_element_id(id.clone(), window);
+                                cx.notify();
+                            }
+                        }
+                    },
+                    cx,
+                ),
+            );
+        }
 
         if has_children && !is_collapsed {
             elements.extend(render_tree_nodes(
