@@ -4,6 +4,7 @@ use anyhow::Result;
 use gpui::{
     actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, AnyElement,
     App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
+    InspectorEventListener, InspectorLayoutInfo, InspectorTab, InspectorTreeNode,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Refineable as _, Render,
     SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, Window,
 };
