@@ -9,7 +9,7 @@ members = [
 edition = "2021"
 
 [workspace.dependencies]
-gpui-ce = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI", rev = "31fbf35800b4cfc2ddf202a1c16a2971251ca84c" }
+gpui-ce = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI", rev = "781e0b6a66250b222c7030768e979b346595ce1a" }
 ui-macros = { path = "crates/ui-macros" }
 
 anyhow        = "1"

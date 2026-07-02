@@ -5,7 +5,7 @@ use gpui::{
     actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, AnyElement,
     App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Refineable as _, Render,
-    SharedString, StyleRefinement, Styled, Subscription, Task, Window,
+    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, Window,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, Diagnostic,
@@ -476,10 +476,8 @@ fn render_inspector(
     window: &mut Window,
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
-    let inspector_element_id = inspector.active_element_id();
-    let source_location =
-        inspector_element_id.map(|id| SharedString::new(format!("{}", id.path.source_location)));
-    let element_global_id = inspector_element_id.map(|id| format!("{}", id.path.global_id));
+    let tab = inspector.active_tab();
+    let inspector_element_id = inspector.active_element_id().cloned();
 
     v_flex()
         .id("inspector")
@@ -489,69 +487,614 @@ fn render_inspector(
         .border_l_1()
         .border_color(cx.theme().border)
         .text_color(cx.theme().foreground)
+        .child(render_inspector_title_bar(inspector, window, cx))
+        .child(render_inspector_tabs(inspector, window, cx))
+        .child(render_tab_content(tab, inspector, window, cx))
+        .into_any_element()
+}
+
+fn render_inspector_title_bar(
+    inspector: &mut Inspector,
+    window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    h_flex()
+        .w_full()
+        .justify_between()
+        .gap_2()
+        .h(TITLE_BAR_HEIGHT)
+        .line_height(TITLE_BAR_HEIGHT)
+        .overflow_x_hidden()
+        .px_2()
+        .border_b_1()
+        .border_color(cx.theme().title_bar_border)
+        .bg(cx.theme().title_bar)
         .child(
             h_flex()
-                .w_full()
-                .justify_between()
                 .gap_2()
-                .h(TITLE_BAR_HEIGHT)
-                .line_height(TITLE_BAR_HEIGHT)
-                .overflow_x_hidden()
-                .px_2()
-                .border_b_1()
-                .border_color(cx.theme().title_bar_border)
-                .bg(cx.theme().title_bar)
+                .text_sm()
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .text_sm()
-                        .child(
-                            Button::new("inspect")
-                                .icon(IconName::Inspector)
-                                .selected(inspector.is_picking())
-                                .small()
-                                .ghost()
-                                .on_click(cx.listener(|this, _, window, _| {
-                                    this.start_picking();
-                                    window.refresh();
-                                })),
-                        )
-                        .child("Inspector"),
-                )
-                .child(
-                    Button::new("close")
-                        .icon(IconName::Close)
+                    Button::new("inspect")
+                        .icon(IconName::Inspector)
+                        .selected(inspector.is_picking())
                         .small()
                         .ghost()
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ToggleInspector), cx);
-                        }),
-                ),
+                        .on_click(cx.listener(|this, _, window, _| {
+                            this.start_picking();
+                            window.refresh();
+                        })),
+                )
+                .child("Inspector"),
         )
         .child(
+            Button::new("close")
+                .icon(IconName::Close)
+                .small()
+                .ghost()
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(ToggleInspector), cx);
+                }),
+        )
+        .into_any_element()
+}
+
+fn render_inspector_tabs(
+    inspector: &mut Inspector,
+    _window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    let active = inspector.active_tab();
+
+    h_flex()
+        .w_full()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .bg(cx.theme().background)
+        .children(InspectorTab::all().iter().map(|tab| {
+            let is_active = *tab == active;
+            let label = tab.label();
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .text_xs()
+                .cursor_pointer()
+                .text_color(if is_active {
+                    cx.theme().accent
+                } else {
+                    cx.theme().muted_foreground
+                })
+                .border_b_2()
+                .border_color(if is_active {
+                    cx.theme().accent
+                } else {
+                    cx.theme().background
+                })
+                .hover(|style| style.bg(cx.theme().list_hover))
+                .on_click({
+                    let tab = *tab;
+                    cx.listener(move |this, _, _, cx| {
+                        this.set_tab(tab);
+                        cx.notify();
+                    })
+                })
+                .child(label)
+                .into_any_element()
+        }))
+        .into_any_element()
+}
+
+fn render_tab_content(
+    tab: InspectorTab,
+    inspector: &mut Inspector,
+    window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    match tab {
+        InspectorTab::Elements => render_elements_tab(inspector, window, cx),
+        InspectorTab::Styles => render_styles_tab(inspector, window, cx),
+        InspectorTab::Layout => render_layout_tab(inspector, window, cx),
+        InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
+    }
+}
+
+// ── Elements tab ───────────────────────────────────────────────────────────
+
+fn render_elements_tab(
+    inspector: &mut Inspector,
+    _window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    let tree = inspector.element_tree().to_vec();
+    if tree.is_empty() {
+        return div()
+            .p(px(8.))
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("No elements available.")
+            .into_any_element();
+    }
+
+    let selected_id = inspector.active_element_id().cloned();
+
+    v_flex()
+        .py(px(2.))
+        .children(render_tree_nodes(&tree, 0, &selected_id, inspector, cx))
+        .into_any_element()
+}
+
+fn render_tree_nodes(
+    nodes: &[InspectorTreeNode],
+    depth: usize,
+    selected_id: &Option<InspectorElementId>,
+    inspector: &mut Inspector,
+    cx: &mut Context<Inspector>,
+) -> Vec<AnyElement> {
+    let mut elements = Vec::new();
+
+    for node in nodes {
+        let indent = depth * 14;
+        let is_selected = node.is_selected;
+        let is_collapsed = node
+            .inspector_id
+            .as_ref()
+            .map_or(false, |id| inspector.is_collapsed(id));
+        let has_children = !node.children.is_empty();
+        let node_id = node.inspector_id.clone();
+
+        let row = h_flex()
+            .items_center()
+            .px(px(4.))
+            .py(px(2.))
+            .pl(px(indent as f32))
+            .cursor_pointer()
+            .rounded_sm()
+            .text_xs()
+            .hover(|style| style.bg(cx.theme().list_hover))
+            .when(is_selected, |this| {
+                this.bg(cx.theme().list_active)
+                    .text_color(cx.theme().accent_foreground)
+            })
+            .child(
+                div()
+                    .w(px(12.))
+                    .text_color(if has_children {
+                        cx.theme().foreground
+                    } else {
+                        cx.theme().background
+                    })
+                    .child(if has_children {
+                        SharedString::from(if is_collapsed { "▶" } else { "▼" })
+                    } else {
+                        SharedString::from(" ")
+                    }),
+            )
+            .child(div().text_color(cx.theme().accent).child(node.element_type.clone()))
+            .when(!node.display_label.is_empty(), |this| {
+                this.child(
+                    div()
+                        .text_color(cx.theme().muted_foreground)
+                        .ml(px(4.))
+                        .child(node.display_label.clone()),
+                )
+            });
+
+        let row = if let Some(ref id) = node_id {
+            let id = id.clone();
+            let id_for_click = id.clone();
+            row.on_click(cx.listener(move |this, _, window, cx| {
+                if this.active_element_id() == Some(&id) && has_children {
+                    this.toggle_collapsed(id.clone());
+                } else {
+                    this.set_active_element_id(id_for_click.clone(), window);
+                }
+                cx.notify();
+            }))
+        } else {
+            row
+        };
+
+        elements.push(row.into_any_element());
+
+        if has_children && !is_collapsed {
+            elements.extend(render_tree_nodes(
+                &node.children,
+                depth + 1,
+                selected_id,
+                inspector,
+                cx,
+            ));
+        }
+    }
+
+    elements
+}
+
+// ── Styles tab ─────────────────────────────────────────────────────────────
+
+fn render_styles_tab(
+    inspector: &mut Inspector,
+    window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    let has_selection = inspector.active_element_id().is_some();
+    let mut elements: Vec<AnyElement> = Vec::new();
+
+    if has_selection {
+        let source_location = inspector
+            .active_element_id()
+            .map(|id| format!("{}", id.path.source_location));
+
+        elements.push(
             v_flex()
-                .flex_1()
-                .p_3()
-                .gap_y_3()
-                .text_sm()
-                .when_some(source_location, |this, source_location| {
+                .px(px(8.))
+                .py(px(6.))
+                .gap_y(px(6.))
+                .when_some(source_location, |this, location| {
                     this.child(
                         h_flex()
                             .gap_x_2()
-                            .text_sm()
+                            .text_xs()
                             .child(
                                 Link::new("source-location")
-                                    .href(format!("file://{}", source_location))
-                                    .child(source_location.clone())
+                                    .href(format!("file://{}", location))
+                                    .child(location.clone())
                                     .flex_1()
                                     .overflow_x_hidden(),
                             )
-                            .child(Clipboard::new("copy-source-location").value(source_location)),
+                            .child(Clipboard::new("copy-source-location").value(location)),
                     )
                 })
-                .children(element_global_id)
-                .children(inspector.render_inspector_states(window, cx)),
+                .children(inspector.render_inspector_states(window, cx))
+                .into_any_element(),
+        );
+
+        if elements.is_empty() {
+            elements.push(
+                div()
+                    .p(px(8.))
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No style editors registered for this element type.")
+                    .into_any_element(),
+            );
+        }
+
+        // Computed layout info
+        if let Some(layout) = inspector.active_layout() {
+            elements.push(
+                DescriptionList::new()
+                    .columns(1)
+                    .label_width(px(100.))
+                    .bordered(false)
+                    .child("Width", format!("{:.1}px", layout.bounds.size.width.value()), 1)
+                    .child("Height", format!("{:.1}px", layout.bounds.size.height.value()), 1)
+                    .child("X", format!("{:.1}px", layout.bounds.origin.x.value()), 1)
+                    .child("Y", format!("{:.1}px", layout.bounds.origin.y.value()), 1)
+                    .child(
+                        "Margin",
+                        format!(
+                            "{:.1} {:.1} {:.1} {:.1}",
+                            layout.margin.top.value(),
+                            layout.margin.right.value(),
+                            layout.margin.bottom.value(),
+                            layout.margin.left.value(),
+                        ),
+                        1,
+                    )
+                    .child(
+                        "Border",
+                        format!(
+                            "{:.1} {:.1} {:.1} {:.1}",
+                            layout.border.top.value(),
+                            layout.border.right.value(),
+                            layout.border.bottom.value(),
+                            layout.border.left.value(),
+                        ),
+                        1,
+                    )
+                    .child(
+                        "Padding",
+                        format!(
+                            "{:.1} {:.1} {:.1} {:.1}",
+                            layout.padding.top.value(),
+                            layout.padding.right.value(),
+                            layout.padding.bottom.value(),
+                            layout.padding.left.value(),
+                        ),
+                        1,
+                    )
+                    .child(
+                        "Content",
+                        format!(
+                            "{:.1} x {:.1}",
+                            layout.content_size.width.value(),
+                            layout.content_size.height.value(),
+                        ),
+                        1,
+                    )
+                    .into_any_element(),
+            );
+        }
+    } else {
+        elements.push(
+            div()
+                .p(px(8.))
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Select an element to view its styles.")
+                .into_any_element(),
+        );
+    }
+
+    v_flex().children(elements).into_any_element()
+}
+
+// ── Layout tab ─────────────────────────────────────────────────────────────
+
+fn render_layout_tab(
+    inspector: &mut Inspector,
+    _window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    let has_selection = inspector.active_element_id().is_some();
+
+    if !has_selection {
+        return div()
+            .p(px(8.))
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("Select an element to view its layout.")
+            .into_any_element();
+    }
+
+    let layout = inspector.active_layout().cloned();
+
+    v_flex()
+        .p(px(8.))
+        .gap_y(px(6.))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(cx.theme().accent)
+                .child("Box Model"),
         )
+        .child(if let Some(ref layout) = layout {
+            render_box_model(layout, cx)
+        } else {
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Layout data not yet available.")
+                .into_any_element()
+        })
+        .child(if let Some(ref layout) = layout {
+            render_layout_details(layout, cx)
+        } else {
+            div().into_any_element()
+        })
+        .into_any_element()
+}
+
+fn render_box_model(layout: &InspectorLayoutInfo, cx: &Context<Inspector>) -> AnyElement {
+    let scale = 0.3;
+    let margin_w = layout.margin;
+    let border_w = layout.border;
+    let padding_w = layout.padding;
+    let content = layout.content_size;
+
+    let total_width = margin_w.left
+        + border_w.left
+        + padding_w.left
+        + content.width
+        + padding_w.right
+        + border_w.right
+        + margin_w.right;
+    let total_height = margin_w.top
+        + border_w.top
+        + padding_w.top
+        + content.height
+        + padding_w.bottom
+        + border_w.bottom
+        + margin_w.bottom;
+
+    let scaled_w = total_width * scale;
+    let scaled_h = total_height * scale;
+
+    div()
+        .w(scaled_w.max(px(100.)))
+        .h(scaled_h.max(px(60.)))
+        .relative()
+        .child(
+            div()
+                .absolute()
+                .top(px(0.))
+                .left(px(0.))
+                .w(scaled_w)
+                .h(scaled_h)
+                .bg(cx.theme().chart_1)
+                .opacity(0.2),
+        )
+        .child(
+            div()
+                .absolute()
+                .top(margin_w.top * scale)
+                .left(margin_w.left * scale)
+                .w((border_w.left + padding_w.left + content.width + padding_w.right + border_w.right) * scale)
+                .h((border_w.top + padding_w.top + content.height + padding_w.bottom + border_w.bottom) * scale)
+                .bg(cx.theme().chart_2)
+                .opacity(0.2),
+        )
+        .child(
+            div()
+                .absolute()
+                .top((margin_w.top + border_w.top) * scale)
+                .left((margin_w.left + border_w.left) * scale)
+                .w((padding_w.left + content.width + padding_w.right) * scale)
+                .h((padding_w.top + content.height + padding_w.bottom) * scale)
+                .bg(cx.theme().chart_3)
+                .opacity(0.2),
+        )
+        .child(
+            div()
+                .absolute()
+                .top((margin_w.top + border_w.top + padding_w.top) * scale)
+                .left((margin_w.left + border_w.left + padding_w.left) * scale)
+                .w(content.width * scale)
+                .h(content.height * scale)
+                .bg(cx.theme().chart_4)
+                .opacity(0.3),
+        )
+        .into_any_element()
+}
+
+fn render_layout_details(layout: &InspectorLayoutInfo, cx: &Context<Inspector>) -> AnyElement {
+    v_flex()
+        .gap_y(px(2.))
+        .child(layout_section(
+            "Position",
+            &[
+                ("x", layout.bounds.origin.x.value()),
+                ("y", layout.bounds.origin.y.value()),
+                ("width", layout.bounds.size.width.value()),
+                ("height", layout.bounds.size.height.value()),
+            ],
+            cx,
+        ))
+        .child(layout_section(
+            "Margin",
+            &[
+                ("top", layout.margin.top.value()),
+                ("right", layout.margin.right.value()),
+                ("bottom", layout.margin.bottom.value()),
+                ("left", layout.margin.left.value()),
+            ],
+            cx,
+        ))
+        .child(layout_section(
+            "Border",
+            &[
+                ("top", layout.border.top.value()),
+                ("right", layout.border.right.value()),
+                ("bottom", layout.border.bottom.value()),
+                ("left", layout.border.left.value()),
+            ],
+            cx,
+        ))
+        .child(layout_section(
+            "Padding",
+            &[
+                ("top", layout.padding.top.value()),
+                ("right", layout.padding.right.value()),
+                ("bottom", layout.padding.bottom.value()),
+                ("left", layout.padding.left.value()),
+            ],
+            cx,
+        ))
+        .child(layout_section(
+            "Content",
+            &[("width", layout.content_size.width.value()), ("height", layout.content_size.height.value())],
+            cx,
+        ))
+        .into_any_element()
+}
+
+fn layout_section(title: &str, values: &[(&str, f32)], cx: &Context<Inspector>) -> AnyElement {
+    let title = SharedString::from(title);
+    v_flex()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().accent)
+                .font_weight(gpui::FontWeight::BOLD)
+                .mb(px(2.))
+                .child(title.clone()),
+        )
+        .children(values.iter().map(|(name, value)| {
+            h_flex()
+                .px(px(4.))
+                .child(
+                    div()
+                        .w(px(60.))
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(*name)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().foreground)
+                        .child(SharedString::from(format!("{:.1}px", value))),
+                )
+                .into_any_element()
+        }))
+        .into_any_element()
+}
+
+// ── Event Listeners tab ────────────────────────────────────────────────────
+
+fn render_listeners_tab(
+    inspector: &mut Inspector,
+    _window: &mut Window,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
+    let has_selection = inspector.active_element_id().is_some();
+
+    if !has_selection {
+        return div()
+            .p(px(8.))
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("Select an element to view its event listeners.")
+            .into_any_element();
+    }
+
+    let selected_id = inspector.active_element_id().cloned();
+    let mut listeners: Vec<InspectorEventListener> = Vec::new();
+
+    for info in inspector.element_infos() {
+        if Some(&info.inspector_id) == selected_id.as_ref() {
+            listeners.extend(info.event_listeners.clone());
+            break;
+        }
+    }
+
+    if listeners.is_empty() {
+        return div()
+            .p(px(8.))
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("No event listeners registered on this element.")
+            .into_any_element();
+    }
+
+    v_flex()
+        .children(listeners.iter().map(|listener| {
+            h_flex()
+                .px(px(8.))
+                .py(px(3.))
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .hover(|style| style.bg(cx.theme().list_hover))
+                .child(
+                    div()
+                        .px(px(4.))
+                        .py(px(1.))
+                        .rounded_sm()
+                        .bg(cx.theme().primary)
+                        .text_xs()
+                        .text_color(cx.theme().primary_foreground)
+                        .child(listener.event_type.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .ml(px(8.))
+                        .child(listener.location.clone()),
+                )
+                .into_any_element()
+        }))
         .into_any_element()
 }
 
