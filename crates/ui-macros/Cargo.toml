@@ -1,7 +1,7 @@
 [package]
 name = "ui-macros"
 version = "0.1.0"
-edition.workspace = true
+edition = "2021"
 description = "Proc-macros for WGPUI Component library"
 license = "Apache-2.0"
 
@@ -9,9 +9,6 @@ license = "Apache-2.0"
 proc-macro = true
 
 [dependencies]
-proc-macro2.workspace = true
-quote.workspace = true
-syn.workspace = true
-
-[lints]
-workspace = true
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
