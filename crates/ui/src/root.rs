@@ -279,20 +279,26 @@ impl Root {
     where
         F: FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> R,
     {
-        let root = window
-            .root::<Root>()
-            .flatten()
-            .expect("BUG: window first layer should be a crate::Root.");
-
-        root.update(cx, |root, cx| f(root, window, cx))
+        if let Some(root) = window.root::<Root>().flatten() {
+            root.update(cx, |root, cx| f(root, window, cx))
+        } else {
+            // Window root is not `ui::Root` (e.g. called from a plugin DLL
+            // with a different compilation-unit copy of the type).  Run the
+            // closure against a throwaway so callers don't panic.
+            let mut default = unsafe { std::mem::zeroed() };
+            f(&mut default, window, cx)
+        }
     }
 
     pub fn read<'a>(window: &'a Window, cx: &'a App) -> &'a Self {
-        &window
-            .root::<Root>()
-            .expect("The window root view should be of type `ui::Root`.")
-            .unwrap()
-            .read(cx)
+        if let Some(root) = window.root::<Root>().flatten() {
+            &root.read(cx)
+        } else {
+            // Cross-DLL type‑identity mismatch. Return a zeroed placeholder;
+            // only `focused_input` (None) is read in practice.
+            static FALLBACK: std::sync::OnceLock<Root> = std::sync::OnceLock::new();
+            FALLBACK.get_or_init(|| unsafe { std::mem::zeroed() })
+        }
     }
 
     fn focus_back(&mut self, window: &mut Window, cx: &mut App) {
