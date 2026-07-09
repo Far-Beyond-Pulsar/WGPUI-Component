@@ -279,20 +279,11 @@ impl Root {
     where
         F: FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> R,
     {
-        let root = window
-            .root::<Root>()
-            .flatten()
-            .expect("BUG: window first layer should be a crate::Root.");
-
-        root.update(cx, |root, cx| f(root, window, cx))
+        unsafe { window.update_root::<Root, R>(cx, |root, w, c| f(root, w, c)) }
     }
 
     pub fn read<'a>(window: &'a Window, cx: &'a App) -> &'a Self {
-        &window
-            .root::<Root>()
-            .expect("The window root view should be of type `ui::Root`.")
-            .unwrap()
-            .read(cx)
+        unsafe { window.read_root::<Root>(cx) }
     }
 
     fn focus_back(&mut self, window: &mut Window, cx: &mut App) {
