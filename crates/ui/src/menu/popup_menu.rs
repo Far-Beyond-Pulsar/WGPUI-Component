@@ -983,7 +983,7 @@ impl PopupMenu {
             .text_sm()
             .map(|this| {
                 if let Some(icon) = icon {
-                    this.child(icon.clone().xsmall())
+                    this.child(icon.clone().small())
                 } else {
                     this.children(icon_placeholder.clone())
                 }
