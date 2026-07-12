@@ -2,13 +2,15 @@ use crate::PixelsExt;
 use crate::{
     button::{Button, ButtonVariants},
     h_flex,
-    v_flex, ActiveTheme, Collapsible, Icon, IconName, Side, Sizable, StyledExt,
+    scroll::{Scrollbar, ScrollbarState},
+    v_flex, v_virtual_list, ActiveTheme, Collapsible, Icon, IconName, Side, Sizable, StyledExt,
+    VirtualListScrollHandle,
 };
 use gpui::{
-    div, prelude::FluentBuilder, px, AbsoluteLength, Animation, AnimationExt as _,
-    AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, ElementId,
-    InteractiveElement as _, IntoElement, Length, ParentElement, Pixels,
-    RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    div, prelude::FluentBuilder, px, size, AbsoluteLength, Animation, AnimationExt as _,
+    AnyElement, App, ClickEvent, Context, DefiniteLength, EdgesRefinement, ElementId,
+    InteractiveElement as _, IntoElement, Length, ParentElement, Pixels, Render, RenderOnce,
+    SharedString, Size, StyleRefinement, Styled, Window,
 };
 use std::rc::Rc;
 
@@ -23,6 +25,14 @@ pub use menu::*;
 
 const DEFAULT_WIDTH: Pixels = px(255.);
 const COLLAPSED_WIDTH: Pixels = px(48.);
+
+struct SidebarListView;
+
+impl Render for SidebarListView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 pub trait SidebarItem: Collapsible + Clone {
     fn render(
@@ -196,6 +206,40 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
         let content_len = self.content.len();
         let collapsed = self.collapsed;
 
+        let view = window.use_keyed_state(
+            format!("{}-view", id),
+            cx,
+            |_, _| SidebarListView,
+        );
+
+        let scroll_handle = window
+            .use_keyed_state(
+                format!("{}-scroll-handle", id),
+                cx,
+                |_, _| VirtualListScrollHandle::new(),
+            )
+            .read(cx)
+            .clone();
+
+        let scrollbar_state = window
+            .use_keyed_state(
+                format!("{}-scrollbar-state", id),
+                cx,
+                |_, _| ScrollbarState::default(),
+            )
+            .read(cx)
+            .clone();
+
+        let item_sizes = Rc::new(vec![
+            Size {
+                width: px(0.0),
+                height: px(48.0),
+            };
+            content_len
+        ]);
+
+        let content = self.content.clone();
+
         // Sidebar content renders at its target width immediately.
         // A wrapper div animates clip-width for smooth transitions
         // without re-laying out sidebar content each animation frame.
@@ -228,31 +272,51 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
             })
             .child(
                 v_flex().id("content").flex_1().min_h_0().child(
-                    v_flex()
-                        .id("inner")
+                    div()
+                        .relative()
                         .size_full()
-                        .px_3()
-                        .gap_y_3()
-                        .when(self.collapsed, |this| this.p_2())
-                        .scrollable(gpui::Axis::Vertical)
-                        .children(self.content.into_iter().enumerate().map(
-                            |(ix, group)| {
-                                let is_first = ix == 0;
-                                let is_last =
-                                    content_len > 0 && ix == content_len.saturating_sub(1);
-                                div()
-                                    .id(ix)
-                                    .child(
-                                        group
-                                            .collapsed(collapsed)
-                                            .render(ix, window, cx)
-                                            .into_any_element(),
-                                    )
-                                    .when(is_first, |this| this.pt_3())
-                                    .when(is_last, |this| this.pb_3())
-                                    .into_any_element()
-                            },
-                        )),
+                        .overflow_hidden()
+                        .child(
+                            v_virtual_list(
+                                view,
+                                format!("{}-items", id),
+                                item_sizes,
+                                move |_, range, window, cx| {
+                                    range
+                                        .map(|ix| {
+                                            let is_first = ix == 0;
+                                            let is_last = content_len > 0
+                                                && ix == content_len.saturating_sub(1);
+                                            div()
+                                                .id(ix)
+                                                .child(
+                                                    content[ix]
+                                                        .clone()
+                                                        .collapsed(collapsed)
+                                                        .render(ix, window, cx)
+                                                        .into_any_element(),
+                                                )
+                                                .when(is_first, |this| this.pt_3())
+                                                .when(is_last, |this| this.pb_3())
+                                                .into_any_element()
+                                        })
+                                        .collect()
+                                },
+                            )
+                            .track_scroll(&scroll_handle),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(Scrollbar::vertical(
+                                    &scrollbar_state,
+                                    &scroll_handle,
+                                )),
+                        ),
                 ),
             )
             .when_some(self.footer.take(), |this, footer| {

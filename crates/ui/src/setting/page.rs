@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use gpui::{
-    div, prelude::FluentBuilder as _, App, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StyleRefinement, Styled, Window,
+    div, prelude::FluentBuilder as _, px, size, App, Axis, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, SharedString, Size, StyleRefinement, Styled, Window,
 };
 use rust_i18n::t;
 
@@ -8,8 +10,10 @@ use crate::{
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
+    scroll::Scrollbar,
     setting::{settings::SettingsState, RenderOptions, SettingGroup},
-    v_flex, ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    VirtualListScrollHandle,
 };
 
 /// A setting page that can contain multiple setting groups.
@@ -113,8 +117,34 @@ impl SettingPage {
             .filter(|group| group.is_match(&query, cx))
             .cloned()
             .collect::<Vec<_>>();
+        let groups_count = groups.len();
 
-        let _ = state.read(cx).deferred_scroll_group_ix;
+        let scroll_handle = state.read(cx).group_scroll_handle.clone();
+        let scrollbar_state = state.read(cx).group_scrollbar_state.clone();
+
+        let deferred_scroll_group_ix = state.read(cx).deferred_scroll_group_ix;
+        if let Some(group_ix) = deferred_scroll_group_ix {
+            state.update(cx, |state, _| {
+                state.deferred_scroll_group_ix = None;
+            });
+            scroll_handle.scroll_to_item(group_ix, gpui::ScrollStrategy::Top);
+        }
+
+        let item_sizes = Rc::new(
+            groups
+                .iter()
+                .map(|group| {
+                    let h = 82.0 + group.items.len() as f32 * 60.0;
+                    Size {
+                        width: px(0.0),
+                        height: px(h),
+                    }
+                })
+                .collect::<Vec<Size<gpui::Pixels>>>(),
+        );
+
+        let view = state.clone();
+        let groups_arc = Rc::new(groups);
 
         v_flex()
             .id(ix)
@@ -153,28 +183,54 @@ impl SettingPage {
                     }),
             )
             .child(
-                v_flex()
+                div()
+                    .relative()
                     .px_4()
                     .flex_1()
-                    .min_h_0()
-                    .scrollable(gpui::Axis::Vertical)
-                    .children(groups.into_iter().enumerate().map(
-                        |(group_ix, group)| {
-                            group
-                                .py_4()
-                                .render(
-                                    &query,
-                                    &RenderOptions {
-                                        page_ix: ix,
-                                        group_ix,
-                                        ..*options
-                                    },
-                                    window,
-                                    cx,
-                                )
-                                .into_any_element()
-                        },
-                    )),
+                    .w_full()
+                    .overflow_hidden()
+                    .child(
+                        v_virtual_list(
+                            view,
+                            format!("settings-groups-{}", ix),
+                            item_sizes,
+                            {
+                                let groups = groups_arc.clone();
+                                let query = query.clone();
+                                let options = *options;
+                                move |_, range: std::ops::Range<usize>, window, cx| {
+                                    range
+                                        .map(|group_ix| {
+                                            groups[group_ix]
+                                                .clone()
+                                                .py_4()
+                                                .render(
+                                                    &query,
+                                                    &RenderOptions {
+                                                        page_ix: ix,
+                                                        group_ix,
+                                                        ..options
+                                                    },
+                                                    window,
+                                                    cx,
+                                                )
+                                                .into_any_element()
+                                        })
+                                        .collect()
+                                }
+                            },
+                        )
+                        .track_scroll(&scroll_handle),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
+                    ),
             )
     }
 }
