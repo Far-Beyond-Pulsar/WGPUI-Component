@@ -1,6 +1,6 @@
 use gpui::{
-    div, list, prelude::FluentBuilder as _, px, App, Entity, InteractiveElement as _, IntoElement,
-    ListAlignment, ListState, ParentElement as _, SharedString, StyleRefinement, Styled, Window,
+    div, prelude::FluentBuilder as _, App, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, StyleRefinement, Styled, Window,
 };
 use rust_i18n::t;
 
@@ -8,7 +8,6 @@ use crate::{
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
-    scroll::ScrollableElement,
     setting::{settings::SettingsState, RenderOptions, SettingGroup},
     v_flex, ActiveTheme, Icon, IconName, Sizable, StyledExt,
 };
@@ -114,28 +113,8 @@ impl SettingPage {
             .filter(|group| group.is_match(&query, cx))
             .cloned()
             .collect::<Vec<_>>();
-        let groups_count = groups.len();
 
-        let list_state = window
-            .use_keyed_state(
-                SharedString::from(format!("list-state:{}", ix)),
-                cx,
-                |_, _| ListState::new(groups_count, ListAlignment::Top, px(100.)),
-            )
-            .read(cx)
-            .clone();
-
-        if list_state.item_count() != groups_count {
-            list_state.reset(groups_count);
-        }
-
-        let deferred_scroll_group_ix = state.read(cx).deferred_scroll_group_ix;
-        if let Some(ix) = deferred_scroll_group_ix {
-            state.update(cx, |state, _| {
-                state.deferred_scroll_group_ix = None;
-            });
-            list_state.scroll_to_reveal_item(ix);
-        }
+        let _ = state.read(cx).deferred_scroll_group_ix;
 
         v_flex()
             .id(ix)
@@ -174,35 +153,28 @@ impl SettingPage {
                     }),
             )
             .child(
-                div()
+                v_flex()
                     .px_4()
-                    .relative()
                     .flex_1()
-                    .w_full()
-                    .child(
-                        list(list_state.clone(), {
-                            let query = query.clone();
-                            let options = *options;
-                            move |group_ix, window, cx| {
-                                let group = groups[group_ix].clone();
-                                group
-                                    .py_4()
-                                    .render(
-                                        &query,
-                                        &RenderOptions {
-                                            page_ix: ix,
-                                            group_ix,
-                                            ..options
-                                        },
-                                        window,
-                                        cx,
-                                    )
-                                    .into_any_element()
-                            }
-                        })
-                        .size_full(),
-                    )
-                    .vertical_scrollbar(&list_state),
+                    .min_h_0()
+                    .scrollable(gpui::Axis::Vertical)
+                    .children(groups.into_iter().enumerate().map(
+                        |(group_ix, group)| {
+                            group
+                                .py_4()
+                                .render(
+                                    &query,
+                                    &RenderOptions {
+                                        page_ix: ix,
+                                        group_ix,
+                                        ..*options
+                                    },
+                                    window,
+                                    cx,
+                                )
+                                .into_any_element()
+                        },
+                    )),
             )
     }
 }
