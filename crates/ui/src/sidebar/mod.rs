@@ -2,13 +2,12 @@ use crate::PixelsExt;
 use crate::{
     button::{Button, ButtonVariants},
     h_flex,
-    scroll::ScrollableElement,
     v_flex, ActiveTheme, Collapsible, Icon, IconName, Side, Sizable, StyledExt,
 };
 use gpui::{
-    div, list, prelude::FluentBuilder, px, AbsoluteLength, Animation, AnimationExt as _,
+    div, prelude::FluentBuilder, px, AbsoluteLength, Animation, AnimationExt as _,
     AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, ElementId,
-    InteractiveElement as _, IntoElement, Length, ListAlignment, ListState, ParentElement, Pixels,
+    InteractiveElement as _, IntoElement, Length, ParentElement, Pixels,
     RenderOnce, SharedString, StyleRefinement, Styled, Window,
 };
 use std::rc::Rc;
@@ -195,19 +194,6 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
 
         let id = self.id;
         let content_len = self.content.len();
-        let overdraw = px(window.viewport_size().height.as_f64() as f32 * 0.3);
-        let list_state = window
-            .use_keyed_state(
-                SharedString::from(format!("{}-list-state", id)),
-                cx,
-                |_, _| ListState::new(content_len, ListAlignment::Top, overdraw),
-            )
-            .read(cx)
-            .clone();
-        if list_state.item_count() != content_len {
-            list_state.reset(content_len);
-        }
-
         let collapsed = self.collapsed;
 
         // Sidebar content renders at its target width immediately.
@@ -248,31 +234,25 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
                         .px_3()
                         .gap_y_3()
                         .when(self.collapsed, |this| this.p_2())
-                        .child(
-                            list(list_state.clone(), {
-                                move |ix, window, cx| {
-                                    let group = self.content.get(ix).cloned();
-                                    let is_first = ix == 0;
-                                    let is_last =
-                                        content_len > 0 && ix == content_len.saturating_sub(1);
-                                    div()
-                                        .id(ix)
-                                        .when_some(group, |this, group| {
-                                            this.child(
-                                                group
-                                                    .collapsed(self.collapsed)
-                                                    .render(ix, window, cx)
-                                                    .into_any_element(),
-                                            )
-                                        })
-                                        .when(is_first, |this| this.pt_3())
-                                        .when(is_last, |this| this.pb_3())
-                                        .into_any_element()
-                                }
-                            })
-                            .size_full(),
-                        )
-                        .vertical_scrollbar(&list_state),
+                        .scrollable(gpui::Axis::Vertical)
+                        .children(self.content.into_iter().enumerate().map(
+                            |(ix, group)| {
+                                let is_first = ix == 0;
+                                let is_last =
+                                    content_len > 0 && ix == content_len.saturating_sub(1);
+                                div()
+                                    .id(ix)
+                                    .child(
+                                        group
+                                            .collapsed(collapsed)
+                                            .render(ix, window, cx)
+                                            .into_any_element(),
+                                    )
+                                    .when(is_first, |this| this.pt_3())
+                                    .when(is_last, |this| this.pb_3())
+                                    .into_any_element()
+                            },
+                        )),
                 ),
             )
             .when_some(self.footer.take(), |this, footer| {
