@@ -170,7 +170,7 @@ impl Settings {
                 div()
                     .w_full()
                     .refine_style(&self.header_style)
-                    .child(Input::new(&search_input).prefix(IconName::Search)),
+                    .child(Input::new(&search_input).w_full().prefix(IconName::Search)),
             )
             .child(
                 SidebarMenu::new().children(pages.iter().enumerate().map(|(page_ix, page)| {
