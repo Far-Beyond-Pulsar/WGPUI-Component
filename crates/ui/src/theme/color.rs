@@ -129,21 +129,23 @@ impl Colorize for Hsla {
     fn to_hex(&self) -> String {
         let rgb = self.to_rgb();
 
+        // Round, don't truncate: HSL→RGB float error otherwise decays
+        // channels (0x3F → 0x3E) on every parse/format round-trip.
         if rgb.a < 1. {
             return format!(
                 "#{:02X}{:02X}{:02X}{:02X}",
-                ((rgb.r * 255.) as u32),
-                ((rgb.g * 255.) as u32),
-                ((rgb.b * 255.) as u32),
-                ((self.a * 255.) as u32)
+                ((rgb.r * 255.).round() as u32),
+                ((rgb.g * 255.).round() as u32),
+                ((rgb.b * 255.).round() as u32),
+                ((self.a * 255.).round() as u32)
             );
         }
 
         format!(
             "#{:02X}{:02X}{:02X}",
-            ((rgb.r * 255.) as u32),
-            ((rgb.g * 255.) as u32),
-            ((rgb.b * 255.) as u32)
+            ((rgb.r * 255.).round() as u32),
+            ((rgb.g * 255.).round() as u32),
+            ((rgb.b * 255.).round() as u32)
         )
     }
 
@@ -525,6 +527,26 @@ mod tests {
     }
 
     #[test]
+    fn to_hex_is_stable_over_parse_round_trips() {
+        for byte in 0..=255u32 {
+            let hex = format!("#{byte:02X}{byte:02X}{byte:02X}");
+            let color = Hsla::parse_hex(&hex).unwrap();
+            assert_eq!(color.to_hex(), hex, "gray {byte} drifted");
+        }
+
+        let hex = "#3FA2C4";
+        let color = Hsla::parse_hex(hex).unwrap();
+        assert_eq!(color.to_hex(), hex);
+    }
+
+    #[test]
+    fn to_hex_keeps_alpha_byte_stable() {
+        let hex = "#3FA2C480";
+        let color = Hsla::parse_hex(hex).unwrap();
+        assert_eq!(color.to_hex(), hex);
+    }
+
+    #[test]
     fn test_to_hex_string() {
         let color: Hsla = rgb(0xf8fafc).into();
         assert_eq!(color.to_hex(), "#F8FAFC");
@@ -577,7 +599,7 @@ mod tests {
 
         assert_eq!(red.mix(blue, 0.5).to_hex(), "#FF00FF");
         assert_eq!(green.mix(red, 0.5).to_hex(), "#FFFF00");
-        assert_eq!(blue.mix(yellow, 0.2).to_hex(), "#0098FF");
+        assert_eq!(blue.mix(yellow, 0.2).to_hex(), "#0099FF");
     }
 
     #[test]
@@ -586,9 +608,11 @@ mod tests {
         assert_eq!(format!("{}", ColorName::Green), "Green");
         assert_eq!(format!("{:?}", ColorName::Yellow), "Yellow");
 
+        // #22C55E is Tailwind's canonical green-500; the previous #21C55E
+        // expectation encoded to_hex's old truncation error.
         let color = ColorName::Green;
-        assert_eq!(color.scale(500).to_hex(), "#21C55E");
-        assert_eq!(color.scale(1500).to_hex(), "#21C55E");
+        assert_eq!(color.scale(500).to_hex(), "#22C55E");
+        assert_eq!(color.scale(1500).to_hex(), "#22C55E");
 
         for name in ColorName::all().iter() {
             let name1: ColorName = name.to_string().as_str().into();

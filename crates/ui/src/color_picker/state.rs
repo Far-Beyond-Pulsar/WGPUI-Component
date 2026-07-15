@@ -40,6 +40,14 @@ impl ColorPickerState {
                         return;
                     }
                     let value = state.read(cx).value();
+                    // `cx.emit` is delivered at effect flush, after
+                    // `syncing_inputs` has been reset — so programmatic
+                    // writes from `update_value` land here looking like
+                    // user edits. Applying them would re-derive hue from
+                    // the 8-bit hex text and rotate the ring (#104).
+                    if this.is_hex_echo(value.as_str()) {
+                        return;
+                    }
                     if let Some(color) = parse_color_code(value.as_str()) {
                         this.apply_external_color(color, true, window, cx);
                     }
@@ -48,7 +56,10 @@ impl ColorPickerState {
                     let val = this.state.read(cx).value();
                     if let Some(color) = parse_color_code(&val) {
                         this.open = false;
-                        this.apply_external_color(color, true, window, cx);
+                        if !this.is_hex_echo(val.as_str()) {
+                            this.apply_external_color(color, true, window, cx);
+                        }
+                        cx.notify();
                     }
                 }
                 _ => {}
@@ -166,11 +177,20 @@ impl ColorPickerState {
     }
 
     fn sync_hsva_from_color(&mut self, color: Hsla) {
-        let (h, s, v, a) = hsla_to_hsva(color);
+        // Achromatic colors carry no hue (rgb_to_hsv would return 0.0);
+        // keep the current wheel position instead of snapping the ring to red.
+        let (h, s, v, a) = hsla_to_hsva_stable(color, self.hue, self.saturation);
         self.hue = h;
         self.saturation = s;
         self.value_channel = v;
         self.alpha = a;
+    }
+
+    /// True if `text` is exactly the hex string `update_value` last wrote
+    /// into the hex input — i.e. a deferred echo of our own programmatic
+    /// sync rather than a user edit.
+    fn is_hex_echo(&self, text: &str) -> bool {
+        self.value.is_some_and(|v| v.to_hex() == text)
     }
 
     fn push_recent_color(&mut self, color: Hsla) {
@@ -372,12 +392,7 @@ impl ColorPickerState {
         });
         let rgba: gpui::Rgba = color.into();
 
-        let texts = [
-            (rgba.r * 255.0).round().clamp(0.0, 255.0).to_string(),
-            (rgba.g * 255.0).round().clamp(0.0, 255.0).to_string(),
-            (rgba.b * 255.0).round().clamp(0.0, 255.0).to_string(),
-            alpha_to_text(rgba.a),
-        ];
+        let texts: [String; 4] = std::array::from_fn(|index| rgba_channel_text(rgba, index));
 
         for (index, text) in texts.iter().enumerate() {
             self.rgba_input_states[index].update(cx, |input, cx| {
@@ -409,6 +424,13 @@ impl ColorPickerState {
             hsva_to_hsla(self.hue, self.saturation, self.value_channel, self.alpha)
         });
         let mut rgba: gpui::Rgba = color.into();
+
+        // Deferred echo of our own `sync_numeric_inputs` write, not a user
+        // edit — applying it would round-trip the color through 8-bit text
+        // and drift hue/saturation (#104).
+        if trimmed == rgba_channel_text(rgba, channel) {
+            return;
+        }
 
         let parsed_ok = if channel <= 2 {
             match trimmed.parse::<i32>() {

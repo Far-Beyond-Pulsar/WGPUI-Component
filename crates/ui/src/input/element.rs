@@ -1574,7 +1574,7 @@ mod tests {
         let run = TextRun {
             len: 0,
             font: gpui::font(".SystemUIFont"),
-            color: gpui::black(),
+            color: gpui::black().into(),
             background_color: None,
             underline: None,
             strikethrough: None,

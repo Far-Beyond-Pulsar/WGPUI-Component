@@ -2,9 +2,10 @@ use crate::{
     group_box::GroupBoxVariant,
     input::{Input, InputState},
     resizable::{h_resizable, resizable_panel},
+    scroll::ScrollbarState,
     setting::{SettingGroup, SettingPage},
     sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
-    IconName, Sizable, Size, StyledExt,
+    IconName, Sizable, Size, StyledExt, VirtualListScrollHandle,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, relative, App, AppContext as _, Axis, ElementId, Entity,
@@ -167,7 +168,7 @@ impl Settings {
             .collapsed(false)
             .header(
                 div()
-                    .w_full()
+                    .flex_1()
                     .refine_style(&self.header_style)
                     .child(Input::new(&search_input).prefix(IconName::Search)),
             )
@@ -235,6 +236,14 @@ pub(super) struct SettingsState {
     /// If set, defer scrolling to this group index after rendering.
     pub(super) deferred_scroll_group_ix: Option<usize>,
     pub(super) search_input: Entity<InputState>,
+    pub(super) group_scroll_handle: VirtualListScrollHandle,
+    pub(super) group_scrollbar_state: ScrollbarState,
+}
+
+impl gpui::Render for SettingsState {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        gpui::div()
+    }
 }
 
 /// Options for rendering setting item.
@@ -267,6 +276,8 @@ impl RenderOnce for Settings {
                 search_input,
                 selected_index: self.default_selected_index,
                 deferred_scroll_group_ix: None,
+                group_scroll_handle: VirtualListScrollHandle::new(),
+                group_scrollbar_state: ScrollbarState::default(),
             }
         });
 
