@@ -101,6 +101,40 @@ pub(crate) fn hsla_to_hsva(color: Hsla) -> (f32, f32, f32, f32) {
     (h, s, v, rgba.a)
 }
 
+/// Saturation/value below this is treated as achromatic: hue (and saturation
+/// at black) carry no information there and must not overwrite picker state.
+const ACHROMATIC_EPS: f32 = 0.0001;
+
+/// Like [`hsla_to_hsva`], but hue (and saturation for black) are undefined
+/// for achromatic colors, so preserve the caller's current values there
+/// instead of letting `rgb_to_hsv` collapse them to 0.0.
+pub(crate) fn hsla_to_hsva_stable(
+    color: Hsla,
+    fallback_hue: f32,
+    fallback_saturation: f32,
+) -> (f32, f32, f32, f32) {
+    let (h, s, v, a) = hsla_to_hsva(color);
+    if v <= ACHROMATIC_EPS {
+        return (fallback_hue, fallback_saturation, v, a);
+    }
+    if s <= ACHROMATIC_EPS {
+        return (fallback_hue, s, v, a);
+    }
+    (h, s, v, a)
+}
+
+/// Canonical text for RGBA channel `index` (0=R, 1=G, 2=B, 3=A) as written
+/// into the numeric inputs by `sync_numeric_inputs`; also used to recognize
+/// echoed `Change` events from those programmatic writes.
+pub(crate) fn rgba_channel_text(rgba: gpui::Rgba, index: usize) -> String {
+    match index {
+        0 => (rgba.r * 255.0).round().clamp(0.0, 255.0).to_string(),
+        1 => (rgba.g * 255.0).round().clamp(0.0, 255.0).to_string(),
+        2 => (rgba.b * 255.0).round().clamp(0.0, 255.0).to_string(),
+        _ => alpha_to_text(rgba.a),
+    }
+}
+
 pub(crate) fn triangle_vertices(geometry: PickerGeometry, hue: f32) -> [(f32, f32); 3] {
     let tri_r = geometry.inner_r * 0.92;
     let base = hue * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
@@ -197,4 +231,59 @@ pub(crate) fn alpha_to_text(alpha: f32) -> String {
         .trim_end_matches('0')
         .trim_end_matches('.')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f32, expected: f32, tolerance: f32, label: &str) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{label}: expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn stable_hsva_preserves_hue_for_white() {
+        // Dragging the SV point to the white vertex must not reset hue (#104).
+        let white = hsva_to_hsla(0.6, 0.0, 1.0, 1.0);
+        let (h, s, v, _) = hsla_to_hsva_stable(white, 0.6, 0.0);
+        assert_close(h, 0.6, 1e-4, "hue");
+        assert_close(s, 0.0, 1e-4, "saturation");
+        assert_close(v, 1.0, 1e-4, "value");
+    }
+
+    #[test]
+    fn stable_hsva_preserves_hue_and_saturation_for_black() {
+        let black = hsva_to_hsla(0.35, 0.8, 0.0, 1.0);
+        let (h, s, v, _) = hsla_to_hsva_stable(black, 0.35, 0.8);
+        assert_close(h, 0.35, 1e-4, "hue");
+        assert_close(s, 0.8, 1e-4, "saturation");
+        assert_close(v, 0.0, 1e-4, "value");
+    }
+
+    #[test]
+    fn stable_hsva_matches_plain_conversion_for_chromatic_colors() {
+        let color = hsva_to_hsla(0.6, 0.5, 0.8, 1.0);
+        let (h, s, v, a) = hsla_to_hsva_stable(color, 0.1, 0.2);
+        assert_close(h, 0.6, 1e-3, "hue");
+        assert_close(s, 0.5, 1e-3, "saturation");
+        assert_close(v, 0.8, 1e-3, "value");
+        assert_close(a, 1.0, 1e-4, "alpha");
+    }
+
+    #[test]
+    fn rgba_channel_text_matches_numeric_input_format() {
+        let rgba = gpui::Rgba {
+            r: 0.5,
+            g: 0.0,
+            b: 1.0,
+            a: 0.25,
+        };
+        assert_eq!(rgba_channel_text(rgba, 0), "128");
+        assert_eq!(rgba_channel_text(rgba, 1), "0");
+        assert_eq!(rgba_channel_text(rgba, 2), "255");
+        assert_eq!(rgba_channel_text(rgba, 3), "0.25");
+    }
 }
