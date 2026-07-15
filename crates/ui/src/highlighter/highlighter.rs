@@ -734,7 +734,7 @@ mod tests {
 
     fn color_style(color: Hsla) -> HighlightStyle {
         let mut style = HighlightStyle::default();
-        style.color = Some(color);
+        style.color = Some(color.into());
         style
     }
 
@@ -744,9 +744,10 @@ mod tests {
         left: Vec<(Range<usize>, HighlightStyle)>,
         right: Vec<(Range<usize>, HighlightStyle)>,
     ) {
-        fn color_name(c: Option<Hsla>) -> String {
+        fn color_name(c: Option<gpui::TextColor>) -> String {
             match c {
                 Some(c) => {
+                    let c = c.to_hsla();
                     if c == gpui::red() {
                         "red".to_string()
                     } else if c == gpui::green() {
