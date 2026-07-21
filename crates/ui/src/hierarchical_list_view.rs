@@ -20,6 +20,7 @@ use crate::{
     draggable::{DragHandlePosition, Draggable},
     drop_area::DropArea,
     h_flex,
+    input::{InputState, TextInput},
     menu::{context_menu::ContextMenu, popup_menu::PopupMenu},
     scroll::ScrollbarAxis,
     v_flex, ActiveTheme, Icon, IconName, Sizable, StyledExt,
@@ -70,6 +71,16 @@ pub trait HierarchyItem: Clone + 'static {
         _cx: &mut Context<PopupMenu>,
     ) -> PopupMenu {
         menu
+    }
+
+    /// If true, the item's name is replaced by an inline TextInput for renaming.
+    fn is_renaming(&self) -> bool {
+        false
+    }
+
+    /// The TextInput entity to show when `is_renaming()` returns true.
+    fn rename_input(&self) -> Option<Entity<InputState>> {
+        None
     }
 }
 
@@ -267,15 +278,36 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                         })),
                 )
             })
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(text_color)
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(item_name.clone()),
-            )
+            .child({
+                let is_renaming = item.is_renaming();
+                if is_renaming {
+                    if let Some(input_entity) = item.rename_input() {
+                        div()
+                            .flex_1()
+                            .h_7()
+                            .child(TextInput::new(&input_entity).w_full().xsmall())
+                            .into_any_element()
+                    } else {
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(text_color)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(item_name.clone())
+                            .into_any_element()
+                    }
+                } else {
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(text_color)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(item_name.clone())
+                        .into_any_element()
+                }
+            })
             .children(item.extra_row_content(cx))
             .child(
                 ContextMenu::new(format!("tree-row-context-menu-{}", item.drag_drop_id())).menu(
