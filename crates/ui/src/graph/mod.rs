@@ -134,6 +134,8 @@ pub struct CustomEventDefDescription {
     pub name: String,
     pub uid: String,
     pub fields: Vec<CustomEventFieldDescription>,
+    #[serde(default)]
+    pub return_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
