@@ -121,6 +121,21 @@ impl BlueprintAsset {
     }
 }
 
+/// A field in a custom event definition (serializable).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomEventFieldDescription {
+    pub name: String,
+    pub type_name: String,
+}
+
+/// Shared definition for a custom event (serializable).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomEventDefDescription {
+    pub name: String,
+    pub uid: String,
+    pub fields: Vec<CustomEventFieldDescription>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphDescription {
     pub nodes: HashMap<String, NodeInstance>,
@@ -128,6 +143,8 @@ pub struct GraphDescription {
     pub metadata: GraphMetadata,
     #[serde(default)]
     pub comments: Vec<BlueprintComment>,
+    #[serde(default)]
+    pub custom_event_defs: HashMap<String, CustomEventDefDescription>,
 }
 
 /// Comment box in a blueprint graph
@@ -476,6 +493,7 @@ impl GraphDescription {
                 modified_at: chrono::Utc::now().to_rfc3339(),
             },
             comments: Vec::new(),
+            custom_event_defs: HashMap::new(),
         }
     }
 
