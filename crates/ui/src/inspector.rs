@@ -872,7 +872,7 @@ fn render_layout_tab(
             div()
                 .text_xs()
                 .font_weight(gpui::FontWeight::BOLD)
-                .text_color(cx.theme().accent)
+                .text_color(cx.theme().foreground)
                 .child("Box Model"),
         )
         .child(if let Some(ref layout) = layout {
@@ -1021,7 +1021,7 @@ fn layout_section(title: &str, values: &[(&str, f32)], cx: &Context<Inspector>) 
         .child(
             div()
                 .text_xs()
-                .text_color(cx.theme().accent)
+                .text_color(cx.theme().foreground)
                 .font_weight(gpui::FontWeight::BOLD)
                 .mb(px(2.))
                 .child(title.clone()),

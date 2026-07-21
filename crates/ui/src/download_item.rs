@@ -104,7 +104,7 @@ impl RenderOnce for DownloadItem {
                                         .rounded_full()
                                         .text_xs()
                                         .bg(cx.theme().accent.opacity(0.15))
-                                        .text_color(cx.theme().accent)
+                                        .text_color(cx.theme().foreground)
                                         .child("Downloading")
                                 } else if is_done {
                                     div()
