@@ -379,11 +379,12 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             .size_full()
             .bg(cx.theme().background)
             .child(
-                // Header
+                // Compact header — the workspace/tab system already provides
+                // the panel title, so this only shows extra controls (add buttons).
                 h_flex()
                     .w_full()
                     .px_4()
-                    .py_3()
+                    .py(px(6.0))
                     .justify_between()
                     .items_center()
                     .bg(cx.theme().sidebar)
@@ -396,23 +397,25 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                             .when(self.config.title.is_some(), |this| {
                                 this.child(
                                     div()
-                                        .text_base()
+                                        .text_sm()
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(cx.theme().foreground)
                                         .child(self.config.title.clone().unwrap()),
                                 )
                             })
-                            .child(
-                                div()
-                                    .px_2()
-                                    .py(px(2.0))
-                                    .rounded(px(4.0))
-                                    .bg(cx.theme().muted.opacity(0.5))
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{} objects", item_count)),
-                            ),
+                            .when(self.config.title.is_some(), |this| {
+                                this.child(
+                                    div()
+                                        .px_2()
+                                        .py(px(2.0))
+                                        .rounded(px(4.0))
+                                        .bg(cx.theme().muted.opacity(0.5))
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!("{} objects", item_count)),
+                                )
+                            }),
                     )
                     .child(h_flex().gap_1().children(header_buttons)),
             )
