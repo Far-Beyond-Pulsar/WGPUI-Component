@@ -419,38 +419,6 @@ impl TabPanel {
                             ))
                         })
                         .suffix(h_flex().gap_1().when(!is_level_editor, |this| {
-                            let panel = panel_for_menu.clone();
-                            let view = view_for_menu.clone();
-                            let dock = self.dock_area.clone();
-
-                            this.child(
-                                Button::new(("move-to-window", ix))
-                                    .icon(IconName::ExternalLink)
-                                    .ghost()
-                                    .xsmall()
-                                    .tooltip("Move to New Window")
-                                    .on_click(cx.listener(move |_tab_panel, _, window, cx| {
-                                        let panel_to_move = panel.clone();
-                                        let dock_area = dock.clone();
-                                        let mouse_pos = window.mouse_position();
-                                        let panel_index = ix;
-
-                                        tracing::trace!("[TAB_PANEL] Popout button clicked");
-                                        tracing::trace!("[TAB_PANEL] TabPanel entity ID: {:?}", cx.entity_id());
-                                        tracing::trace!("[TAB_PANEL] Panel index: {}", panel_index);
-                                        tracing::trace!("[TAB_PANEL] Dock area: {:?}", dock_area);
-
-                                        tracing::trace!("[TAB_PANEL] Emitting PanelEvent::MoveToNewWindow with source info");
-                                        // Emit event and let DockArea handle detachment to avoid timing issues
-                                        cx.emit(PanelEvent::MoveToNewWindow {
-                                            panel: panel_to_move.clone(),
-                                            position: mouse_pos,
-                                            source_tab_panel: cx.entity().downgrade(),
-                                            source_index: panel_index,
-                                        });
-                                    }))
-                            )
-                        }).when(!is_level_editor, |this| {
                             this.child(
                                 Button::new(("close-tab", ix))
                                     .icon(IconName::Close)

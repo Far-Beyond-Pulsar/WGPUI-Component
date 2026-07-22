@@ -93,13 +93,12 @@ impl TabVariant {
         }
     }
 
-    /// More spacious padding for professional appearance
     fn inner_paddings(&self, size: Size) -> Edges<Pixels> {
         let padding_x = match size {
-            Size::XSmall => px(14.), // Generous horizontal padding
-            Size::Small => px(18.),
-            Size::Large => px(24.),
-            _ => px(20.), // Default: very spacious
+            Size::XSmall => px(8.),
+            Size::Small => px(10.),
+            Size::Large => px(16.),
+            _ => px(12.),
         };
 
         let padding_y = match size {
