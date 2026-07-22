@@ -1,4 +1,7 @@
-use std::{cell::OnceCell, collections::HashMap, fmt::Write as _, ops::Range, rc::Rc, sync::OnceLock};
+use std::{
+    cell::OnceCell, collections::HashMap, fmt::Write as _, ops::Range, rc::Rc, sync::Arc,
+    sync::OnceLock,
+};
 
 use anyhow::Result;
 use gpui::{
@@ -547,11 +550,19 @@ fn render_inspector_tabs(
     let tabs = InspectorTab::all();
     let active_idx = tabs.iter().position(|t| *t == active).unwrap_or(0);
 
+    let tab_labels: Vec<(Option<SharedString>, bool)> = tabs
+        .iter()
+        .map(|t| (Some(SharedString::from(t.label())), false))
+        .collect();
+    let tab_count = tabs.len();
+    let tabs_arc = Arc::new(tabs);
+
     TabBar::new("inspector-tabs")
         .underline()
         .selected_index(active_idx)
         .on_click({
             let entity = cx.entity().clone();
+            let tabs = tabs_arc.clone();
             move |idx, _, cx: &mut App| {
                 entity.update(cx, |inspector, cx| {
                     inspector.set_tab(tabs[*idx]);
@@ -559,7 +570,10 @@ fn render_inspector_tabs(
                 });
             }
         })
-        .children(tabs.iter().map(|tab| Tab::new(tab.label())))
+        .build_tabs(tab_count, tab_labels, {
+            let tabs = tabs_arc.clone();
+            move |ix, _, _| Tab::new(tabs[ix].label())
+        })
         .into_any_element()
 }
 

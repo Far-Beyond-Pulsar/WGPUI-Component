@@ -288,6 +288,33 @@ impl TabPanel {
         // Shared state to track which tab was right-clicked
         let clicked_tab_index = Rc::new(RefCell::new(None::<usize>));
 
+        let visible_panels: Vec<(usize, Arc<dyn PanelView>)> = self
+            .panels
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.visible(cx))
+            .map(|(ix, p)| (ix, p.clone()))
+            .collect();
+        let visible_count = visible_panels.len();
+
+        let view_for_build = view.clone();
+        let clicked_index = clicked_tab_index.clone();
+        let collapsed_self = self.collapsed;
+        let dock_area_build = self.dock_area.clone();
+        let is_bottom_dock_build = is_bottom_dock;
+        let draggable = state.draggable;
+        let droppable = state.droppable;
+        let channel = state.channel;
+        let active_panel = state.active_panel.clone();
+
+        let mut labels = Vec::with_capacity(visible_count);
+        for (_, panel) in &visible_panels {
+            let label = panel
+                .tab_name(cx)
+                .or_else(|| Some(SharedString::from(panel.panel_name(cx))));
+            labels.push((label, false));
+        }
+
         let tab_bar = TabBar::new("tab-bar")
             .tab_item_top_offset(-px(1.))
             .track_scroll(&self.tab_bar_scroll_handle)
@@ -310,27 +337,16 @@ impl TabPanel {
                     )
                 },
             )
-            .children(self.panels.iter().enumerate().filter_map(|(ix, panel)| {
-                let mut active = state.active_panel.as_ref() == Some(panel);
-                let droppable = self.collapsed;
-
-                if !panel.visible(cx) {
-                    return None;
-                }
-
-                if self.collapsed {
-                    active = false;
-                }
-
-                Some({
+            .build_tabs(visible_count, labels, {
+                let panels = visible_panels.clone();
+                let active = active_panel.clone();
+                move |ix, window, cx| {
+                    let (orig_ix, ref panel) = panels[ix];
+                    let is_active = active.as_ref() == Some(panel) && !collapsed_self;
                     let is_level_editor = panel.panel_name(cx) == "Level Editor";
-                    let panel_for_menu = panel.clone();
-                    let view_for_menu = view.clone();
 
-                    let tab = Tab::empty()
-                        .when_some(panel.tab_icon(cx), |this, icon| {
-                            this.with_icon(icon)
-                        })
+                    Tab::empty()
+                        .when_some(panel.tab_icon(cx), |this, icon| this.with_icon(icon))
                         .unsaved(panel.tab_unsaved(cx))
                         .map(|this| {
                             if let Some(tab_name) = panel.tab_name(cx) {
@@ -339,102 +355,47 @@ impl TabPanel {
                                 this.child(panel.title(window, cx))
                             }
                         })
-                        .selected(active)
-                        .on_click(cx.listener({
-                            let is_collapsed = self.collapsed;
-                            let dock_area = self.dock_area.clone();
-                            move |view, _, window, cx| {
-                                view.set_active_tab(ix, window, cx);
-
-                                if is_bottom_dock && is_collapsed {
-                                    _ = dock_area.update(cx, |dock_area, cx| {
-                                        dock_area.toggle_dock(DockPlacement::Bottom, window, cx);
+                        .selected(is_active)
+                        .on_click({
+                            let view_c = view_for_build.clone();
+                            let da = dock_area_build.clone();
+                            move |_, window, cx| {
+                                view_c.update(cx, |v, cx| {
+                                    v.set_active_tab(orig_ix, window, cx);
+                                });
+                                if is_bottom_dock_build && collapsed_self {
+                                    let _ = da.update(cx, |d, cx| {
+                                        d.toggle_dock(DockPlacement::Bottom, window, cx);
                                     });
                                 }
                             }
-                        }))
-                        .on_mouse_down(gpui::MouseButton::Right, cx.listener({
-                            let clicked_index = clicked_tab_index.clone();
-                            move |_view, _event: &gpui::MouseDownEvent, _window, cx| {
-                                *clicked_index.borrow_mut() = Some(ix);
-                            }
-                        }))
-                        .when(state.draggable, |this| {
-                            let channel = state.channel;
-                            this.on_drag(
-                                DragPanel::new(panel.clone(), view.clone(), channel)
-                                    .with_index(ix),
-                                move |drag, position, _, cx| {
-                                    let mut drag_with_pos = drag.clone();
-                                    drag_with_pos.drag_start_position = Some(position);
-                                    cx.stop_propagation();
-                                    cx.new(|_| drag_with_pos)
-                                },
-                            )
-                            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<DragPanel>, window, cx| {
-                                let source_id = event.drag(cx).tab_panel.entity_id();
-                                let my_id     = cx.entity_id();
-                                let mouse     = window.mouse_position();
-                                this.last_drag_screen_pos = Some(mouse);
-                                tab_drag::set_drag_screen_position(mouse, cx);
-                                let was_outside = this.dragging_outside_window;
-                                let is_outside  = this.check_drag_outside_window(mouse, window, cx);
-                                if is_outside { this.will_split_placement = None; }
-
-                                if source_id == my_id {
-                                    if is_outside && !was_outside && !this.extraction_in_flight {
-                                        let drag = event.drag(cx).clone();
-                                        this.begin_live_extraction(&drag, mouse, window, cx);
-                                    } else if is_outside && this.extraction_in_flight {
-                                        this.move_extracted_window(mouse, window, cx);
-                                    } else if !is_outside && this.extraction_in_flight {
-                                        let panel = event.drag(cx).panel.clone();
-                                        this.cancel_live_extraction(panel, window, cx);
-                                    }
-                                }
-                            }))
                         })
-                        .when(state.droppable, |this| {
-                            let channel = state.channel;
-                            let view = view.clone();
-                            this.drag_over::<DragPanel>(move |this, drag, window, cx| {
-                                if drag.channel == channel {
-                                    view.update(cx, |v, cx| {
-                                        v.in_valid_drag = true;
-                                        cx.notify();
-                                    });
-                                    this.rounded_l_none()
-                                        .border_l_2()
-                                        .border_r_0()
-                                        .border_color(cx.theme().drag_border)
-                                } else {
-                                    this
-                                }
+                        .on_mouse_down(gpui::MouseButton::Right, {
+                            let ct = clicked_index.clone();
+                            move |_, _, _| *ct.borrow_mut() = Some(orig_ix)
+                        })
+                        .suffix(
+                            h_flex().gap_1().when(!is_level_editor, |this| {
+                                this.child(
+                                    Button::new(("close-tab", orig_ix))
+                                        .icon(IconName::Close)
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click({
+                                            let p = panel.clone();
+                                            let v = view_for_build.clone();
+                                            move |_, window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.remove_panel(p.clone(), window, cx);
+                                                });
+                                            }
+                                        }),
+                                )
                             })
-                            .on_drop(cx.listener(
-                                move |this, drag: &DragPanel, window, cx| {
-                                    this.will_split_placement = None;
-                                    this.on_drop(drag, Some(ix), true, window, cx)
-                                },
-                            ))
-                        })
-                        .suffix(h_flex().gap_1().when(!is_level_editor, |this| {
-                            this.child(
-                                Button::new(("close-tab", ix))
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .xsmall()
-                                    .on_click(cx.listener({
-                                        let panel = panel.clone();
-                                        move |this, _, window, cx| {
-                                            this.remove_panel(panel.clone(), window, cx);
-                                        }
-                                    }))
-                            )
-                        }).into_any_element());
-                    tab
-                })
-            }))
+                            .into_any_element(),
+                        )
+                }
+            })
             .last_empty_space(
                 div()
                     .id("tab-bar-empty-space")

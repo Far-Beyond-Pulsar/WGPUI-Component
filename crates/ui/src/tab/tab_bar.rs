@@ -122,9 +122,6 @@ impl TabBar {
         self
     }
 
-    /// Set tab count and builder callback, following the same pattern as
-    /// [`uniform_list`](gpui::uniform_list). The callback receives an index
-    /// and must return a fully-configured [`Tab`].
     pub fn build_tabs(
         mut self,
         count: usize,
