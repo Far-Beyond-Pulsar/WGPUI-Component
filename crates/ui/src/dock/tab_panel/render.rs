@@ -344,7 +344,6 @@ impl TabPanel {
                 move |ix, window, cx| {
                     let (orig_ix, ref panel) = panels[ix];
                     let is_active = active.as_ref() == Some(panel) && !collapsed_self;
-                    let is_level_editor = panel.panel_name(cx) == "Level Editor";
 
                     let mut tab = Tab::empty()
                         .when_some(panel.tab_icon(cx), |this, icon| this.with_icon(icon))
@@ -454,23 +453,21 @@ impl TabPanel {
                     });
 
                     tab = tab.suffix(
-                        h_flex().gap_1().when(!is_level_editor, |this| {
-                            this.child(
-                                Button::new(("close-tab", orig_ix))
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .xsmall()
-                                    .on_click({
-                                        let p = panel.clone();
-                                        let v = view_for_dnd.clone();
-                                        move |_, window, cx| {
-                                            v.update(cx, |this, cx| {
-                                                this.remove_panel(p.clone(), window, cx);
-                                            });
-                                        }
-                                    }),
-                            )
-                        })
+                        h_flex().gap_1().child(
+                            Button::new(("close-tab", orig_ix))
+                                .icon(IconName::Close)
+                                .ghost()
+                                .xsmall()
+                                .on_click({
+                                    let p = panel.clone();
+                                    let v = view_for_dnd.clone();
+                                    move |_, window, cx| {
+                                        v.update(cx, |this, cx| {
+                                            this.remove_panel(p.clone(), window, cx);
+                                        });
+                                    }
+                                }),
+                        )
                         .into_any_element(),
                     );
 
