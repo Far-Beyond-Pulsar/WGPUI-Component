@@ -235,20 +235,16 @@ impl RenderOnce for TabBar {
                                     .when_some(selected_index, |this, sel_ix| {
                                         this.selected(sel_ix == ix)
                                     })
-                                    .when_some(
-                                        on_click.clone(),
-                                        move |this, cb| {
-                                            this.on_click(move |_, w, c| {
-                                                cb(&ix, w, c)
-                                            })
-                                        },
-                                    );
+                                    .when_some(on_click.clone(), move |this, cb| {
+                                        this.on_click(move |_, w, c| cb(&ix, w, c))
+                                    });
                                 tab
                             })
                             .collect::<Vec<_>>()
                     },
                 )
                 .flex_1()
+                .w_full()
                 .h(variant.height(size)),
             )
             .when(self.suffix.is_some() || self.menu, |this| {
