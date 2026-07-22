@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::button::{Button, ButtonVariants as _};
@@ -6,10 +7,10 @@ use crate::{h_flex, ActiveTheme, IconName, Selectable, Sizable, Size, StyledExt}
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, Action, AnyElement, App, Corner, Div, Edges, ElementId, IntoElement, ParentElement,
-    Pixels, RenderOnce, ScrollHandle, Stateful, StatefulInteractiveElement as _, StyleRefinement,
+    Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
     Styled, Window,
 };
-use gpui::{px, InteractiveElement};
+use gpui::{h_list, px, HListScrollHandle, InteractiveElement};
 use smallvec::SmallVec;
 
 use super::{Tab, TabVariant};
@@ -22,22 +23,22 @@ pub struct SelectTab(usize);
 pub struct TabBar {
     base: Stateful<Div>,
     style: StyleRefinement,
-    scroll_handle: Option<ScrollHandle>,
+    scroll_handle: Option<HListScrollHandle>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
-    children: SmallVec<[Tab; 2]>,
+    item_count: usize,
+    build_tab: Option<Box<dyn Fn(usize, &mut Window, &mut App) -> Tab>>,
     last_empty_space: AnyElement,
     selected_index: Option<usize>,
     variant: TabVariant,
     size: Size,
     menu: bool,
     on_click: Option<Arc<dyn Fn(&usize, &mut Window, &mut App) + 'static>>,
-    /// Special for internal TabPanel to remove the top border.
     tab_item_top_offset: Pixels,
+    item_labels: Vec<(Option<SharedString>, bool)>,
 }
 
 impl TabBar {
-    /// Create a new TabBar.
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             base: div().id(id).px(px(-1.)),
@@ -46,6 +47,8 @@ impl TabBar {
             scroll_handle: None,
             prefix: None,
             suffix: None,
+            item_count: 0,
+            build_tab: None,
             variant: TabVariant::default(),
             size: Size::default(),
             last_empty_space: div().w_3().into_any_element(),
@@ -53,91 +56,83 @@ impl TabBar {
             on_click: None,
             menu: false,
             tab_item_top_offset: px(0.),
+            item_labels: Vec::new(),
         }
     }
 
-    /// Set the Tab variant, all children will inherit the variant.
     pub fn with_variant(mut self, variant: TabVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    /// Set the Tab variant to Pill, all children will inherit the variant.
     pub fn pill(mut self) -> Self {
         self.variant = TabVariant::Pill;
         self
     }
 
-    /// Set the Tab variant to Outline, all children will inherit the variant.
     pub fn outline(mut self) -> Self {
         self.variant = TabVariant::Outline;
         self
     }
 
-    /// Set the Tab variant to Segmented, all children will inherit the variant.
     pub fn segmented(mut self) -> Self {
         self.variant = TabVariant::Segmented;
         self
     }
 
-    /// Set the Tab variant to Underline, all children will inherit the variant.
     pub fn underline(mut self) -> Self {
         self.variant = TabVariant::Underline;
         self
     }
 
-    /// Enable or disable the popup menu for the TabBar
     pub fn with_menu(mut self, menu: bool) -> Self {
         self.menu = menu;
         self
     }
 
-    /// Track the scroll of the TabBar
-    pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+    pub fn track_scroll(mut self, scroll_handle: &HListScrollHandle) -> Self {
         self.scroll_handle = Some(scroll_handle.clone());
         self
     }
 
-    /// Set the prefix element of the TabBar
     pub fn prefix(mut self, prefix: impl IntoElement) -> Self {
         self.prefix = Some(prefix.into_any_element());
         self
     }
 
-    /// Set the suffix element of the TabBar
     pub fn suffix(mut self, suffix: impl IntoElement) -> Self {
         self.suffix = Some(suffix.into_any_element());
         self
     }
 
-    /// Add children of the TabBar, all children will inherit the variant.
-    ///
     pub fn children(mut self, children: impl IntoIterator<Item = impl Into<Tab>>) -> Self {
-        self.children.extend(children.into_iter().map(Into::into));
+        let children: Vec<Tab> = children.into_iter().map(Into::into).collect();
+        self.item_labels = children
+            .iter()
+            .map(|t| (t.label.clone(), t.disabled))
+            .collect();
+        self.item_count = children.len();
+        self.build_tab = Some(Box::new(move |ix, _window, _cx| children[ix].clone()));
         self
     }
 
-    /// Add child of the TabBar, tab will inherit the variant.
     pub fn child(mut self, child: impl Into<Tab>) -> Self {
-        self.children.push(child.into());
+        let tab: Tab = child.into();
+        self.item_labels.push((tab.label.clone(), tab.disabled));
+        self.item_count += 1;
         self
     }
 
-    /// Set the selected index of the TabBar.
     pub fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = Some(index);
         self
     }
 
-    /// Set the last empty space element of the TabBar
     pub fn last_empty_space(mut self, last_empty_space: impl IntoElement) -> Self {
         self.last_empty_space = last_empty_space.into_any_element();
         self
     }
 
-    /// Set the on_click callback of the TabBar, the first parameter is the index of the clicked tab.
-    ///
-    /// When this is set, the children's on_click will be ignored.
     pub fn on_click(mut self, on_click: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Arc::new(on_click));
         self
@@ -164,24 +159,10 @@ impl Sizable for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let default_gap = match self.size {
-            Size::Small | Size::XSmall => px(8.),
-            Size::Large => px(16.),
-            _ => px(12.),
-        };
-        let (bg, paddings, gap) = match self.variant {
-            TabVariant::Tab => {
-                let padding = Edges::all(px(0.));
-                (cx.theme().tab_bar, padding, px(0.))
-            }
-            TabVariant::Outline => {
-                let padding = Edges::all(px(0.));
-                (cx.theme().transparent, padding, default_gap)
-            }
-            TabVariant::Pill => {
-                let padding = Edges::all(px(0.));
-                (cx.theme().transparent, padding, px(4.))
-            }
+        let (bg, paddings) = match self.variant {
+            TabVariant::Tab => (cx.theme().tab_bar, Edges::all(px(0.))),
+            TabVariant::Outline => (cx.theme().transparent, Edges::all(px(0.))),
+            TabVariant::Pill => (cx.theme().transparent, Edges::all(px(0.))),
             TabVariant::Segmented => {
                 let padding_x = match self.size {
                     Size::XSmall => px(2.),
@@ -189,36 +170,34 @@ impl RenderOnce for TabBar {
                     Size::Large => px(6.),
                     _ => px(5.),
                 };
-                let padding = Edges {
-                    left: padding_x,
-                    right: padding_x,
-                    ..Default::default()
-                };
-
-                (cx.theme().tab_bar_segmented, padding, px(2.))
+                (
+                    cx.theme().tab_bar_segmented,
+                    Edges {
+                        left: padding_x,
+                        right: padding_x,
+                        ..Default::default()
+                    },
+                )
             }
-            TabVariant::Underline => {
-                // This gap is same as the tab inner_paddings
-                let gap = match self.size {
-                    Size::XSmall => px(10.),
-                    Size::Small => px(12.),
-                    Size::Large => px(20.),
-                    _ => px(16.),
-                };
-
-                (cx.theme().transparent, Edges::all(px(0.)), gap)
-            }
+            TabVariant::Underline => (cx.theme().transparent, Edges::all(px(0.))),
         };
 
-        let mut item_labels = Vec::new();
+        let item_count = self.item_count;
+        let build_tab = self.build_tab;
+        let variant = self.variant;
+        let size = self.size;
+        let on_click = self.on_click.clone();
         let selected_index = self.selected_index;
+        let tab_item_top_offset = self.tab_item_top_offset;
+        let item_labels = self.item_labels.clone();
+        let scroll_handle = self.scroll_handle.clone();
 
         self.base
             .group("tab-bar")
             .on_action({
-                let on_click = self.on_click.clone();
+                let on_click = on_click.clone();
                 move |action: &SelectTab, window: &mut Window, cx: &mut App| {
-                    if let Some(on_click) = on_click.clone() {
+                    if let Some(ref on_click) = on_click {
                         on_click(&action.0, window, cx);
                     }
                 }
@@ -251,32 +230,37 @@ impl RenderOnce for TabBar {
             .refine_style(&self.style)
             .when_some(self.prefix, |this, prefix| this.child(prefix))
             .child(
-                h_flex()
-                    .id("tabs")
-                    .flex_1()
-                    .overflow_x_scroll()
-                    .when_some(self.scroll_handle, |this, scroll_handle| {
-                        this.track_scroll(&scroll_handle)
+                div().flex_1().overflow_hidden().child(
+                    h_list("tab-list", item_count, move |range, window, cx| {
+                        let Some(ref build_tab) = build_tab else {
+                            return vec![];
+                        };
+                        range
+                            .map(|ix| {
+                                let mut tab = build_tab(ix, window, cx);
+                                tab = tab
+                                    .id(ix)
+                                    .mt(tab_item_top_offset)
+                                    .with_variant(variant)
+                                    .with_size(size)
+                                    .when_some(selected_index, |this, sel_ix| {
+                                        this.selected(sel_ix == ix)
+                                    })
+                                    .when_some(on_click.clone(), move |this, cb| {
+                                        this.on_click(move |_, window, cx| cb(&ix, window, cx))
+                                    });
+                                tab.into_any_element()
+                            })
+                            .collect::<Vec<_>>()
                     })
-                    .gap(gap)
-                    .children(self.children.into_iter().enumerate().map(|(ix, child)| {
-                        item_labels.push((child.label.clone(), child.disabled));
-                        child
-                            .id(ix)
-                            .mt(self.tab_item_top_offset)
-                            .with_variant(self.variant)
-                            .with_size(self.size)
-                            .when_some(self.selected_index, |this, selected_ix| {
-                                this.selected(selected_ix == ix)
-                            })
-                            .when_some(self.on_click.clone(), move |this, on_click| {
-                                this.on_click(move |_, window, cx| on_click(&ix, window, cx))
-                            })
-                    }))
-                    .when(self.suffix.is_some() || self.menu, |this| {
-                        this.child(self.last_empty_space)
+                    .when_some(scroll_handle, |this, handle| {
+                        this.track_scroll(&handle)
                     }),
+                ),
             )
+            .when(self.suffix.is_some() || self.menu, |this| {
+                this.child(self.last_empty_space)
+            })
             .when(self.menu, |this| {
                 this.child(
                     Button::new("more")
@@ -293,7 +277,6 @@ impl RenderOnce for TabBar {
                                     *disabled,
                                 );
                             }
-
                             this
                         })
                         .anchor(Corner::TopRight),
