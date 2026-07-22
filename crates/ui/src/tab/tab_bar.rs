@@ -192,6 +192,7 @@ impl RenderOnce for TabBar {
             .relative()
             .flex()
             .items_center()
+            .w_full()
             .bg(bg)
             .text_color(cx.theme().tab_foreground)
             .when(

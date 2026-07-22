@@ -478,7 +478,6 @@ impl TabPanel {
                 div()
                     .id("tab-bar-empty-space")
                     .h_full()
-                    .flex_grow()
                     .min_w_16()
                     .when(state.droppable, |this| {
                         let channel = state.channel;
@@ -539,6 +538,7 @@ impl TabPanel {
         div()
             .id("tab-bar-container")
             .relative()
+            .w_full()
             .child(tab_bar)
             .child(
                 div()

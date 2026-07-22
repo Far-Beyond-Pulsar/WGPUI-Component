@@ -170,6 +170,7 @@ impl Render for DraggableTabBar {
             .child(
                 // Tab bar container
                 h_flex()
+                    .w_full()
                     .h(px(36.))
                     .bg(cx.theme().tab_bar)
                     .border_b_1()
