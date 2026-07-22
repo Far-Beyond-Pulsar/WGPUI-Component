@@ -340,12 +340,13 @@ impl TabPanel {
             .build_tabs(visible_count, labels, {
                 let panels = visible_panels.clone();
                 let active = active_panel.clone();
+                let view_for_dnd = view_for_build.clone();
                 move |ix, window, cx| {
                     let (orig_ix, ref panel) = panels[ix];
                     let is_active = active.as_ref() == Some(panel) && !collapsed_self;
                     let is_level_editor = panel.panel_name(cx) == "Level Editor";
 
-                    Tab::empty()
+                    let mut tab = Tab::empty()
                         .when_some(panel.tab_icon(cx), |this, icon| this.with_icon(icon))
                         .unsaved(panel.tab_unsaved(cx))
                         .map(|this| {
@@ -357,7 +358,7 @@ impl TabPanel {
                         })
                         .selected(is_active)
                         .on_click({
-                            let view_c = view_for_build.clone();
+                            let view_c = view_for_dnd.clone();
                             let da = dock_area_build.clone();
                             move |_, window, cx| {
                                 view_c.update(cx, |v, cx| {
@@ -373,27 +374,107 @@ impl TabPanel {
                         .on_mouse_down(gpui::MouseButton::Right, {
                             let ct = clicked_index.clone();
                             move |_, _, _| *ct.borrow_mut() = Some(orig_ix)
-                        })
-                        .suffix(
-                            h_flex().gap_1().when(!is_level_editor, |this| {
-                                this.child(
-                                    Button::new(("close-tab", orig_ix))
-                                        .icon(IconName::Close)
-                                        .ghost()
-                                        .xsmall()
-                                        .on_click({
-                                            let p = panel.clone();
-                                            let v = view_for_build.clone();
-                                            move |_, window, cx| {
-                                                v.update(cx, |this, cx| {
-                                                    this.remove_panel(p.clone(), window, cx);
-                                                });
-                                            }
-                                        }),
-                                )
-                            })
-                            .into_any_element(),
+                        });
+
+                    tab = tab.when(draggable, |this| {
+                        this.on_drag(
+                            DragPanel::new(panel.clone(), view_for_dnd.clone(), channel)
+                                .with_index(orig_ix),
+                            move |drag, position, _, cx| {
+                                let mut drag_with_pos = drag.clone();
+                                drag_with_pos.drag_start_position = Some(position);
+                                cx.stop_propagation();
+                                cx.new(|_| drag_with_pos)
+                            },
                         )
+                        .on_drag_move({
+                            let v = view_for_dnd.clone();
+                            move |event: &DragMoveEvent<DragPanel>, window, cx| {
+                                v.update(cx, |this, cx| {
+                                    let source_id = event.drag(cx).tab_panel.entity_id();
+                                    let my_id = cx.entity_id();
+                                    let mouse = window.mouse_position();
+                                    this.last_drag_screen_pos = Some(mouse);
+                                    crate::dock::tab_drag::set_drag_screen_position(mouse, cx);
+                                    let was_outside = this.dragging_outside_window;
+                                    let is_outside =
+                                        this.check_drag_outside_window(mouse, window, cx);
+                                    if is_outside {
+                                        this.will_split_placement = None;
+                                    }
+
+                                    if source_id == my_id {
+                                        if is_outside
+                                            && !was_outside
+                                            && !this.extraction_in_flight
+                                        {
+                                            let drag = event.drag(cx).clone();
+                                            this.begin_live_extraction(
+                                                &drag, mouse, window, cx,
+                                            );
+                                        } else if is_outside && this.extraction_in_flight {
+                                            this.move_extracted_window(mouse, window, cx);
+                                        } else if !is_outside && this.extraction_in_flight {
+                                            let panel = event.drag(cx).panel.clone();
+                                            this.cancel_live_extraction(panel, window, cx);
+                                        }
+                                    }
+                                });
+                            }
+                        })
+                    });
+
+                    tab = tab.when(droppable, |this| {
+                        this.drag_over::<DragPanel>({
+                            let v = view_for_dnd.clone();
+                            move |this, drag, window, cx| {
+                                if drag.channel == channel {
+                                    v.update(cx, |v, cx| {
+                                        v.in_valid_drag = true;
+                                        cx.notify();
+                                    });
+                                    this.rounded_l_none()
+                                        .border_l_2()
+                                        .border_r_0()
+                                        .border_color(cx.theme().drag_border)
+                                } else {
+                                    this
+                                }
+                            }
+                        })
+                        .on_drop({
+                            let v = view_for_dnd.clone();
+                            move |drag: &DragPanel, window, cx| {
+                                v.update(cx, |this, cx| {
+                                    this.will_split_placement = None;
+                                    this.on_drop(drag, Some(orig_ix), true, window, cx);
+                                });
+                            }
+                        })
+                    });
+
+                    tab = tab.suffix(
+                        h_flex().gap_1().when(!is_level_editor, |this| {
+                            this.child(
+                                Button::new(("close-tab", orig_ix))
+                                    .icon(IconName::Close)
+                                    .ghost()
+                                    .xsmall()
+                                    .on_click({
+                                        let p = panel.clone();
+                                        let v = view_for_dnd.clone();
+                                        move |_, window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.remove_panel(p.clone(), window, cx);
+                                            });
+                                        }
+                                    }),
+                            )
+                        })
+                        .into_any_element(),
+                    );
+
+                    tab
                 }
             })
             .last_empty_space(
