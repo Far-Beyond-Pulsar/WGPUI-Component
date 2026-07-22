@@ -5,10 +5,9 @@ use std::sync::Arc;
 use gpui::{
     div, prelude::FluentBuilder, px, relative, rems, size, AnyWindowHandle, App, AppContext,
     Bounds, Context, Corner, DismissEvent, Div, DragMoveEvent, Empty, Entity, EventEmitter,
-    FocusHandle, Focusable, HListScrollHandle, HListScrollStrategy, InteractiveElement as _,
-    IntoElement, ParentElement, Pixels, Point, ReadGlobal, Render, SharedString,
-    StatefulInteractiveElement, StyleRefinement, Styled, UpdateGlobal, WeakEntity, Window,
-    WindowBounds, WindowKind, WindowOptions,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement, Pixels, Point,
+    ReadGlobal, Render, ScrollHandle, SharedString, StatefulInteractiveElement, StyleRefinement,
+    Styled, UpdateGlobal, WeakEntity, Window, WindowBounds, WindowKind, WindowOptions,
 };
 use rust_i18n::t;
 
@@ -137,7 +136,7 @@ pub struct TabPanel {
     /// This is used for Dock to limit the last TabPanel not able to close, see [`super::Dock::new`].
     pub(crate) closable: bool,
 
-    pub(crate) tab_bar_scroll_handle: HListScrollHandle,
+    pub(crate) tab_bar_scroll_handle: ScrollHandle,
     pub(crate) zoomed: bool,
     pub(crate) collapsed: bool,
     /// When drag move, will get the placement of the panel to be split
@@ -176,7 +175,7 @@ impl TabPanel {
             stack_panel,
             panels: Vec::new(),
             active_ix: 0,
-            tab_bar_scroll_handle: HListScrollHandle::new(),
+            tab_bar_scroll_handle: ScrollHandle::new(),
             will_split_placement: None,
             zoomed: false,
             collapsed: false,
@@ -250,7 +249,7 @@ impl TabPanel {
         let last_active_ix = self.active_ix;
 
         self.active_ix = ix;
-        self.tab_bar_scroll_handle.scroll_to_item(ix, HListScrollStrategy::Nearest);
+        self.tab_bar_scroll_handle.scroll_to_item(ix);
         self.focus_active_panel(window, cx);
 
         // Sync the active state to all panels

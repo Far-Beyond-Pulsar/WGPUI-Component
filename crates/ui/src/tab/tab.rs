@@ -46,7 +46,7 @@ impl Default for TabStyle {
 }
 
 impl TabVariant {
-    fn height(&self, size: Size) -> Pixels {
+    pub(super) fn height(&self, size: Size) -> Pixels {
         match size {
             Size::XSmall => match self {
                 TabVariant::Underline => px(28.), // Increased from 26

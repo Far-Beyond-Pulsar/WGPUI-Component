@@ -9,7 +9,7 @@ use gpui::{
     Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
     Styled, Window,
 };
-use gpui::{h_list, px, HListScrollHandle, InteractiveElement};
+use gpui::{h_list, px, InteractiveElement, ScrollHandle};
 
 use super::{Tab, TabVariant};
 
@@ -21,7 +21,6 @@ pub struct SelectTab(usize);
 pub struct TabBar {
     base: Stateful<Div>,
     style: StyleRefinement,
-    scroll_handle: Option<HListScrollHandle>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
     tab_count: usize,
@@ -41,7 +40,6 @@ impl TabBar {
         Self {
             base: div().id(id).px(px(-1.)),
             style: StyleRefinement::default(),
-            scroll_handle: None,
             prefix: None,
             suffix: None,
             tab_count: 0,
@@ -87,8 +85,7 @@ impl TabBar {
         self
     }
 
-    pub fn track_scroll(mut self, scroll_handle: &HListScrollHandle) -> Self {
-        self.scroll_handle = Some(scroll_handle.clone());
+    pub fn track_scroll(mut self, _scroll_handle: &ScrollHandle) -> Self {
         self
     }
 
@@ -149,7 +146,7 @@ impl Sizable for TabBar {
 }
 
 impl RenderOnce for TabBar {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (bg, paddings) = match self.variant {
             TabVariant::Tab => (cx.theme().tab_bar, Edges::all(px(0.))),
             TabVariant::Outline => (cx.theme().transparent, Edges::all(px(0.))),
@@ -181,7 +178,6 @@ impl RenderOnce for TabBar {
         let selected_index = self.selected_index;
         let tab_item_top_offset = self.tab_item_top_offset;
         let item_labels = self.item_labels.clone();
-        let scroll_handle = self.scroll_handle.clone();
 
         self.base
             .group("tab-bar")
@@ -221,10 +217,12 @@ impl RenderOnce for TabBar {
             .refine_style(&self.style)
             .when_some(self.prefix, |this, prefix| this.child(prefix))
             .child(
-                div().flex_1().overflow_hidden().child(
-                    h_list("tab-list", tab_count, move |range, window, cx| {
-                        let Some(ref build_tab) = build_tab else {
-                            return vec![];
+                h_list(
+                    "tabs",
+                    tab_count,
+                    move |range, window: &mut Window, cx: &mut App| {
+                        let Some(build_tab) = build_tab.as_ref() else {
+                            return Vec::new();
                         };
                         range
                             .map(|ix| {
@@ -237,17 +235,21 @@ impl RenderOnce for TabBar {
                                     .when_some(selected_index, |this, sel_ix| {
                                         this.selected(sel_ix == ix)
                                     })
-                                    .when_some(on_click.clone(), move |this, cb| {
-                                        this.on_click(move |_, window, cx| cb(&ix, window, cx))
-                                    });
-                                tab.into_any_element()
+                                    .when_some(
+                                        on_click.clone(),
+                                        move |this, cb| {
+                                            this.on_click(move |_, w, c| {
+                                                cb(&ix, w, c)
+                                            })
+                                        },
+                                    );
+                                tab
                             })
                             .collect::<Vec<_>>()
-                    })
-                    .when_some(scroll_handle, |this, handle| {
-                        this.track_scroll(&handle)
-                    }),
-                ),
+                    },
+                )
+                .flex_1()
+                .h(variant.height(size)),
             )
             .when(self.suffix.is_some() || self.menu, |this| {
                 this.child(self.last_empty_space)
