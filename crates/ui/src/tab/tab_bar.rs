@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::button::{Button, ButtonVariants as _};
@@ -11,7 +10,6 @@ use gpui::{
     Styled, Window,
 };
 use gpui::{h_list, px, HListScrollHandle, InteractiveElement};
-use smallvec::SmallVec;
 
 use super::{Tab, TabVariant};
 
@@ -26,8 +24,8 @@ pub struct TabBar {
     scroll_handle: Option<HListScrollHandle>,
     prefix: Option<AnyElement>,
     suffix: Option<AnyElement>,
-    item_count: usize,
-    build_tab: Option<Box<dyn Fn(usize, &mut Window, &mut App) -> Tab>>,
+    tab_count: usize,
+    build_tab: Option<Arc<dyn Fn(usize, &mut Window, &mut App) -> Tab>>,
     last_empty_space: AnyElement,
     selected_index: Option<usize>,
     variant: TabVariant,
@@ -43,11 +41,10 @@ impl TabBar {
         Self {
             base: div().id(id).px(px(-1.)),
             style: StyleRefinement::default(),
-            children: SmallVec::new(),
             scroll_handle: None,
             prefix: None,
             suffix: None,
-            item_count: 0,
+            tab_count: 0,
             build_tab: None,
             variant: TabVariant::default(),
             size: Size::default(),
@@ -105,24 +102,6 @@ impl TabBar {
         self
     }
 
-    pub fn children(mut self, children: impl IntoIterator<Item = impl Into<Tab>>) -> Self {
-        let children: Vec<Tab> = children.into_iter().map(Into::into).collect();
-        self.item_labels = children
-            .iter()
-            .map(|t| (t.label.clone(), t.disabled))
-            .collect();
-        self.item_count = children.len();
-        self.build_tab = Some(Box::new(move |ix, _window, _cx| children[ix].clone()));
-        self
-    }
-
-    pub fn child(mut self, child: impl Into<Tab>) -> Self {
-        let tab: Tab = child.into();
-        self.item_labels.push((tab.label.clone(), tab.disabled));
-        self.item_count += 1;
-        self
-    }
-
     pub fn selected_index(mut self, index: usize) -> Self {
         self.selected_index = Some(index);
         self
@@ -140,6 +119,21 @@ impl TabBar {
 
     pub(crate) fn tab_item_top_offset(mut self, offset: impl Into<Pixels>) -> Self {
         self.tab_item_top_offset = offset.into();
+        self
+    }
+
+    /// Set tab count and builder callback, following the same pattern as
+    /// [`uniform_list`](gpui::uniform_list). The callback receives an index
+    /// and must return a fully-configured [`Tab`].
+    pub fn build_tabs(
+        mut self,
+        count: usize,
+        labels: Vec<(Option<SharedString>, bool)>,
+        build: impl Fn(usize, &mut Window, &mut App) -> Tab + 'static,
+    ) -> Self {
+        self.tab_count = count;
+        self.item_labels = labels;
+        self.build_tab = Some(Arc::new(build));
         self
     }
 }
@@ -182,7 +176,7 @@ impl RenderOnce for TabBar {
             TabVariant::Underline => (cx.theme().transparent, Edges::all(px(0.))),
         };
 
-        let item_count = self.item_count;
+        let tab_count = self.tab_count;
         let build_tab = self.build_tab;
         let variant = self.variant;
         let size = self.size;
@@ -231,7 +225,7 @@ impl RenderOnce for TabBar {
             .when_some(self.prefix, |this, prefix| this.child(prefix))
             .child(
                 div().flex_1().overflow_hidden().child(
-                    h_list("tab-list", item_count, move |range, window, cx| {
+                    h_list("tab-list", tab_count, move |range, window, cx| {
                         let Some(ref build_tab) = build_tab else {
                             return vec![];
                         };
