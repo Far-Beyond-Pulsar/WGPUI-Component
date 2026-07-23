@@ -33,7 +33,7 @@ inspector = []
 # (no engine feature flags — all engine deps have been removed)
 
 [dependencies]
-gpui-ce = { path = "../../../wgpui" }
+gpui-ce.workspace = true
 ui-macros = { path = "../ui-macros" }
 
 anyhow = "1"
