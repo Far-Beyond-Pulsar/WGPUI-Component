@@ -168,7 +168,6 @@ impl Settings {
             .collapsed(false)
             .header(
                 div()
-                    .flex_1()
                     .w_full()
                     .refine_style(&self.header_style)
                     .child(Input::new(&search_input).w_full().prefix(IconName::Search)),

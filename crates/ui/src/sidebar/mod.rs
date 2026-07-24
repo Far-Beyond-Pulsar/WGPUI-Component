@@ -263,6 +263,7 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
                 this.child(
                     h_flex()
                         .id("header")
+                        .w_full()
                         .pt_3()
                         .px_3()
                         .gap_2()
