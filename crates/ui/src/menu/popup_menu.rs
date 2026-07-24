@@ -1076,11 +1076,9 @@ impl PopupMenu {
                 render,
                 icon,
                 disabled,
-                action,
                 ..
             } => {
-                let effective_disabled =
-                    *disabled || !window.is_action_available(action.as_ref(), &*cx);
+                let effective_disabled = *disabled;
                 this.when(!effective_disabled, |this| {
                     this.on_click(
                         cx.listener(move |this, _, window, cx| this.on_click(ix, window, cx)),
@@ -1103,13 +1101,11 @@ impl PopupMenu {
                 action,
                 disabled,
                 is_link,
+                handler,
                 ..
             } => {
                 let show_link_icon = *is_link && self.external_link_icon;
-                let effective_disabled = *disabled
-                    || action
-                        .as_ref()
-                        .map_or(false, |a| !window.is_action_available(a.as_ref(), &*cx));
+                let effective_disabled = *disabled || (action.is_none() && handler.is_none());
                 let action = action.as_ref().map(|action| action.boxed_clone());
                 let key = self.render_key_binding(action, window, cx);
 
