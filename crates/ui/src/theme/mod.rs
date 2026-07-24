@@ -9,11 +9,13 @@ use std::{
 };
 
 mod color;
+mod color_blind;
 mod registry;
 mod schema;
 mod theme_color;
 
 pub use color::*;
+pub use color_blind::*;
 pub use registry::*;
 pub use schema::*;
 pub use theme_color::*;
@@ -72,6 +74,8 @@ pub struct Theme {
     /// effect is not broken by window deactivation (e.g. Windows Acrylic).
     /// Defaults to `false` for full backward-compatibility.
     pub always_transparent: bool,
+    /// Color-blind friendly mode that remaps the UI color palette.
+    pub color_blind_mode: ColorBlindMode,
 }
 
 impl Default for Theme {
@@ -216,6 +220,11 @@ impl Theme {
             theme.apply_config(&theme.light_theme.clone());
         }
 
+        // Apply color-blind remap on top of resolved theme colors
+        if theme.color_blind_mode != ColorBlindMode::None {
+            apply_color_blind_remap(&mut theme.colors, theme.color_blind_mode);
+        }
+
         if let Some(window) = window {
             let theme = cx.global::<Theme>();
             window.set_background_appearance(theme.window_background.into());
@@ -262,6 +271,7 @@ impl From<ThemeColor> for Theme {
             highlight_theme: HighlightTheme::default_light(),
             window_background: ThemeWindowBackground::Opaque,
             always_transparent: false,
+            color_blind_mode: ColorBlindMode::None,
         }
     }
 }

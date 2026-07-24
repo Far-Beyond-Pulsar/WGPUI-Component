@@ -37,7 +37,7 @@ use crate::{
     button::{Button, ButtonVariants},
     popup_menu::PopupMenuExt,
     scroll::ScrollbarShow,
-    ActiveTheme, IconName, Sizable, Theme, ThemeRegistry,
+    ActiveTheme, ColorBlindMode, IconName, Sizable, Theme, ThemeRegistry,
 };
 use gpui::{
     div, px, Action, App, InteractiveElement as _, ParentElement as _, Render, SharedString,
@@ -59,6 +59,7 @@ fn get_state_file_path() -> PathBuf {
 struct State {
     theme: SharedString,
     scrollbar_show: Option<ScrollbarShow>,
+    color_blind_mode: Option<ColorBlindMode>,
 }
 
 impl Default for State {
@@ -66,6 +67,7 @@ impl Default for State {
         Self {
             theme: "Default Dark".into(),
             scrollbar_show: None,
+            color_blind_mode: None,
         }
     }
 }
@@ -137,12 +139,16 @@ pub fn init(cx: &mut App) {
     if let Some(scrollbar_show) = state.scrollbar_show {
         Theme::global_mut(cx).scrollbar_show = scrollbar_show;
     }
+    if let Some(cb_mode) = state.color_blind_mode {
+        Theme::global_mut(cx).color_blind_mode = cb_mode;
+    }
     cx.refresh_windows();
 
     cx.observe_global::<Theme>(|cx| {
         let state = State {
             theme: cx.theme().theme_name().clone(),
             scrollbar_show: Some(cx.theme().scrollbar_show),
+            color_blind_mode: Some(cx.theme().color_blind_mode),
         };
 
         let json = serde_json::to_string_pretty(&state).unwrap();
