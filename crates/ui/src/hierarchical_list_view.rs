@@ -12,10 +12,8 @@
 //! - Optional custom header with buttons
 //! - Optional panel layout (full-page) vs widget layout (compact)
 //! - Custom item rendering with icons, colors, and extra content
-//! - Virtualized rendering via v_virtual_list (only visible rows are rendered)
 
 use gpui::{prelude::*, *};
-use std::rc::Rc;
 use std::sync::Arc;
 use crate::{
     button::{Button, ButtonVariants as _},
@@ -24,7 +22,8 @@ use crate::{
     h_flex,
     input::{InputState, TextInput},
     menu::{context_menu::ContextMenu, popup_menu::PopupMenu},
-    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    scroll::ScrollbarAxis,
+    v_flex, ActiveTheme, Icon, IconName, Sizable, StyledExt,
 };
 
 /// Trait for items that can be displayed in a hierarchical tree
@@ -123,35 +122,14 @@ pub struct HierarchyConfig<Item: HierarchyItem> {
     pub on_drop: Arc<dyn Fn(Item::DragPayload, &Item::Id, &Modifiers, &mut Window, &mut App)>,
 }
 
-/// A flattened entry in the tree — one visible row.
-#[derive(Clone, Debug)]
-pub struct FlatTreeEntry {
-    pub item_index: usize,
-    pub depth: usize,
-}
-
-/// Generic hierarchical tree view component — now a GPUI entity with virtualized rendering.
+/// Generic hierarchical tree view component
 pub struct HierarchicalTreeView<Item: HierarchyItem> {
     config: HierarchyConfig<Item>,
-    focus_handle: FocusHandle,
-    flat_entries: Vec<FlatTreeEntry>,
-}
-
-impl<Item: HierarchyItem> EventEmitter<DismissEvent> for HierarchicalTreeView<Item> {}
-
-impl<Item: HierarchyItem> Focusable for HierarchicalTreeView<Item> {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
 }
 
 impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
-    pub fn new(config: HierarchyConfig<Item>, cx: &Context<'_, impl Render>) -> Self {
-        Self {
-            config,
-            focus_handle: cx.focus_handle(),
-            flat_entries: Vec::new(),
-        }
+    pub fn new(config: HierarchyConfig<Item>) -> Self {
+        Self { config }
     }
 
     fn get_root_item_indices(&self) -> Vec<usize> {
@@ -173,26 +151,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         self.config.items.iter().find(|item| item.id() == *id)
     }
 
-    fn flatten_tree(
-        config: &HierarchyConfig<Item>,
-        root_ids: &[Item::Id],
-        result: &mut Vec<FlatTreeEntry>,
-        depth: usize,
-    ) {
-        for id in root_ids {
-            if let Some(idx) = config.items.iter().position(|item| item.id() == *id) {
-                result.push(FlatTreeEntry { item_index: idx, depth });
-                if (config.is_expanded)(&config.items[idx].id()) {
-                    let children = config.items[idx].children_ids();
-                    if !children.is_empty() {
-                        Self::flatten_tree(config, &children, result, depth + 1);
-                    }
-                }
-            }
-        }
-    }
-
-    fn render_flat_item<V>(
+    fn render_tree_item<V>(
         &self,
         item: &Item,
         depth: usize,
@@ -376,30 +335,52 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             .w_full()
             .child(draggable_row);
 
+        // Recursively render children if expanded
+        let children_elements: Vec<AnyElement> = if has_children && is_expanded {
+            children_ids
+                .iter()
+                .filter_map(|child_id| self.find_item(child_id))
+                .map(|child| {
+                    self.render_tree_item(child, depth + 1, cx)
+                        .into_any_element()
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
         v_flex()
             .w_full()
             .child(drop_row)
+            .children(children_elements)
     }
 
-    fn render_panel_layout(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        self.flat_entries.clear();
-        Self::flatten_tree(&self.config, &self.config.root_ids, &mut self.flat_entries, 0);
+    pub fn render<V>(mut self, cx: &mut Context<V>) -> AnyElement
+    where
+        V: 'static + Render,
+    {
+        let layout = self.config.layout.clone();
 
+        match layout {
+            HierarchyLayout::Panel => self.render_panel_layout(cx).into_any_element(),
+            HierarchyLayout::Widget => self.render_widget_layout(cx).into_any_element(),
+        }
+    }
+
+    fn render_panel_layout<V>(mut self, cx: &mut Context<V>) -> impl IntoElement
+    where
+        V: 'static + Render,
+    {
+        let root_indices = self.get_root_item_indices();
         let item_count = self.config.items.len();
         let header_buttons = std::mem::take(&mut self.config.header_buttons);
-
-        let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
-            (0..self.flat_entries.len())
-                .map(|_| size(px(0.0), px(28.0)))
-                .collect(),
-        );
-
-        let entity = cx.entity();
 
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .child(
+                // Compact header — the workspace/tab system already provides
+                // the panel title, so this only shows extra controls (add buttons).
                 h_flex()
                     .w_full()
                     .px_4()
@@ -481,42 +462,32 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                 ),
                         )
                     })
-                    .child(v_virtual_list(
-                        entity,
-                        "hierarchical-tree-list",
-                        item_sizes,
-                        move |this, range, _window, cx| {
-                            range
-                                .map(|i| {
-                                    let entry = &this.flat_entries[i];
-                                    let item = &this.config.items[entry.item_index];
-                                    this.render_flat_item(item, entry.depth, cx)
-                                        .into_any_element()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .w_full()
+                            .gap_px()
+                            .scrollable(ScrollbarAxis::Vertical)
+                            .children(root_indices.into_iter().filter_map(|idx| {
+                                self.config.items.get(idx).map(|item| {
+                                    self.render_tree_item(item, 0, cx).into_any_element()
                                 })
-                                .collect()
-                        },
-                    )),
+                            })),
+                    ),
             )
     }
 
-    fn render_widget_layout(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        self.flat_entries.clear();
-        Self::flatten_tree(&self.config, &self.config.root_ids, &mut self.flat_entries, 0);
-
+    fn render_widget_layout<V>(mut self, cx: &mut Context<V>) -> impl IntoElement
+    where
+        V: 'static + Render,
+    {
+        let root_indices = self.get_root_item_indices();
         let item_count = self.config.items.len();
         let empty_message = self.config.empty_message.clone();
         let widget_icon = std::mem::take(&mut self.config.widget_icon);
         let widget_title = std::mem::take(&mut self.config.widget_title);
         let widget_add_button = std::mem::take(&mut self.config.widget_add_button);
-        let is_empty = self.flat_entries.is_empty();
-
-        let item_sizes: Rc<Vec<Size<Pixels>>> = Rc::new(
-            (0..self.flat_entries.len())
-                .map(|_| size(px(0.0), px(28.0)))
-                .collect(),
-        );
-
-        let entity = cx.entity();
+        let is_empty = root_indices.is_empty();
 
         v_flex()
             .w_full()
@@ -576,6 +547,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                     .max_h(px(300.0))
                     .gap_px()
                     .p_1()
+                    .scrollable(ScrollbarAxis::Vertical)
                     .when(self.config.root_drop_zone.is_some(), |this| {
                         let (label, on_drop) = self.config.root_drop_zone.as_ref().unwrap();
                         this.child(
@@ -623,32 +595,12 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                 .child(empty_message.clone()),
                         )
                     })
-                    .when(!is_empty, |el| {
-                        el.child(v_virtual_list(
-                            entity,
-                            "hierarchical-tree-list-widget",
-                            item_sizes,
-                            move |this, range, _window, cx| {
-                                range
-                                    .map(|i| {
-                                        let entry = &this.flat_entries[i];
-                                        let item = &this.config.items[entry.item_index];
-                                        this.render_flat_item(item, entry.depth, cx)
-                                            .into_any_element()
-                                    })
-                                    .collect()
-                            },
-                        ))
-                    }),
+                    .children(root_indices.into_iter().filter_map(|idx| {
+                        self.config
+                            .items
+                            .get(idx)
+                            .map(|item| self.render_tree_item(item, 0, cx).into_any_element())
+                    })),
             )
-    }
-}
-
-impl<Item: HierarchyItem> Render for HierarchicalTreeView<Item> {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match self.config.layout.clone() {
-            HierarchyLayout::Panel => self.render_panel_layout(cx).into_any_element(),
-            HierarchyLayout::Widget => self.render_widget_layout(cx).into_any_element(),
-        }
     }
 }
