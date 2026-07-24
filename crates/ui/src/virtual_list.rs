@@ -325,6 +325,31 @@ impl Element for VirtualList {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        // Persist the scroll handle across frames using element state.
+        // Without this, a new VirtualListScrollHandle is created every frame in
+        // the `virtual_list` constructor, losing the scroll offset on each frame.
+        if let Some(global_id) = global_id {
+            let key = global_id.clone();
+            let persisted = window.with_element_state::<VirtualListScrollHandle>(
+                &key,
+                |state, _window| {
+                    if let Some(handle) = state {
+                        (handle.clone(), handle)
+                    } else {
+                        (self.scroll_handle.clone(), self.scroll_handle.clone())
+                    }
+                },
+            );
+            self.scroll_handle = persisted;
+            // Rebuild the base div so its tracked_scroll_handle points to the
+            // persisted handle rather than the ephemeral one from the constructor.
+            self.base = div()
+                .id(self.id.clone())
+                .size_full()
+                .overflow_scroll()
+                .track_scroll(&self.scroll_handle);
+        }
+
         let rem_size = window.rem_size();
         let font_size = window.text_style().font_size.to_pixels(rem_size);
         let mut size_layout = ItemSizeLayout::default();
