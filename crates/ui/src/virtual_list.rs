@@ -330,9 +330,9 @@ impl Element for VirtualList {
         // the `virtual_list` constructor, losing the scroll offset on each frame.
         if let Some(global_id) = global_id {
             let key = global_id.clone();
-            let persisted = window.with_element_state::<VirtualListScrollHandle>(
+            let persisted = window.with_element_state(
                 &key,
-                |state, _window| {
+                |state: Option<VirtualListScrollHandle>, _window| {
                     if let Some(handle) = state {
                         (handle.clone(), handle)
                     } else {
