@@ -458,7 +458,6 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                             v_flex()
                                 .flex_1()
                                 .min_h_0()
-                                .overflow_hidden()
                                 .child(
                                     v_virtual_list(
                                         view,
