@@ -1076,14 +1076,17 @@ impl PopupMenu {
                 render,
                 icon,
                 disabled,
+                action,
                 ..
-            } => this
-                .when(!disabled, |this| {
+            } => {
+                let effective_disabled =
+                    *disabled || !window.is_action_available(action.as_ref(), &*cx);
+                this.when(!effective_disabled, |this| {
                     this.on_click(
                         cx.listener(move |this, _, window, cx| this.on_click(ix, window, cx)),
                     )
                 })
-                .disabled(*disabled)
+                .disabled(effective_disabled)
                 .child(
                     h_flex()
                         .flex_1()
@@ -1092,7 +1095,8 @@ impl PopupMenu {
                         .gap_x_1()
                         .children(Self::render_icon(has_icon, icon.clone(), window, cx))
                         .child((render)(window, cx)),
-                ),
+                )
+            }
             PopupMenuItem::Item {
                 icon,
                 label,
@@ -1102,15 +1106,19 @@ impl PopupMenu {
                 ..
             } => {
                 let show_link_icon = *is_link && self.external_link_icon;
+                let effective_disabled = *disabled
+                    || action
+                        .as_ref()
+                        .map_or(false, |a| !window.is_action_available(a.as_ref(), &*cx));
                 let action = action.as_ref().map(|action| action.boxed_clone());
                 let key = self.render_key_binding(action, window, cx);
 
-                this.when(!disabled, |this| {
+                this.when(!effective_disabled, |this| {
                     this.on_click(
                         cx.listener(move |this, _, window, cx| this.on_click(ix, window, cx)),
                     )
                 })
-                .disabled(*disabled)
+                .disabled(effective_disabled)
                 .h(item_height)
                 .children(Self::render_icon(has_icon, icon.clone(), window, cx))
                 .child(

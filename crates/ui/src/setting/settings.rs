@@ -45,7 +45,7 @@ impl Settings {
             pages: vec![],
             group_variant: GroupBoxVariant::default(),
             size: Size::default(),
-            sidebar_width: px(250.0),
+            sidebar_width: px(320.0),
             sidebar_style: StyleRefinement::default(),
             default_selected_index: SelectIndex::default(),
             header_style: StyleRefinement::default(),

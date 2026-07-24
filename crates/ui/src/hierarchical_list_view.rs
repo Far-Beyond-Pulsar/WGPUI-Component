@@ -132,11 +132,13 @@ struct FlatTreeEntry {
 /// Generic hierarchical tree view component
 pub struct HierarchicalTreeView<Item: HierarchyItem> {
     config: HierarchyConfig<Item>,
+    scroll_handle: VirtualListScrollHandle,
+    scrollbar_state: ScrollbarState,
 }
 
 impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
     pub fn new(config: HierarchyConfig<Item>) -> Self {
-        Self { config }
+        Self { config, scroll_handle: VirtualListScrollHandle::new(), scrollbar_state: ScrollbarState::default() }
     }
 
     fn get_root_item_indices(&self) -> Vec<usize> {
@@ -213,6 +215,8 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         let item_count = items.len();
         let view = cx.entity().clone();
         let root_drop_zone = self.config.root_drop_zone.clone();
+        let scroll_handle = self.scroll_handle.clone();
+        let scrollbar_state = self.scrollbar_state.clone();
 
         v_flex()
             .size_full()
@@ -262,6 +266,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .overflow_hidden()
                     .child(
                         v_flex()
                             .id("hierarchy-panel-content")
@@ -326,8 +331,18 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                             .collect()
                                     },
                                 )
-                                .gap(px(1.0)),
+                                .gap(px(1.0))
+                                .track_scroll(&scroll_handle),
                             ),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
                     ),
             )
     }
@@ -353,6 +368,8 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         let view = cx.entity().clone();
         let root_drop_zone = self.config.root_drop_zone.clone();
         let item_count = items.len();
+        let scroll_handle = self.scroll_handle.clone();
+        let scrollbar_state = self.scrollbar_state.clone();
 
         v_flex()
             .w_full()
@@ -457,9 +474,11 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                     })
                     .when(!is_empty, |el| {
                         el.child(
-                            v_flex()
+                            div()
+                                .relative()
                                 .flex_1()
                                 .min_h_0()
+                                .overflow_hidden()
                                 .child(
                                     v_virtual_list(
                                         view,
@@ -484,7 +503,17 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                                 .collect()
                                         },
                                     )
-                                    .gap(px(1.0)),
+                                    .gap(px(1.0))
+                                    .track_scroll(&scroll_handle),
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .left_0()
+                                        .right_0()
+                                        .bottom_0()
+                                        .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
                                 ),
                         )
                     }),

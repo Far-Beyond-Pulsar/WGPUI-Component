@@ -265,7 +265,7 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
                         .id("header")
                         .w_full()
                         .pt_3()
-                        .px_3()
+                        .px_2()
                         .gap_2()
                         .when(self.collapsed, |this| this.pt_2().px_2())
                         .child(header),
