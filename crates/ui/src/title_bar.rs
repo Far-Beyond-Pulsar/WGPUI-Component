@@ -280,7 +280,7 @@ impl RenderOnce for TitleBar {
                             })
                         })
                         .when(is_macos, |this| {
-                            this.on_double_click(|_, window, _| window.titlebar_double_click())
+                            this.on_double_click(|_, window, _| window.zoom_window())
                         })
                         .children(self.children),
                 )
