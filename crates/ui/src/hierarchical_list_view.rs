@@ -23,8 +23,8 @@ use crate::{
     h_flex,
     input::{InputState, TextInput},
     menu::{context_menu::ContextMenu, popup_menu::PopupMenu},
-    scroll::ScrollbarAxis,
-    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    scroll::{Scrollbar, ScrollbarState},
+    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt, VirtualListScrollHandle,
 };
 
 /// Trait for items that can be displayed in a hierarchical tree
@@ -257,71 +257,75 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                     .child(h_flex().gap_1().children(header_buttons)),
             )
             .child(
-                v_flex()
+                div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .overflow_hidden()
-                    .p_2()
-                    .when_some(root_drop_zone, |this, (label, on_drop_arc)| {
-                        this.child(
-                            DropArea::<Item::DragPayload>::new("hierarchy-root-drop")
-                                .on_drop({
-                                    move |payload, _, _| {
-                                        (on_drop_arc)(payload.clone());
-                                    }
-                                })
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .items_center()
-                                        .gap_1()
-                                        .h_7()
-                                        .pl(px(8.0))
-                                        .pr_2()
-                                        .rounded(px(4.0))
-                                        .border_1()
-                                        .border_color(cx.theme().border)
-                                        .bg(cx.theme().muted.opacity(0.18))
-                                        .child(
-                                            Icon::new(IconName::Folder)
-                                                .size(px(14.0))
-                                                .text_color(cx.theme().muted_foreground),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(label.clone()),
-                                        ),
-                                ),
-                        )
-                    })
                     .child(
-                        v_virtual_list(
-                            view,
-                            "hierarchy-panel-list",
-                            item_sizes,
-                            move |_v, range, _window, cx| {
-                                range
-                                    .map(|flat_idx| {
-                                        let entry = &flat_entries[flat_idx];
-                                        let item = &items[entry.item_index];
-                                        render_single_item(
-                                            item,
-                                            entry.depth,
-                                            is_expanded.clone(),
-                                            on_toggle_expand.clone(),
-                                            on_select.clone(),
-                                            on_drop.clone(),
-                                            cx,
-                                        )
-                                        .into_any_element()
-                                    })
-                                    .collect()
-                            },
-                        )
-                        .gap(px(1.0)),
+                        v_flex()
+                            .size_full()
+                            .p_2()
+                            .when_some(root_drop_zone, |this, (label, on_drop_arc)| {
+                                this.child(
+                                    DropArea::<Item::DragPayload>::new("hierarchy-root-drop")
+                                        .on_drop({
+                                            move |payload, _, _| {
+                                                (on_drop_arc)(payload.clone());
+                                            }
+                                        })
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .gap_1()
+                                                .h_7()
+                                                .pl(px(8.0))
+                                                .pr_2()
+                                                .rounded(px(4.0))
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .bg(cx.theme().muted.opacity(0.18))
+                                                .child(
+                                                    Icon::new(IconName::Folder)
+                                                        .size(px(14.0))
+                                                        .text_color(cx.theme().muted_foreground),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(label.clone()),
+                                                ),
+                                        ),
+                                )
+                            })
+                            .child(
+                                v_virtual_list(
+                                    view,
+                                    "hierarchy-panel-list",
+                                    item_sizes,
+                                    move |_v, range, _window, cx| {
+                                        range
+                                            .map(|flat_idx| {
+                                                let entry = &flat_entries[flat_idx];
+                                                let item = &items[entry.item_index];
+                                                render_single_item(
+                                                    item,
+                                                    entry.depth,
+                                                    is_expanded.clone(),
+                                                    on_toggle_expand.clone(),
+                                                    on_select.clone(),
+                                                    on_drop.clone(),
+                                                    cx,
+                                                )
+                                                .into_any_element()
+                                            })
+                                            .collect()
+                                    },
+                                )
+                                .gap(px(1.0)),
+                            ),
                     ),
             )
     }
