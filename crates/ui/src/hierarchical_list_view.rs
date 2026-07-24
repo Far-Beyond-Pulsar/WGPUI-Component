@@ -258,11 +258,13 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             )
             .child(
                 div()
+                    .id("hierarchy-panel-scroll")
                     .relative()
                     .flex_1()
                     .min_h_0()
                     .child(
                         v_flex()
+                            .id("hierarchy-panel-content")
                             .size_full()
                             .p_2()
                             .when_some(root_drop_zone, |this, (label, on_drop_arc)| {
