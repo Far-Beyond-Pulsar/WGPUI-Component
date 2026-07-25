@@ -299,7 +299,14 @@ fn main() {
             },
             |window, cx| {
                 let view = cx.new(|_cx| DemoView);
-                cx.new(|cx| Root::new(view.into(), window, cx))
+                let root = cx.new(|cx| Root::new(view.into(), window, cx));
+                // Open with the Inspector panel already visible (ctrl-shift-i /
+                // cmd-alt-i also toggles it at any time) so element/style/layout
+                // state -- and the profiler tab, once `flamegraph` is enabled --
+                // is available without an extra step.
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                window.toggle_inspector(cx);
+                root
             },
         )
         .unwrap();
