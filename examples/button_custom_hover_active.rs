@@ -284,6 +284,11 @@ impl Render for DemoView {
 fn main() {
     Application::new().run(|cx| {
         ui::init(cx);
+        // Default to dark mode. Set before the window opens (Theme::change
+        // takes an Option<&mut Window>, no window exists yet at this point)
+        // so the first frame already renders dark instead of flashing light
+        // then switching.
+        ui::Theme::change(ui::ThemeMode::Dark, None, cx);
 
         cx.open_window(
             WindowOptions {
