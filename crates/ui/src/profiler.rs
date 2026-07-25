@@ -948,7 +948,164 @@ impl ProfilerPanel {
             .child(render_counter_tiles(&summary, cx))
             .child(render_draw_call_table(&summary, cx))
             .child(render_atlas_and_events(&summary, cx))
-            .child(render_frame_duration_sparkline(capture, cx))
+            .child(self.render_frame_duration_sparkline(cx))
+            .into_any_element()
+    }
+
+    /// Per-frame duration sparkline over the whole capture window, pan+zoom
+    /// over the frame-index axis using the same `RangeZoom` math as the
+    /// flame chart's time axis (independent state — this is a different
+    /// domain — but the identical interaction logic and helpers).
+    fn render_frame_duration_sparkline(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        // Caller (`render_counters_section`) already guarantees a non-empty
+        // capture exists; this returns an empty placeholder rather than
+        // panicking if that invariant is ever violated.
+        let Some(capture) = self.capture.as_ref() else {
+            return div().into_any_element();
+        };
+        let durations_ms: Vec<f32> = capture
+            .frames()
+            .map(|f| (f.frame_end_ns.saturating_sub(f.frame_start_ns)) as f32 / 1.0e6)
+            .collect();
+        let frame_count = durations_ms.len();
+        if frame_count == 0 {
+            return div().into_any_element();
+        }
+        let max_ms = durations_ms.iter().cloned().fold(0.0f32, f32::max).max(1.0);
+        const SPARKLINE_HEIGHT: f32 = 60.0;
+        const DEFAULT_CHART_WIDTH: f32 = 900.0;
+
+        self.counters_zoom.set_domain(0.0, frame_count as f64);
+        let visible_start = self.counters_zoom.visible_start();
+        let visible_end = self.counters_zoom.visible_end();
+        let visible_span = self.counters_zoom.visible_span();
+        let zoomed = self.counters_zoom.is_zoomed();
+
+        let measured_width = f32::from(self.counters_chart_bounds.size.width);
+        let chart_width = if measured_width > 1.0 { measured_width } else { DEFAULT_CHART_WIDTH };
+        let bar_width = ((chart_width as f64 / visible_span) as f32).max(1.0);
+
+        let start_index = visible_start.floor().max(0.0) as usize;
+        let end_index = (visible_end.ceil() as usize).min(frame_count);
+
+        let mut bar_elements: Vec<AnyElement> = Vec::new();
+        for index in start_index..end_index {
+            let ms = durations_ms[index];
+            let height = ((ms / max_ms) * SPARKLINE_HEIGHT).max(1.0);
+            let color = if ms > 16.7 { cx.theme().danger } else { cx.theme().chart_1 };
+            let x = ((index as f64 - visible_start) / visible_span) as f32 * chart_width;
+            bar_elements.push(
+                div()
+                    .absolute()
+                    .bottom(px(0.))
+                    .left(px(x))
+                    .w(px((bar_width - 1.0).max(1.0)))
+                    .h(px(height))
+                    .bg(color)
+                    .into_any_element(),
+            );
+        }
+
+        let entity = cx.entity().clone();
+
+        let header = h_flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(cx.theme().foreground)
+                    .child(format!("Frame Duration Over Capture Window (max {:.2}ms)", max_ms)),
+            )
+            .child(div().flex_1())
+            .child(render_zoom_controls(
+                "counters",
+                zoomed,
+                cx.listener(|state, _, _window, cx| {
+                    state.counters_zoom.zoom_at(0.5, 1.25);
+                    cx.notify();
+                }),
+                cx.listener(|state, _, _window, cx| {
+                    state.counters_zoom.zoom_at(0.5, 0.8);
+                    cx.notify();
+                }),
+                cx.listener(|state, _, _window, cx| {
+                    state.counters_zoom.reset();
+                    cx.notify();
+                }),
+                cx,
+            ));
+
+        v_flex()
+            .gap_1()
+            .child(header)
+            .child(zoom_pan_hint(cx))
+            .child(
+                div()
+                    .id("frame-duration-sparkline")
+                    .relative()
+                    .h(px(SPARKLINE_HEIGHT))
+                    .overflow_hidden()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        canvas(
+                            {
+                                let entity = entity.clone();
+                                move |bounds, _window, cx| {
+                                    entity.update(cx, |state, _cx| state.counters_chart_bounds = bounds);
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                    .on_scroll_wheel(cx.listener(|state, event: &ScrollWheelEvent, window, cx| {
+                        if !(event.modifiers.control || event.modifiers.platform) {
+                            return;
+                        }
+                        cx.stop_propagation();
+                        let width = f32::from(state.counters_chart_bounds.size.width);
+                        if width <= 1.0 {
+                            return;
+                        }
+                        let cursor_fraction = ((f32::from(event.position.x)
+                            - f32::from(state.counters_chart_bounds.origin.x))
+                            / width)
+                            .clamp(0.0, 1.0);
+                        let delta_y = f32::from(event.delta.pixel_delta(window.line_height()).y);
+                        state.counters_zoom.zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
+                        cx.notify();
+                    }))
+                    .on_click(cx.listener(|state, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            state.counters_zoom.reset();
+                            cx.notify();
+                        }
+                    }))
+                    .on_drag(ProfilerPanDrag, {
+                        let entity = entity.clone();
+                        move |_, _start_position, _window, cx| {
+                            entity.update(cx, |state, _cx| state.counters_pan_last_x = None);
+                            cx.new(|_| ProfilerPanDrag)
+                        }
+                    })
+                    .on_drag_move(cx.listener(
+                        |state, event: &DragMoveEvent<ProfilerPanDrag>, _window, cx| {
+                            let width = f32::from(event.bounds.size.width).max(1.0);
+                            let x = f32::from(event.event.position.x);
+                            if let Some(last_x) = state.counters_pan_last_x {
+                                state.counters_zoom.pan_by_fraction(-(x - last_x) / width);
+                            }
+                            state.counters_pan_last_x = Some(x);
+                            cx.notify();
+                        },
+                    ))
+                    .children(bar_elements),
+            )
             .into_any_element()
     }
 
@@ -1985,40 +2142,6 @@ fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<Profiler
                     ),
                     1,
                 ),
-        )
-        .into_any_element()
-}
-
-fn render_frame_duration_sparkline(capture: &gpui::Capture, cx: &Context<ProfilerPanel>) -> AnyElement {
-    let durations_ms: Vec<f32> = capture
-        .frames()
-        .map(|f| (f.frame_end_ns.saturating_sub(f.frame_start_ns)) as f32 / 1.0e6)
-        .collect();
-    let max_ms = durations_ms.iter().cloned().fold(0.0f32, f32::max).max(1.0);
-    const SPARKLINE_HEIGHT: f32 = 60.0;
-
-    v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(FontWeight::BOLD)
-                .text_color(cx.theme().foreground)
-                .child(format!("Frame Duration Over Capture Window (max {:.2}ms)", max_ms)),
-        )
-        .child(
-            div()
-                .id("frame-duration-sparkline")
-                .h(px(SPARKLINE_HEIGHT))
-                .overflow_x_scroll()
-                .flex()
-                .items_end()
-                .gap(px(1.))
-                .children(durations_ms.into_iter().map(|ms| {
-                    let height = ((ms / max_ms) * SPARKLINE_HEIGHT).max(1.0);
-                    let color = if ms > 16.7 { cx.theme().danger } else { cx.theme().chart_1 };
-                    div().w(px(3.)).h(px(height)).bg(color).into_any_element()
-                })),
         )
         .into_any_element()
 }
