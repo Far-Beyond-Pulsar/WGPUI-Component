@@ -1188,6 +1188,7 @@ impl ProfilerPanel {
         self.deep_capture_error = None;
         self.deep_capture_pending = true;
         self.deep_capture_preview = None;
+        self.deep_capture_view.reset();
         gpui::request_deep_capture();
         cx.notify();
         self.schedule_deep_capture_poll(0, window, cx);
@@ -1231,6 +1232,10 @@ impl ProfilerPanel {
                 replay.step_to_previous_draw_call();
             }
         }
+        // A different draw call means different image content — carrying
+        // over a zoom/pan framed around the *previous* call's content would
+        // be confusing, so each step starts fresh at fit-to-view.
+        self.deep_capture_view.reset();
         self.render_deep_capture_preview(window, cx);
         cx.notify();
     }
@@ -1239,6 +1244,7 @@ impl ProfilerPanel {
         if let Some(replay) = self.deep_capture_replay.as_mut() {
             replay.seek(step);
         }
+        self.deep_capture_view.reset();
         self.render_deep_capture_preview(window, cx);
         cx.notify();
     }
@@ -1446,16 +1452,18 @@ impl ProfilerPanel {
     }
 
     fn render_deep_capture_preview_panel(&self, cx: &Context<Self>) -> AnyElement {
-        let title = div()
-            .text_xs()
-            .font_weight(FontWeight::BOLD)
-            .text_color(cx.theme().foreground)
-            .child("Live Preview");
+        let mut title_row = h_flex().items_center().gap_2().child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .text_color(cx.theme().foreground)
+                .child("Live Preview"),
+        );
 
         match &self.deep_capture_preview {
             None => v_flex()
                 .gap_1()
-                .child(title)
+                .child(title_row)
                 .child(
                     div()
                         .text_xs()
@@ -1465,7 +1473,7 @@ impl ProfilerPanel {
                 .into_any_element(),
             Some(DeepCapturePreview::Unavailable(message)) => v_flex()
                 .gap_1()
-                .child(title)
+                .child(title_row)
                 .child(Alert::warning("deep-capture-preview-unavailable", message.clone()))
                 .into_any_element(),
             Some(DeepCapturePreview::Image { image, width, height, texture_unavailable }) => {
@@ -1473,11 +1481,49 @@ impl ProfilerPanel {
                 let scale = display_width / (*width as f32).max(1.0);
                 let display_height = ((*height as f32) * scale).max(1.0);
 
+                // The visible crop window (fractions of the full source
+                // image) maps to an oversized, absolutely-positioned copy of
+                // the same image inside a clipped viewport: the classic
+                // "scale + negative offset behind an overflow:hidden box"
+                // trick for panning/zooming into a raster image without any
+                // dedicated cropping support from the image element itself.
+                let (x0, y0, x1, y1) = self.deep_capture_view.crop_fractions();
+                let crop_w = (x1 - x0).max(1e-4);
+                let crop_h = (y1 - y0).max(1e-4);
+                let scaled_width = display_width / crop_w;
+                let scaled_height = display_height / crop_h;
+                let offset_x = -x0 * scaled_width;
+                let offset_y = -y0 * scaled_height;
+
+                let entity = cx.entity().clone();
+                let is_zoomed = self.deep_capture_view.is_zoomed();
+
+                title_row = title_row.child(div().flex_1()).child(render_zoom_controls(
+                    "deep-capture",
+                    is_zoomed,
+                    cx.listener(|state, _, _window, cx| {
+                        state.deep_capture_view.zoom_at(0.5, 0.5, 1.25);
+                        cx.notify();
+                    }),
+                    cx.listener(|state, _, _window, cx| {
+                        state.deep_capture_view.zoom_at(0.5, 0.5, 0.8);
+                        cx.notify();
+                    }),
+                    cx.listener(|state, _, _window, cx| {
+                        state.deep_capture_view.reset();
+                        cx.notify();
+                    }),
+                    cx,
+                ));
+
                 v_flex()
                     .gap_1()
-                    .child(title)
+                    .child(title_row)
+                    .child(zoom_pan_hint(cx))
                     .child(
                         div()
+                            .id("deep-capture-preview-viewport")
+                            .relative()
                             .border_1()
                             .border_color(cx.theme().border)
                             .rounded_md()
@@ -1485,9 +1531,89 @@ impl ProfilerPanel {
                             .w(px(display_width))
                             .h(px(display_height))
                             .child(
+                                // Bounds-capture overlay, same purpose as the
+                                // flame chart's: `ScrollWheelEvent` carries
+                                // no element bounds, so the scroll handler
+                                // below needs this to compute a cursor
+                                // fraction for zoom-around-cursor.
+                                canvas(
+                                    {
+                                        let entity = entity.clone();
+                                        move |bounds, _window, cx| {
+                                            entity.update(cx, |state, _cx| {
+                                                state.deep_capture_preview_bounds = bounds
+                                            });
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
+                            .on_scroll_wheel(cx.listener(
+                                |state, event: &ScrollWheelEvent, window, cx| {
+                                    if !(event.modifiers.control || event.modifiers.platform) {
+                                        return;
+                                    }
+                                    cx.stop_propagation();
+                                    let bounds = state.deep_capture_preview_bounds;
+                                    let width = f32::from(bounds.size.width);
+                                    let height = f32::from(bounds.size.height);
+                                    if width <= 1.0 || height <= 1.0 {
+                                        return;
+                                    }
+                                    let fx = ((f32::from(event.position.x)
+                                        - f32::from(bounds.origin.x))
+                                        / width)
+                                        .clamp(0.0, 1.0);
+                                    let fy = ((f32::from(event.position.y)
+                                        - f32::from(bounds.origin.y))
+                                        / height)
+                                        .clamp(0.0, 1.0);
+                                    let delta_y =
+                                        f32::from(event.delta.pixel_delta(window.line_height()).y);
+                                    state
+                                        .deep_capture_view
+                                        .zoom_at(fx, fy, zoom_factor_for_wheel_delta(delta_y));
+                                    cx.notify();
+                                },
+                            ))
+                            .on_click(cx.listener(|state, event: &ClickEvent, _window, cx| {
+                                if event.click_count() >= 2 {
+                                    state.deep_capture_view.reset();
+                                    cx.notify();
+                                }
+                            }))
+                            .on_drag(ProfilerPanDrag, {
+                                let entity = entity.clone();
+                                move |_, _start_position, _window, cx| {
+                                    entity.update(cx, |state, _cx| state.deep_capture_pan_last = None);
+                                    cx.new(|_| ProfilerPanDrag)
+                                }
+                            })
+                            .on_drag_move(cx.listener(
+                                |state, event: &DragMoveEvent<ProfilerPanDrag>, _window, cx| {
+                                    let width = f32::from(event.bounds.size.width).max(1.0);
+                                    let height = f32::from(event.bounds.size.height).max(1.0);
+                                    let x = f32::from(event.event.position.x);
+                                    let y = f32::from(event.event.position.y);
+                                    if let Some((last_x, last_y)) = state.deep_capture_pan_last {
+                                        state.deep_capture_view.pan_by_fraction(
+                                            -(x - last_x) / width,
+                                            -(y - last_y) / height,
+                                        );
+                                    }
+                                    state.deep_capture_pan_last = Some((x, y));
+                                    cx.notify();
+                                },
+                            ))
+                            .child(
                                 img(ImageSource::Render(image.clone()))
-                                    .w(px(display_width))
-                                    .h(px(display_height)),
+                                    .absolute()
+                                    .left(px(offset_x))
+                                    .top(px(offset_y))
+                                    .w(px(scaled_width))
+                                    .h(px(scaled_height)),
                             ),
                     )
                     .when(*texture_unavailable, |this| {
