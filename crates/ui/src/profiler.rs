@@ -1658,3 +1658,198 @@ fn render_deep_capture_call_details(call: &DeepCaptureDrawCall, cx: &Context<Pro
         )
         .into_any_element()
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────
+//
+// `gpui::CpuSpan::thread_id` is a `ThreadKey`, whose only constructor
+// (`ThreadKey::current`) is private to gpui-ce's flamegraph module — there
+// is no public way to build one outside of a live capture session, so
+// `build_flame_lanes`'s CPU/background-thread grouping path (and anything
+// else that needs a `CpuSpan`) can't be exercised with a hand-built
+// fixture here. Everything else below is real fixture-based coverage of
+// this module's own data-transform logic: byte formatting, span-name
+// display, GPU-lane construction (which needs no `ThreadKey`), and UI-tree
+// flattening/collapsing/selection (`UiTreeCapture`'s fields are all public,
+// so it is constructible without a live capture).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bytes_scales_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.00 KB");
+        assert_eq!(format_bytes(1536), "1.50 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    #[test]
+    fn span_name_label_formats_static_and_interned() {
+        assert_eq!(span_name_label(gpui::SpanName::Static("paint")).to_string(), "paint");
+        assert_eq!(span_name_label(gpui::SpanName::Interned(7)).to_string(), "<interned #7>");
+    }
+
+    #[test]
+    fn flame_bar_category_label_prefers_cpu_category_over_gpu_pass() {
+        let cpu_bar = FlameBar {
+            label: "a".into(),
+            depth: 0,
+            start_ns: 0,
+            duration_ns: 100,
+            category: Some(gpui::SpanCategory::ElementPaint),
+            gpu_pass_kind: None,
+            element_type: None,
+            element_source: None,
+        };
+        assert_eq!(cpu_bar.category_label().to_string(), "ElementPaint");
+
+        let gpu_bar = FlameBar {
+            label: "b".into(),
+            depth: 0,
+            start_ns: 0,
+            duration_ns: 100,
+            category: None,
+            gpu_pass_kind: Some(gpui::GpuPassKind::Main),
+            element_type: None,
+            element_source: None,
+        };
+        assert_eq!(gpu_bar.category_label().to_string(), "GPU: Main");
+
+        let unknown_bar = FlameBar {
+            label: "c".into(),
+            depth: 0,
+            start_ns: 0,
+            duration_ns: 100,
+            category: None,
+            gpu_pass_kind: None,
+            element_type: None,
+            element_source: None,
+        };
+        assert_eq!(unknown_bar.category_label().to_string(), "—");
+    }
+
+    fn sample_gpu_span(name: &'static str, start_ns: u64, duration_ns: u32) -> gpui::GpuSpan {
+        gpui::GpuSpan {
+            name: gpui::SpanName::Static(name),
+            start_ns,
+            duration_ns,
+            pass_kind: gpui::GpuPassKind::Main,
+            query_set_generation: 0,
+        }
+    }
+
+    #[test]
+    fn build_flame_lanes_produces_a_flat_gpu_lane() {
+        let frame = gpui::FrameCapture {
+            frame_index: 0,
+            window_id: 0,
+            cpu_spans: Vec::new(),
+            background_spans: Vec::new(),
+            gpu_spans: vec![
+                sample_gpu_span("main_pass", 0, 5_000_000),
+                sample_gpu_span("submit", 5_000_000, 1_000_000),
+            ],
+            gpu_spans_finalized: true,
+            gpu_spans_truncated: false,
+            frame_start_ns: 0,
+            frame_end_ns: 6_000_000,
+            counters: Default::default(),
+        };
+
+        let lanes = build_flame_lanes(&frame);
+        assert_eq!(lanes.len(), 1);
+        assert_eq!(lanes[0].label.to_string(), "GPU");
+        assert_eq!(lanes[0].bars.len(), 2);
+        assert_eq!(lanes[0].max_depth, 0);
+        assert_eq!(lanes[0].bars[0].label.to_string(), "main_pass");
+        assert_eq!(lanes[0].bars[1].label.to_string(), "submit");
+    }
+
+    #[test]
+    fn build_flame_lanes_is_empty_for_a_frame_with_no_spans() {
+        let frame = gpui::FrameCapture {
+            frame_index: 0,
+            window_id: 0,
+            cpu_spans: Vec::new(),
+            background_spans: Vec::new(),
+            gpu_spans: Vec::new(),
+            gpu_spans_finalized: true,
+            gpu_spans_truncated: false,
+            frame_start_ns: 0,
+            frame_end_ns: 0,
+            counters: Default::default(),
+        };
+        assert!(build_flame_lanes(&frame).is_empty());
+    }
+
+    fn sample_ui_node(type_name: &'static str, depth: u16) -> UiElementNode {
+        UiElementNode {
+            type_name,
+            global_id_hash: 0,
+            depth,
+            bounds: Default::default(),
+            style: None,
+        }
+    }
+
+    #[test]
+    fn flatten_ui_tree_rows_reconstructs_depth_first_order() {
+        // root
+        // ├── child_a
+        // └── child_b
+        let capture = gpui::UiTreeCapture {
+            window_id: 0,
+            nodes: vec![sample_ui_node("root", 0), sample_ui_node("child_a", 1), sample_ui_node("child_b", 1)],
+            scene: Default::default(),
+        };
+        let replay = UiTreeReplay::new(capture);
+
+        let rows = flatten_ui_tree_rows(&replay, &HashSet::new(), None);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].type_name.to_string(), "root");
+        assert!(rows[0].has_children);
+        assert_eq!(rows[1].type_name.to_string(), "child_a");
+        assert_eq!(rows[1].depth, 1);
+        assert_eq!(rows[2].type_name.to_string(), "child_b");
+    }
+
+    #[test]
+    fn flatten_ui_tree_rows_hides_collapsed_subtrees() {
+        let capture = gpui::UiTreeCapture {
+            window_id: 0,
+            nodes: vec![
+                sample_ui_node("root", 0),
+                sample_ui_node("child_a", 1),
+                sample_ui_node("grandchild", 2),
+                sample_ui_node("child_b", 1),
+            ],
+            scene: Default::default(),
+        };
+        let replay = UiTreeReplay::new(capture);
+
+        // Collapse `child_a` (index 1): its child (`grandchild`, index 2)
+        // should disappear, but `child_b` (index 3) should still show.
+        let mut collapsed = HashSet::new();
+        collapsed.insert(1);
+        let rows = flatten_ui_tree_rows(&replay, &collapsed, None);
+
+        let names: Vec<String> = rows.iter().map(|r| r.type_name.to_string()).collect();
+        assert_eq!(names, vec!["root", "child_a", "child_b"]);
+    }
+
+    #[test]
+    fn flatten_ui_tree_rows_marks_the_selected_node() {
+        let capture = gpui::UiTreeCapture {
+            window_id: 0,
+            nodes: vec![sample_ui_node("root", 0), sample_ui_node("child", 1)],
+            scene: Default::default(),
+        };
+        let replay = UiTreeReplay::new(capture);
+
+        let rows = flatten_ui_tree_rows(&replay, &HashSet::new(), Some(1));
+        assert!(!rows[0].is_selected);
+        assert!(rows[1].is_selected);
+    }
+}
