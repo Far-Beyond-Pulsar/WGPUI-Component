@@ -15,6 +15,8 @@ mod icon;
 mod index_path;
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod inspector;
+#[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
+mod profiler;
 mod kbd;
 pub mod menu;
 mod root;

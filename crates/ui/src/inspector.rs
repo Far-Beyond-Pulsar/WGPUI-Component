@@ -640,9 +640,22 @@ fn render_tab_content(
         InspectorTab::Styles => render_styles_tab(inspector, window, cx),
         InspectorTab::Layout => render_layout_tab(inspector, window, cx),
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
+        #[cfg(feature = "flamegraph")]
+        InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
     };
 
-    if tab == InspectorTab::Elements {
+    // Elements and Profiler manage their own internal scrolling (Profiler's
+    // sub-sections each scroll independently; Elements is a virtualized
+    // uniform_list), so they get a plain flex_1 container rather than the
+    // outer overflow_y_scroll the other, simpler tabs rely on.
+    let owns_own_scroll = match tab {
+        InspectorTab::Elements => true,
+        #[cfg(feature = "flamegraph")]
+        InspectorTab::Profiler => true,
+        _ => false,
+    };
+
+    if owns_own_scroll {
         div().flex_1().child(content).into_any_element()
     } else {
         div().flex_1().overflow_y_scroll().child(content).into_any_element()
