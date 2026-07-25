@@ -55,10 +55,11 @@ use std::{
 };
 
 use gpui::{
-    div, img, prelude::FluentBuilder as _, px, uniform_list, AnyElement, App, AppContext as _,
-    Context, DeepCaptureDrawCall, DeepCaptureReplay, DrawCallResourceStatus, Entity, FontWeight,
-    Global, ImageSource, Inspector, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, RenderImage, SharedString, StatefulInteractiveElement as _, Styled,
+    canvas, div, img, prelude::FluentBuilder as _, px, uniform_list, AnyElement, App,
+    AppContext as _, Bounds, ClickEvent, Context, DeepCaptureDrawCall, DeepCaptureReplay,
+    DragMoveEvent, DrawCallResourceStatus, Empty, Entity, FontWeight, Global, ImageSource,
+    Inspector, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels,
+    Render, RenderImage, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled,
     Subscription, Task, Timer, UiElementNode, UiTreeReplay, Window,
 };
 
@@ -81,6 +82,217 @@ use crate::{
 /// a window that's momentarily idle/occluded rather than never drawing again.
 const CAPTURE_POLL_TIMEOUT_ATTEMPTS: u32 = 60;
 const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+// ── Zoom / pan math ──────────────────────────────────────────────────────
+//
+// Pan+zoom interaction (flame chart time axis, counters sparkline frame-index
+// axis, and the GPU deep-capture preview's 2D image axes) is unified behind
+// one pure, unit-testable primitive: `RangeZoom`, a `0.0..=1.0`-independent
+// "visible window into a domain" that `zoom_at`/`pan_by_fraction` remap. Each
+// view owns its own `RangeZoom` instance (they cover different domains and
+// reset independently when their underlying data changes), but all three
+// share this exact math rather than re-deriving it. The 2D preview composes
+// two `RangeZoom`s (one per axis) via `ImageViewport` instead of duplicating
+// the logic for two dimensions.
+
+/// A zoomable/pannable "visible window" into a 1D domain (e.g. nanoseconds
+/// within a captured frame, or frame indices across a capture). Rendering
+/// code maps `visible_start()..visible_end()` onto whatever pixel span it has
+/// available; this type only tracks *which* sub-range of the domain is
+/// currently shown, independent of any pixel measurements.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RangeZoom {
+    domain_start: f64,
+    domain_end: f64,
+    visible_start: f64,
+    visible_end: f64,
+}
+
+impl RangeZoom {
+    /// Zooming in stops once the visible window would be smaller than this
+    /// fraction of the full domain — a generous ~500x maximum zoom that still
+    /// keeps the window numerically well-behaved.
+    const MIN_VISIBLE_FRACTION: f64 = 0.002;
+
+    fn full(domain_start: f64, domain_end: f64) -> Self {
+        let domain_end = domain_end.max(domain_start + 1.0);
+        Self { domain_start, domain_end, visible_start: domain_start, visible_end: domain_end }
+    }
+
+    /// Updates the underlying domain (e.g. a newly selected capture frame's
+    /// time range, or a capture with a different frame count). If the domain
+    /// actually changed, the visible window resets to "fit all" — switching
+    /// to different data shouldn't leave a stale zoom window pointed at the
+    /// wrong range. Re-rendering the *same* domain preserves the current
+    /// zoom/pan untouched.
+    fn set_domain(&mut self, domain_start: f64, domain_end: f64) {
+        let domain_end = domain_end.max(domain_start + 1.0);
+        if (domain_start - self.domain_start).abs() > f64::EPSILON
+            || (domain_end - self.domain_end).abs() > f64::EPSILON
+        {
+            self.domain_start = domain_start;
+            self.domain_end = domain_end;
+            self.visible_start = domain_start;
+            self.visible_end = domain_end;
+        }
+    }
+
+    fn domain_span(&self) -> f64 {
+        (self.domain_end - self.domain_start).max(1.0)
+    }
+
+    fn visible_span(&self) -> f64 {
+        (self.visible_end - self.visible_start).max(1e-6)
+    }
+
+    fn visible_start(&self) -> f64 {
+        self.visible_start
+    }
+
+    fn visible_end(&self) -> f64 {
+        self.visible_end
+    }
+
+    fn is_zoomed(&self) -> bool {
+        self.visible_start > self.domain_start + 1e-6 || self.visible_end < self.domain_end - 1e-6
+    }
+
+    fn reset(&mut self) {
+        self.visible_start = self.domain_start;
+        self.visible_end = self.domain_end;
+    }
+
+    /// Zooms around a point expressed as a `0.0..=1.0` fraction across the
+    /// *current* visible window (`0.0` = its left edge, `1.0` = its right
+    /// edge). `factor` scales the visible span: `< 1.0` zooms in, `> 1.0`
+    /// zooms out. The result is clamped so the window never extends past the
+    /// domain and never shrinks past `MIN_VISIBLE_FRACTION` of it.
+    fn zoom_at(&mut self, cursor_fraction: f32, factor: f32) {
+        let cursor_fraction = cursor_fraction.clamp(0.0, 1.0) as f64;
+        let factor = (factor as f64).max(0.01);
+        let span = self.visible_span();
+        let anchor = self.visible_start + cursor_fraction * span;
+        let min_span = self.domain_span() * Self::MIN_VISIBLE_FRACTION;
+        let new_span = (span * factor).clamp(min_span, self.domain_span());
+
+        let mut new_start = anchor - cursor_fraction * new_span;
+        let mut new_end = new_start + new_span;
+        self.clamp_to_domain(&mut new_start, &mut new_end);
+        self.visible_start = new_start;
+        self.visible_end = new_end;
+    }
+
+    /// Pans by a delta expressed as a fraction of the current visible span
+    /// (positive moves the window later/right, negative earlier/left),
+    /// clamped to the domain.
+    fn pan_by_fraction(&mut self, delta_fraction: f32) {
+        let delta = delta_fraction as f64 * self.visible_span();
+        let mut new_start = self.visible_start + delta;
+        let mut new_end = self.visible_end + delta;
+        self.clamp_to_domain(&mut new_start, &mut new_end);
+        self.visible_start = new_start;
+        self.visible_end = new_end;
+    }
+
+    /// Slides `[start, end]` back inside `[domain_start, domain_end]` without
+    /// changing its span, then hard-clamps as a final guard against a span
+    /// that (only possible via a degenerate domain) exceeds the domain size.
+    fn clamp_to_domain(&self, start: &mut f64, end: &mut f64) {
+        if *start < self.domain_start {
+            let shift = self.domain_start - *start;
+            *start += shift;
+            *end += shift;
+        }
+        if *end > self.domain_end {
+            let shift = *end - self.domain_end;
+            *start -= shift;
+            *end -= shift;
+        }
+        *start = start.max(self.domain_start);
+        *end = end.min(self.domain_end);
+    }
+
+    /// Maps an absolute domain value to a `0.0..=1.0`-ish fraction of the
+    /// current visible window (used to position elements along the axis;
+    /// values outside the visible window map outside `0.0..=1.0`, which
+    /// callers use to cull off-screen elements).
+    fn value_to_fraction(&self, value: f64) -> f32 {
+        ((value - self.visible_start) / self.visible_span()) as f32
+    }
+}
+
+/// Converts a raw scroll-wheel vertical delta (in pixels) into a
+/// multiplicative span factor for [`RangeZoom::zoom_at`]/[`ImageViewport::zoom_at`]:
+/// `< 1.0` zooms in, `> 1.0` zooms out. Scrolling up/away (negative delta)
+/// zooms in; scrolling down/toward the viewer (positive delta) zooms out.
+/// The input is clamped so a single large trackpad flick can't jump the zoom
+/// level by an extreme amount in one event.
+fn zoom_factor_for_wheel_delta(delta_y: f32) -> f32 {
+    let clamped = delta_y.clamp(-160.0, 160.0);
+    (1.0 + clamped / 400.0).clamp(0.6, 1.4)
+}
+
+/// A zoomable/pannable 2D viewport into a source image, expressed as a pair
+/// of independent [`RangeZoom`]s (one per axis) each over the normalized
+/// `0.0..=1.0` domain of the image. Reuses `RangeZoom`'s math for both axes
+/// instead of a bespoke 2D implementation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ImageViewport {
+    x: RangeZoom,
+    y: RangeZoom,
+}
+
+impl ImageViewport {
+    fn new() -> Self {
+        Self { x: RangeZoom::full(0.0, 1.0), y: RangeZoom::full(0.0, 1.0) }
+    }
+
+    fn is_zoomed(&self) -> bool {
+        self.x.is_zoomed() || self.y.is_zoomed()
+    }
+
+    fn reset(&mut self) {
+        self.x.reset();
+        self.y.reset();
+    }
+
+    fn zoom_at(&mut self, cursor_fraction_x: f32, cursor_fraction_y: f32, factor: f32) {
+        self.x.zoom_at(cursor_fraction_x, factor);
+        self.y.zoom_at(cursor_fraction_y, factor);
+    }
+
+    fn pan_by_fraction(&mut self, delta_fraction_x: f32, delta_fraction_y: f32) {
+        self.x.pan_by_fraction(delta_fraction_x);
+        self.y.pan_by_fraction(delta_fraction_y);
+    }
+
+    /// The visible crop window as `(x0, y0, x1, y1)` fractions of the full
+    /// source image, all within `0.0..=1.0`.
+    fn crop_fractions(&self) -> (f32, f32, f32, f32) {
+        (
+            self.x.visible_start() as f32,
+            self.y.visible_start() as f32,
+            self.x.visible_end() as f32,
+            self.y.visible_end() as f32,
+        )
+    }
+}
+
+/// Marker payload for the pan-via-drag gesture shared by the flame chart, the
+/// counters sparkline, and the GPU deep-capture preview. GPUI's `on_drag` /
+/// `on_drag_move` mechanism only cares about matching `TypeId`s, not which
+/// element started the drag, so one marker is safe to reuse across all three:
+/// the Profiler tab's sections render mutually exclusively (see
+/// `ProfilerPanel::render`), so at most one of these views is ever mounted —
+/// and thus draggable — at a time.
+#[derive(Clone)]
+struct ProfilerPanDrag;
+
+impl Render for ProfilerPanDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
 
 // ── Entry point ──────────────────────────────────────────────────────────
 
@@ -169,6 +381,22 @@ pub struct ProfilerPanel {
     search_input: Entity<InputState>,
     flame_search: SharedString,
 
+    // Flame chart time-axis pan/zoom. `flame_chart_bounds` is the last
+    // measured screen bounds of the chart canvas (captured via a `canvas()`
+    // overlay each render), used to turn scroll-wheel cursor positions into
+    // zoom anchors. `flame_pan_last_x` tracks the previous pointer x during
+    // an in-progress drag so each `on_drag_move` tick only needs to apply the
+    // incremental delta.
+    flame_zoom: RangeZoom,
+    flame_chart_bounds: Bounds<Pixels>,
+    flame_pan_last_x: Option<f32>,
+
+    // Counters sparkline pan/zoom over the frame-index axis (same math as
+    // `flame_zoom`, independent state since it's a different domain).
+    counters_zoom: RangeZoom,
+    counters_chart_bounds: Bounds<Pixels>,
+    counters_pan_last_x: Option<f32>,
+
     // Memory (Phase 3: on-demand `MemorySnapshot`/`GpuMemorySnapshot`).
     memory_cpu: Option<gpui::MemorySnapshot>,
     memory_gpu: Option<gpui::GpuMemorySnapshot>,
@@ -188,6 +416,12 @@ pub struct ProfilerPanel {
     deep_capture_error: Option<SharedString>,
     deep_capture_preview: Option<DeepCapturePreview>,
     deep_capture_poll_task: Option<Task<()>>,
+
+    // GPU deep-capture preview 2D pan/zoom (image space), same shape as the
+    // flame chart's fields above but for a 2D `ImageViewport`.
+    deep_capture_view: ImageViewport,
+    deep_capture_preview_bounds: Bounds<Pixels>,
+    deep_capture_pan_last: Option<(f32, f32)>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -219,6 +453,14 @@ impl ProfilerPanel {
             search_input,
             flame_search: SharedString::default(),
 
+            flame_zoom: RangeZoom::full(0.0, 1.0),
+            flame_chart_bounds: Bounds::default(),
+            flame_pan_last_x: None,
+
+            counters_zoom: RangeZoom::full(0.0, 1.0),
+            counters_chart_bounds: Bounds::default(),
+            counters_pan_last_x: None,
+
             memory_cpu: None,
             memory_gpu: None,
             memory_error: None,
@@ -235,6 +477,10 @@ impl ProfilerPanel {
             deep_capture_error: None,
             deep_capture_preview: None,
             deep_capture_poll_task: None,
+
+            deep_capture_view: ImageViewport::new(),
+            deep_capture_preview_bounds: Bounds::default(),
+            deep_capture_pan_last: None,
 
             _subscriptions,
         }
@@ -322,6 +568,23 @@ impl ProfilerPanel {
         let is_recording = self.capture_handle.is_some();
         let frame_count = self.capture.as_ref().map(|c| c.frame_count()).unwrap_or(0);
 
+        // Keep the time-axis zoom's domain in sync with the selected frame
+        // *before* building the header, so the zoom controls below (and
+        // their disabled/enabled state) reflect the frame actually on
+        // screen. `RangeZoom::set_domain` only resets the visible window
+        // when the domain itself changed (i.e. a different frame is now
+        // selected), so zoom/pan survives unrelated re-renders of the same
+        // frame (e.g. selecting a span).
+        if frame_count > 0 {
+            let frame_index = self.selected_frame.min(frame_count - 1);
+            if let Some(frame) = self.capture.as_ref().and_then(|c| c.frames().nth(frame_index)) {
+                let domain_start = frame.frame_start_ns as f64;
+                let domain_end = frame.frame_end_ns.max(frame.frame_start_ns + 1) as f64;
+                self.flame_zoom.set_domain(domain_start, domain_end);
+            }
+        }
+        let flame_zoomed = self.flame_zoom.is_zoomed();
+
         let mut header = h_flex().gap_2().items_center().flex_wrap().p_2().child(
             Button::new("flame-toggle-capture")
                 .small()
@@ -378,17 +641,37 @@ impl ProfilerPanel {
 
         header = header.child(div().flex_1());
         header = header.child(TextInput::new(&self.search_input).small().w(px(180.)));
+        header = header.child(render_zoom_controls(
+            "flame",
+            flame_zoomed,
+            cx.listener(|state, _, _window, cx| {
+                state.flame_zoom.zoom_at(0.5, 1.25);
+                cx.notify();
+            }),
+            cx.listener(|state, _, _window, cx| {
+                state.flame_zoom.zoom_at(0.5, 0.8);
+                cx.notify();
+            }),
+            cx.listener(|state, _, _window, cx| {
+                state.flame_zoom.reset();
+                cx.notify();
+            }),
+            cx,
+        ));
 
         let mut body = v_flex().gap_2().size_full().child(header);
         if let Some(err) = self.capture_error.clone() {
             body = body.child(Alert::error("flame-capture-error", err));
+        }
+        if self.capture.is_some() {
+            body = body.child(zoom_pan_hint(cx));
         }
         body = body.child(
             div()
                 .id("flame-chart-scroll")
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_scroll()
+                .overflow_y_scroll()
                 .px_2()
                 .pb_2()
                 .child(self.render_flame_chart_body(cx)),
@@ -421,11 +704,22 @@ impl ProfilerPanel {
             return profiler_empty_state("This frame recorded no spans.", cx);
         }
 
-        let frame_start_ns = frame.frame_start_ns;
-        let total_ns = frame.frame_end_ns.saturating_sub(frame_start_ns).max(1) as f32;
-        const PIXELS_PER_MS: f32 = 8.0;
+        // `set_domain` already ran in `render_flame_chart_section` for this
+        // same frame, so this just reads the (possibly zoomed/panned)
+        // visible window back out.
+        let visible_start_ns = self.flame_zoom.visible_start();
+        let visible_end_ns = self.flame_zoom.visible_end();
+        let visible_span_ns = self.flame_zoom.visible_span();
+
         const ROW_HEIGHT: f32 = 20.0;
-        let chart_width = ((total_ns / 1.0e6) * PIXELS_PER_MS).max(500.0);
+        const DEFAULT_CHART_WIDTH: f32 = 900.0;
+        // The chart canvas has no way to know its own rendered pixel width
+        // before layout runs, so bar positions are computed against the
+        // width measured on the *previous* render (captured via the
+        // `canvas()` overlay below) — one frame of lag that's imperceptible
+        // in practice and stabilizes immediately after the first paint.
+        let measured_width = f32::from(self.flame_chart_bounds.size.width);
+        let chart_width = if measured_width > 1.0 { measured_width } else { DEFAULT_CHART_WIDTH };
 
         let search = self.flame_search.to_lowercase();
         let selected_key = self
@@ -448,8 +742,16 @@ impl ProfilerPanel {
             let mut bar_elements: Vec<AnyElement> = Vec::new();
 
             for (bar_index, bar) in lane.bars.iter().enumerate() {
-                let x = ((bar.start_ns.saturating_sub(frame_start_ns)) as f32 / total_ns) * chart_width;
-                let width = ((bar.duration_ns as f32) / total_ns * chart_width).max(1.5);
+                let bar_start_ns = bar.start_ns as f64;
+                let bar_end_ns = bar_start_ns + bar.duration_ns as f64;
+                // Cull spans that don't intersect the current zoomed/panned
+                // window at all — cheaper, and keeps a deeply-zoomed-in view
+                // from still building thousands of off-screen bar elements.
+                if bar_end_ns < visible_start_ns || bar_start_ns > visible_end_ns {
+                    continue;
+                }
+                let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
+                let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
                 let color = match (bar.category, bar.gpu_pass_kind) {
                     (Some(cat), _) => category_color(cat, cx),
                     (None, Some(kind)) => gpu_pass_color(kind, cx),
@@ -523,10 +825,73 @@ impl ProfilerPanel {
             );
         }
 
-        v_flex()
+        let entity = cx.entity().clone();
+
+        div()
             .id("flame-chart-canvas")
-            .gap_1()
-            .children(lane_elements)
+            .relative()
+            .overflow_hidden()
+            .child(
+                // Zero-footprint overlay that exists only to capture this
+                // container's screen bounds each render, so the scroll-wheel
+                // handler below can turn a cursor position into a time-axis
+                // zoom anchor (`ScrollWheelEvent` carries no element bounds
+                // of its own).
+                canvas(
+                    {
+                        let entity = entity.clone();
+                        move |bounds, _window, cx| {
+                            entity.update(cx, |state, _cx| state.flame_chart_bounds = bounds);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .on_scroll_wheel(cx.listener(|state, event: &ScrollWheelEvent, window, cx| {
+                // Plain scrolling is left alone so it still scrolls the
+                // lane list vertically when lanes overflow the viewport;
+                // only Ctrl/Cmd+scroll zooms the time axis.
+                if !(event.modifiers.control || event.modifiers.platform) {
+                    return;
+                }
+                cx.stop_propagation();
+                let width = f32::from(state.flame_chart_bounds.size.width);
+                if width <= 1.0 {
+                    return;
+                }
+                let cursor_fraction = ((f32::from(event.position.x)
+                    - f32::from(state.flame_chart_bounds.origin.x))
+                    / width)
+                    .clamp(0.0, 1.0);
+                let delta_y = f32::from(event.delta.pixel_delta(window.line_height()).y);
+                state.flame_zoom.zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
+                cx.notify();
+            }))
+            .on_click(cx.listener(|state, event: &ClickEvent, _window, cx| {
+                if event.click_count() >= 2 {
+                    state.flame_zoom.reset();
+                    cx.notify();
+                }
+            }))
+            .on_drag(ProfilerPanDrag, {
+                let entity = entity.clone();
+                move |_, _start_position, _window, cx| {
+                    entity.update(cx, |state, _cx| state.flame_pan_last_x = None);
+                    cx.new(|_| ProfilerPanDrag)
+                }
+            })
+            .on_drag_move(cx.listener(|state, event: &DragMoveEvent<ProfilerPanDrag>, _window, cx| {
+                let width = f32::from(event.bounds.size.width).max(1.0);
+                let x = f32::from(event.event.position.x);
+                if let Some(last_x) = state.flame_pan_last_x {
+                    state.flame_zoom.pan_by_fraction(-(x - last_x) / width);
+                }
+                state.flame_pan_last_x = Some(x);
+                cx.notify();
+            }))
+            .child(v_flex().id("flame-chart-lanes").gap_1().children(lane_elements))
             .into_any_element()
     }
 
@@ -1145,6 +1510,62 @@ fn profiler_empty_state(message: impl Into<SharedString>, cx: &Context<ProfilerP
         .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(message.into())
+        .into_any_element()
+}
+
+/// Zoom in / zoom out / reset button trio shared by the flame chart, the
+/// counters sparkline, and the GPU deep-capture preview — the three
+/// pan+zoomable views in this tab. `id_prefix` namespaces the element ids
+/// (e.g. `"flame"`, `"counters"`, `"deep-capture"`); `is_zoomed` disables the
+/// reset button when there's nothing to reset.
+fn render_zoom_controls(
+    id_prefix: &'static str,
+    is_zoomed: bool,
+    on_zoom_out: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_zoom_in: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    _cx: &Context<ProfilerPanel>,
+) -> AnyElement {
+    h_flex()
+        .gap_1()
+        .items_center()
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-zoom-out")))
+                .xsmall()
+                .ghost()
+                .icon(IconName::ZoomOut)
+                .tooltip("Zoom out")
+                .on_click(on_zoom_out),
+        )
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-zoom-in")))
+                .xsmall()
+                .ghost()
+                .icon(IconName::ZoomIn)
+                .tooltip("Zoom in")
+                .on_click(on_zoom_in),
+        )
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-zoom-reset")))
+                .xsmall()
+                .ghost()
+                .icon(IconName::Maximize)
+                .disabled(!is_zoomed)
+                .tooltip("Reset zoom (or double-click the view)")
+                .on_click(on_reset),
+        )
+        .into_any_element()
+}
+
+/// Small discoverability hint shown above each pan+zoomable view — there's no
+/// other way to learn the interaction, since it's driven entirely by mouse
+/// gestures (scroll wheel, drag) rather than visible affordances.
+fn zoom_pan_hint(cx: &Context<ProfilerPanel>) -> AnyElement {
+    div()
+        .px_2()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child("Ctrl/Cmd + scroll to zoom \u{00B7} drag to pan \u{00B7} double-click to reset")
         .into_any_element()
 }
 
