@@ -28,7 +28,13 @@ tree-sitter-languages = [
     "dep:tree-sitter-zig",
 ]
 
-inspector = []
+inspector = ["gpui-ce/inspector"]
+
+# CPU+GPU flamegraph/profiler capture engine, surfaced as the Inspector
+# panel's "Profiler" tab. Forwards to gpui-ce's own `flamegraph` feature,
+# which gates `InspectorTab::Profiler` and the capture/replay APIs this
+# crate's `profiler` module builds against.
+flamegraph = ["gpui-ce/flamegraph", "dep:wgpu"]
 
 # (no engine feature flags — all engine deps have been removed)
 
@@ -64,6 +70,13 @@ smol = "2"
 toml = "0.8"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
+# Only needed to name `wgpu::Device`/`wgpu::Queue` when calling gpui-ce's
+# `Window::gpu_device_and_queue` / `flamegraph_replay::render_deep_capture_step`
+# (Profiler tab's GPU deep-capture preview, feature = "flamegraph"). Version
+# pinned to match gpui-ce's own `wgpu` dependency so the types are identical;
+# Cargo's feature unification means this crate doesn't need to repeat
+# gpui-ce's backend feature list.
+wgpu = { version = "30", default-features = false, optional = true }
 
 aho-corasick   = "1.1"
 enum-iterator  = "2.3"

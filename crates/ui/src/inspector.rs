@@ -8,8 +8,9 @@ use gpui::{
     actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, uniform_list,
     AnyElement, App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
     InspectorEventListener, InspectorLayoutInfo, InspectorTab, InspectorTreeNode,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Refineable as _, Render,
-    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, Window,
+    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _,
+    Refineable as _, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
+    Subscription, Task, Window,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, Diagnostic,
@@ -484,15 +485,66 @@ fn render_inspector(
 
     v_flex()
         .id("inspector")
+        .relative()
         .font_family(".SystemUIFont")
         .size_full()
         .bg(cx.theme().background)
         .border_l_1()
         .border_color(cx.theme().border)
         .text_color(cx.theme().foreground)
+        .child(render_inspector_resize_handle(inspector, cx))
         .child(render_inspector_title_bar(inspector, window, cx))
         .child(render_inspector_tabs(inspector, window, cx))
         .child(render_tab_content(tab, inspector, window, cx))
+        .into_any_element()
+}
+
+/// A thin draggable handle on the panel's left edge (the panel docks on the
+/// right, per `render_inspector`'s `.border_l_1()`), so the user can resize
+/// it by dragging. Mouse-move/mouse-up handling while a resize is in
+/// progress already happens at the `gpui-ce` window level (see
+/// `Window::dispatch_mouse_event`'s `handle_inspector_resize` call, gated the
+/// same way this panel is) — this handle's only job is to flip
+/// `Inspector::start_resizing()` on when the user grabs it. There is
+/// intentionally no matching `on_mouse_up`/`on_drag` handler here: the
+/// window-level loop calls `Inspector::stop_resizing()` itself once it sees
+/// the mouse released, so duplicating that here would just race it.
+fn render_inspector_resize_handle(inspector: &mut Inspector, cx: &mut Context<Inspector>) -> AnyElement {
+    let indicator_color = if inspector.is_resizing() {
+        cx.theme().primary
+    } else {
+        cx.theme().border
+    };
+
+    div()
+        .id("inspector-resize-handle")
+        .group("inspector-resize-handle")
+        .absolute()
+        .top_0()
+        .left(px(-3.))
+        .h_full()
+        .w(px(6.))
+        .cursor_col_resize()
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left(px(2.))
+                .h_full()
+                .w(px(2.))
+                .when(!inspector.is_resizing(), |this| {
+                    this.opacity(0.0)
+                        .group_hover("inspector-resize-handle", |style| style.opacity(1.0))
+                })
+                .bg(indicator_color),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|inspector, _event, window, _cx| {
+                inspector.start_resizing();
+                window.refresh();
+            }),
+        )
         .into_any_element()
 }
 
@@ -588,9 +640,22 @@ fn render_tab_content(
         InspectorTab::Styles => render_styles_tab(inspector, window, cx),
         InspectorTab::Layout => render_layout_tab(inspector, window, cx),
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
+        #[cfg(feature = "flamegraph")]
+        InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
     };
 
-    if tab == InspectorTab::Elements {
+    // Elements and Profiler manage their own internal scrolling (Profiler's
+    // sub-sections each scroll independently; Elements is a virtualized
+    // uniform_list), so they get a plain flex_1 container rather than the
+    // outer overflow_y_scroll the other, simpler tabs rely on.
+    let owns_own_scroll = match tab {
+        InspectorTab::Elements => true,
+        #[cfg(feature = "flamegraph")]
+        InspectorTab::Profiler => true,
+        _ => false,
+    };
+
+    if owns_own_scroll {
         div().flex_1().child(content).into_any_element()
     } else {
         div().flex_1().overflow_y_scroll().child(content).into_any_element()
