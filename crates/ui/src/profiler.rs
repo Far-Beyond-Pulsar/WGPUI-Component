@@ -2345,6 +2345,184 @@ fn render_deep_capture_call_details(call: &DeepCaptureDrawCall, cx: &Context<Pro
 mod tests {
     use super::*;
 
+    // -- Zoom/pan math (`RangeZoom`, `zoom_factor_for_wheel_delta`,
+    // `ImageViewport`) -- pure, display-free logic shared by the flame
+    // chart, counters sparkline, and GPU preview, so it's fully testable
+    // without a window/render pass.
+
+    #[test]
+    fn range_zoom_full_starts_unzoomed_and_spans_the_whole_domain() {
+        let zoom = RangeZoom::full(0.0, 1000.0);
+        assert!(!zoom.is_zoomed());
+        assert_eq!(zoom.visible_start(), 0.0);
+        assert_eq!(zoom.visible_end(), 1000.0);
+    }
+
+    #[test]
+    fn range_zoom_at_center_shrinks_span_symmetrically() {
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 0.5); // zoom in 2x around the midpoint
+        assert!(zoom.is_zoomed());
+        assert_eq!(zoom.visible_start(), 250.0);
+        assert_eq!(zoom.visible_end(), 750.0);
+    }
+
+    #[test]
+    fn range_zoom_anchors_the_cursor_point_in_place() {
+        // Zooming in around the *left* edge (fraction 0.0) should keep that
+        // edge fixed and only pull the far edge inward.
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.0, 0.5);
+        assert_eq!(zoom.visible_start(), 0.0);
+        assert_eq!(zoom.visible_end(), 500.0);
+
+        // Zooming in around the *right* edge keeps that edge fixed instead.
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(1.0, 0.5);
+        assert_eq!(zoom.visible_start(), 500.0);
+        assert_eq!(zoom.visible_end(), 1000.0);
+    }
+
+    #[test]
+    fn range_zoom_zoom_at_clamps_to_domain_bounds() {
+        // Zooming *out* past the full domain clamps back to it rather than
+        // over-shooting past the edges.
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 100.0);
+        assert_eq!(zoom.visible_start(), 0.0);
+        assert_eq!(zoom.visible_end(), 1000.0);
+    }
+
+    #[test]
+    fn range_zoom_zoom_at_clamps_to_a_minimum_visible_span() {
+        // Repeatedly zooming in hard should bottom out at
+        // `MIN_VISIBLE_FRACTION` of the domain rather than collapsing to
+        // (or past) a zero-width window.
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        for _ in 0..200 {
+            zoom.zoom_at(0.5, 0.5);
+        }
+        let span = zoom.visible_span();
+        assert!(span > 0.0);
+        assert!(span >= 1000.0 * RangeZoom::MIN_VISIBLE_FRACTION - 1e-6);
+    }
+
+    #[test]
+    fn range_zoom_pan_by_fraction_shifts_the_window() {
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 0.5); // now visible = [250, 750]
+        zoom.pan_by_fraction(0.5); // shift right by half the visible span (250)
+        assert_eq!(zoom.visible_start(), 500.0);
+        assert_eq!(zoom.visible_end(), 1000.0);
+    }
+
+    #[test]
+    fn range_zoom_pan_by_fraction_clamps_at_domain_edges() {
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 0.5); // visible = [250, 750]
+        zoom.pan_by_fraction(10.0); // a huge rightward pan
+        assert_eq!(zoom.visible_end(), 1000.0);
+        assert_eq!(zoom.visible_start(), 500.0); // span is preserved, just slid to the end
+
+        zoom.pan_by_fraction(-10.0); // a huge leftward pan
+        assert_eq!(zoom.visible_start(), 0.0);
+        assert_eq!(zoom.visible_end(), 500.0);
+    }
+
+    #[test]
+    fn range_zoom_set_domain_resets_when_domain_changes_but_not_otherwise() {
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 0.5);
+        assert!(zoom.is_zoomed());
+
+        // Re-affirming the same domain (e.g. re-rendering the same capture
+        // frame) must not disturb the current zoom/pan.
+        zoom.set_domain(0.0, 1000.0);
+        assert!(zoom.is_zoomed());
+        assert_eq!(zoom.visible_start(), 250.0);
+
+        // A genuinely different domain (e.g. a newly selected frame) resets
+        // to "fit all".
+        zoom.set_domain(0.0, 2000.0);
+        assert!(!zoom.is_zoomed());
+        assert_eq!(zoom.visible_start(), 0.0);
+        assert_eq!(zoom.visible_end(), 2000.0);
+    }
+
+    #[test]
+    fn range_zoom_reset_restores_the_full_domain() {
+        let mut zoom = RangeZoom::full(10.0, 20.0);
+        zoom.zoom_at(0.25, 0.4);
+        zoom.pan_by_fraction(0.3);
+        assert!(zoom.is_zoomed());
+        zoom.reset();
+        assert!(!zoom.is_zoomed());
+        assert_eq!(zoom.visible_start(), 10.0);
+        assert_eq!(zoom.visible_end(), 20.0);
+    }
+
+    #[test]
+    fn range_zoom_value_to_fraction_maps_the_visible_window() {
+        let mut zoom = RangeZoom::full(0.0, 1000.0);
+        zoom.zoom_at(0.5, 0.5); // visible = [250, 750]
+        assert_eq!(zoom.value_to_fraction(250.0), 0.0);
+        assert_eq!(zoom.value_to_fraction(750.0), 1.0);
+        assert_eq!(zoom.value_to_fraction(500.0), 0.5);
+    }
+
+    #[test]
+    fn zoom_factor_for_wheel_delta_inverts_and_clamps() {
+        // Negative delta (scroll up/away) zooms in: factor < 1.
+        assert!(zoom_factor_for_wheel_delta(-100.0) < 1.0);
+        // Positive delta (scroll down/toward) zooms out: factor > 1.
+        assert!(zoom_factor_for_wheel_delta(100.0) > 1.0);
+        // No motion is a no-op factor.
+        assert_eq!(zoom_factor_for_wheel_delta(0.0), 1.0);
+        // Extreme deltas clamp rather than producing an unbounded factor.
+        assert_eq!(zoom_factor_for_wheel_delta(100_000.0), zoom_factor_for_wheel_delta(160.0));
+        assert_eq!(zoom_factor_for_wheel_delta(-100_000.0), zoom_factor_for_wheel_delta(-160.0));
+    }
+
+    #[test]
+    fn image_viewport_starts_unzoomed_and_full() {
+        let view = ImageViewport::new();
+        assert!(!view.is_zoomed());
+        assert_eq!(view.crop_fractions(), (0.0, 0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn image_viewport_zoom_at_applies_independently_per_axis() {
+        let mut view = ImageViewport::new();
+        // Zoom in 2x anchored at (0.0, 1.0) — top-left in fraction terms for
+        // x, bottom-right for y — and check each axis anchors independently.
+        view.zoom_at(0.0, 1.0, 0.5);
+        assert!(view.is_zoomed());
+        let (x0, y0, x1, y1) = view.crop_fractions();
+        assert_eq!((x0, x1), (0.0, 0.5));
+        assert_eq!((y0, y1), (0.5, 1.0));
+    }
+
+    #[test]
+    fn image_viewport_pan_by_fraction_clamps_into_the_unit_square() {
+        let mut view = ImageViewport::new();
+        view.zoom_at(0.5, 0.5, 0.5); // crop = [0.25, 0.25, 0.75, 0.75]
+        view.pan_by_fraction(-10.0, -10.0); // huge pan toward the origin
+        let (x0, y0, x1, y1) = view.crop_fractions();
+        assert_eq!((x0, y0), (0.0, 0.0));
+        assert_eq!((x1, y1), (0.5, 0.5));
+    }
+
+    #[test]
+    fn image_viewport_reset_restores_the_full_unit_square() {
+        let mut view = ImageViewport::new();
+        view.zoom_at(0.2, 0.8, 0.3);
+        view.pan_by_fraction(0.1, -0.1);
+        assert!(view.is_zoomed());
+        view.reset();
+        assert!(!view.is_zoomed());
+        assert_eq!(view.crop_fractions(), (0.0, 0.0, 1.0, 1.0));
+    }
+
     #[test]
     fn format_bytes_scales_units() {
         assert_eq!(format_bytes(0), "0 B");
