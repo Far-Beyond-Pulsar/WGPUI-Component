@@ -375,6 +375,14 @@ enum DeepCapturePreview {
     Unavailable(SharedString),
 }
 
+/// Cached [`build_flame_lanes`] output for one `(capture_generation,
+/// frame_index)` pair (see [`ProfilerPanel::flame_lane_cache`]).
+struct FlameLaneCache {
+    capture_generation: u64,
+    frame_index: usize,
+    lanes: Rc<Vec<FlameLane>>,
+}
+
 pub struct ProfilerPanel {
     section: ProfilerSection,
 
@@ -386,6 +394,32 @@ pub struct ProfilerPanel {
     selected_span: Option<SelectedSpan>,
     search_input: Entity<InputState>,
     flame_search: SharedString,
+
+    // Bumped every time `self.capture` is replaced by a freshly stopped
+    // capture (see `toggle_capture`). Keys `flame_lane_cache` below
+    // alongside `selected_frame`, so a cache entry can never be mistaken for
+    // the current capture's data even if a new capture happens to reuse the
+    // same frame index as the previous one.
+    capture_generation: u64,
+
+    // Cached `build_flame_lanes` output for the current
+    // `(capture_generation, selected_frame)` pair. Perf: `build_flame_lanes`
+    // walks every span in the frame, allocating a `FlameBar` (and a
+    // `SharedString` for its source location) per span -- rebuilding that on
+    // every render, including renders triggered by hovering a bar or
+    // panning/zooming the time axis that don't change which frame is
+    // selected, was pure waste at real span counts. Cleared implicitly by
+    // the generation bump above whenever a new capture replaces this one.
+    flame_lane_cache: Option<FlameLaneCache>,
+
+    // Counters (Phase 2): computed once in `toggle_capture` when a capture
+    // stops, rather than re-aggregated from every recorded frame on every
+    // render of the Counters tab -- panning/zooming/hovering the sparkline
+    // below re-renders this whole section without the underlying capture
+    // ever changing.
+    counter_summary: Option<gpui::CounterSummary>,
+    frame_durations_ms: Vec<f32>,
+    frame_durations_max_ms: f32,
 
     // Flame chart time-axis pan/zoom. `flame_chart_bounds` is the last
     // measured screen bounds of the chart canvas (captured via a `canvas()`
@@ -483,6 +517,13 @@ impl ProfilerPanel {
             selected_span: None,
             search_input,
             flame_search: SharedString::default(),
+
+            capture_generation: 0,
+            flame_lane_cache: None,
+
+            counter_summary: None,
+            frame_durations_ms: Vec::new(),
+            frame_durations_max_ms: 1.0,
 
             flame_zoom: RangeZoom::full(0.0, 1.0),
             flame_chart_bounds: Bounds::default(),
@@ -602,10 +643,30 @@ impl ProfilerPanel {
                 .rev()
                 .find(|(_, frame)| span_count(frame) >= threshold)
                 .map(|(index, _)| index);
+
+            // Counters/sparkline data computed once here, right as the
+            // capture stops, rather than re-aggregated from every recorded
+            // frame on every render of the Counters tab (see
+            // `counter_summary`/`frame_durations_ms`'s field docs).
+            let frame_durations_ms: Vec<f32> = frames
+                .iter()
+                .map(|f| (f.frame_end_ns.saturating_sub(f.frame_start_ns)) as f32 / 1.0e6)
+                .collect();
+            let frame_durations_max_ms = frame_durations_ms.iter().copied().fold(0.0f32, f32::max).max(1.0);
+            let counter_summary = capture.counter_summary();
+
             self.selected_frame = healthy_last.unwrap_or_else(|| capture.frame_count().saturating_sub(1));
             self.capture = Some(capture);
+            self.counter_summary = Some(counter_summary);
+            self.frame_durations_ms = frame_durations_ms;
+            self.frame_durations_max_ms = frame_durations_max_ms;
             self.selected_span = None;
             self.capture_error = None;
+            // Invalidates `flame_lane_cache`: even if this new capture's
+            // `selected_frame` happens to match the previous capture's, the
+            // generation mismatch forces a rebuild rather than reusing lanes
+            // built from the old capture's data.
+            self.capture_generation = self.capture_generation.wrapping_add(1);
         } else {
             match gpui::start_capture(gpui::CaptureOptions::default()) {
                 Ok(handle) => {
@@ -613,6 +674,9 @@ impl ProfilerPanel {
                     self.capture = None;
                     self.selected_span = None;
                     self.capture_error = None;
+                    self.counter_summary = None;
+                    self.frame_durations_ms = Vec::new();
+                    self.frame_durations_max_ms = 1.0;
                 }
                 Err(_already_capturing) => {
                     self.capture_error = Some(
@@ -760,13 +824,33 @@ impl ProfilerPanel {
             return profiler_empty_state("Frame not found.", cx);
         };
 
-        let lanes = build_flame_lanes(frame);
+        let cpu_gpu_submit_ns = frame.cpu_gpu_submit_ns;
+        let cpu_gpu_fence_observed_ns = frame.cpu_gpu_fence_observed_ns;
+
+        // Reuse the cached lane build for this exact `(capture_generation,
+        // frame_index)` pair if there is one -- see `flame_lane_cache`'s
+        // field doc. Only a genuinely different frame or capture pays for
+        // `build_flame_lanes`; re-renders for hover/zoom/pan/search on the
+        // *same* frame just clone the `Rc`.
+        let cache_hit = self
+            .flame_lane_cache
+            .as_ref()
+            .is_some_and(|c| c.capture_generation == self.capture_generation && c.frame_index == frame_index);
+        let lanes = if cache_hit {
+            self.flame_lane_cache.as_ref().unwrap().lanes.clone()
+        } else {
+            let lanes = Rc::new(build_flame_lanes(frame));
+            self.flame_lane_cache = Some(FlameLaneCache {
+                capture_generation: self.capture_generation,
+                frame_index,
+                lanes: lanes.clone(),
+            });
+            lanes
+        };
+
         if lanes.is_empty() {
             return profiler_empty_state("This frame recorded no spans.", cx);
         }
-
-        let cpu_gpu_submit_ns = frame.cpu_gpu_submit_ns;
-        let cpu_gpu_fence_observed_ns = frame.cpu_gpu_fence_observed_ns;
 
         self.render_flame_lanes_body(
             &lanes,
@@ -803,7 +887,11 @@ impl ProfilerPanel {
         let visible_end_ns = self.flame_zoom.visible_end();
         let visible_span_ns = self.flame_zoom.visible_span();
 
-        const ROW_HEIGHT: f32 = 20.0;
+        // Row height is `FLAME_ROW_HEIGHT` (defined further down alongside
+        // `hit_test_lane_bar`), not a separate local constant: the GPU
+        // instance geometry built below and the hit-test geometry
+        // `hit_test_lane_bar` scans against must agree on this value, or
+        // hovering/clicking would silently target the wrong bar.
         // Approximates the label line (`text_xs` + `mt(6px)`) each lane used
         // to render above its bar row, plus the `gap_1()` between lane
         // blocks -- used only to estimate the lanes' total content height
@@ -845,7 +933,7 @@ impl ProfilerPanel {
             );
             total_content_height += LANE_LABEL_HEIGHT;
 
-            let lane_height = (lane.max_depth as f32 + 1.0) * ROW_HEIGHT;
+            let lane_height = (lane.max_depth as f32 + 1.0) * FLAME_ROW_HEIGHT;
             total_content_height += lane_height + LANE_GAP;
 
             // One instance per visible bar for the GPU pass, plus an owned
@@ -853,13 +941,23 @@ impl ProfilerPanel {
             // without any per-bar GPUI element -- built once, from the same
             // culled set, so the two can never disagree about which bars
             // are on screen.
-            let mut instances: Vec<BarInstance> = Vec::with_capacity(lane.bars.len());
+            //
+            // `gpu_available` short-circuits the whole instance side of this
+            // loop (color lookup, search-match, selection/hover comparisons,
+            // `to_rgb()`) once GPU surfaces are known to be unavailable on
+            // this platform/build (see `flame_gpu_unavailable`): `instances`
+            // would just be built and then discarded, since `paint_flame_lane`
+            // bails out before ever reading it in that case. Hit-testing
+            // still needs `hit_bars` regardless, so that half always runs.
+            let gpu_available = !self.flame_gpu_unavailable;
+            let mut instances: Vec<BarInstance> =
+                if gpu_available { Vec::with_capacity(lane.bars.len()) } else { Vec::new() };
             let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
 
             // `BarInstance` coordinates feed a shader whose `viewport` uniform
             // is the surface's *physical* pixel size (`back_view_with_size`,
             // written by `WgpuSurface::prepaint` as `bounds * scale_factor`).
-            // Everything else in this function (`chart_width`, `ROW_HEIGHT`,
+            // Everything else in this function (`chart_width`, `FLAME_ROW_HEIGHT`,
             // `bar_screen_rect`, hit-testing) stays in logical pixels, since
             // that's the space GPUI mouse events and `Bounds<Pixels>` are in
             // -- only the values that cross into the GPU instance buffer get
@@ -876,34 +974,37 @@ impl ProfilerPanel {
                     continue;
                 }
                 let (x, width) = bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
-                let top = bar.depth as f32 * ROW_HEIGHT;
+                let top = bar.depth as f32 * FLAME_ROW_HEIGHT;
 
-                let color = match (bar.category, bar.gpu_pass_kind) {
-                    (Some(cat), _) => category_color(cat, cx),
-                    (None, Some(kind)) => gpu_pass_color(kind, cx),
-                    _ => cx.theme().chart_1,
-                };
-                let matches_search = search.is_empty() || bar.label.to_lowercase().contains(&search);
-                let is_selected = selected_key.as_ref().is_some_and(|(name, depth, dur)| {
-                    *name == bar.label && *depth == bar.depth && *dur == bar.duration_ns
-                });
-                let is_hovered = self.hovered_bar.as_ref().is_some_and(|h| {
-                    h.lane_index == lane_index && h.start_ns == bar.start_ns && h.depth == bar.depth
-                });
+                if gpu_available {
+                    let color = match (bar.category, bar.gpu_pass_kind) {
+                        (Some(cat), _) => category_color(cat, cx),
+                        (None, Some(kind)) => gpu_pass_color(kind, cx),
+                        _ => cx.theme().chart_1,
+                    };
+                    let matches_search =
+                        search.is_empty() || contains_ignore_ascii_case(&bar.label, &search);
+                    let is_selected = selected_key.as_ref().is_some_and(|(name, depth, dur)| {
+                        *name == bar.label && *depth == bar.depth && *dur == bar.duration_ns
+                    });
+                    let is_hovered = self.hovered_bar.as_ref().is_some_and(|h| {
+                        h.lane_index == lane_index && h.start_ns == bar.start_ns && h.depth == bar.depth
+                    });
 
-                let mut rgba = color.to_rgb();
-                if !matches_search {
-                    rgba.a *= 0.25;
+                    let mut rgba = color.to_rgb();
+                    if !matches_search {
+                        rgba.a *= 0.25;
+                    }
+
+                    instances.push(BarInstance {
+                        rect_min: [x * scale, top * scale],
+                        rect_max: [(x + width) * scale, (top + (FLAME_ROW_HEIGHT - 2.0)) * scale],
+                        color: [rgba.r, rgba.g, rgba.b, rgba.a],
+                        corner_radius: 3.0 * scale,
+                        highlight: if is_selected || is_hovered { 1.0 } else { 0.0 },
+                        _pad: [0.0, 0.0],
+                    });
                 }
-
-                instances.push(BarInstance {
-                    rect_min: [x * scale, top * scale],
-                    rect_max: [(x + width) * scale, (top + (ROW_HEIGHT - 2.0)) * scale],
-                    color: [rgba.r, rgba.g, rgba.b, rgba.a],
-                    corner_radius: 3.0 * scale,
-                    highlight: if is_selected || is_hovered { 1.0 } else { 0.0 },
-                    _pad: [0.0, 0.0],
-                });
                 hit_bars.push(HitBar { bar: bar.clone(), x, width, top });
             }
 
@@ -1103,9 +1204,13 @@ impl ProfilerPanel {
             // for panning without a modifier key.
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|state, _event: &MouseDownEvent, _window, cx| {
+                cx.listener(|state, _event: &MouseDownEvent, _window, _cx| {
+                    // Just resets the drag anchor; nothing rendered depends
+                    // on it, so (matching the counters sparkline and GPU
+                    // preview's identical handlers) this doesn't `cx.notify()`
+                    // -- doing so forced a full lane rebuild/GPU repaint on
+                    // every right-click for no visible effect.
                     state.flame_pan_last_x = None;
-                    cx.notify();
                 }),
             )
             .on_mouse_move(cx.listener(|state, event: &MouseMoveEvent, _window, cx| {
@@ -1294,7 +1399,12 @@ impl ProfilerPanel {
         if capture.frame_count() == 0 {
             return profiler_empty_state("The capture stopped with no frames recorded.", cx);
         }
-        let summary = capture.counter_summary();
+        // Computed once in `toggle_capture` when this capture stopped (see
+        // `counter_summary`'s field doc) instead of re-aggregated from every
+        // frame on every render of this section.
+        let Some(summary) = self.counter_summary else {
+            return profiler_empty_state("Counter summary unavailable for this capture.", cx);
+        };
 
         v_flex()
             .gap_3()
@@ -1311,21 +1421,16 @@ impl ProfilerPanel {
     /// flame chart's time axis (independent state — this is a different
     /// domain — but the identical interaction logic and helpers).
     fn render_frame_duration_sparkline(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        // Caller (`render_counters_section`) already guarantees a non-empty
-        // capture exists; this returns an empty placeholder rather than
-        // panicking if that invariant is ever violated.
-        let Some(capture) = self.capture.as_ref() else {
-            return div().into_any_element();
-        };
-        let durations_ms: Vec<f32> = capture
-            .frames()
-            .map(|f| (f.frame_end_ns.saturating_sub(f.frame_start_ns)) as f32 / 1.0e6)
-            .collect();
-        let frame_count = durations_ms.len();
+        // `frame_durations_ms`/`frame_durations_max_ms` are computed once in
+        // `toggle_capture` (see their field docs), not re-derived from the
+        // capture on every render -- this just guards against the invariant
+        // ever being violated (empty until a capture has actually stopped)
+        // rather than panicking.
+        let frame_count = self.frame_durations_ms.len();
         if frame_count == 0 {
             return div().into_any_element();
         }
-        let max_ms = durations_ms.iter().cloned().fold(0.0f32, f32::max).max(1.0);
+        let max_ms = self.frame_durations_max_ms;
         const SPARKLINE_HEIGHT: f32 = 60.0;
         const DEFAULT_CHART_WIDTH: f32 = 900.0;
 
@@ -1344,7 +1449,7 @@ impl ProfilerPanel {
 
         let mut bar_elements: Vec<AnyElement> = Vec::new();
         for index in start_index..end_index {
-            let ms = durations_ms[index];
+            let ms = self.frame_durations_ms[index];
             let height = ((ms / max_ms) * SPARKLINE_HEIGHT).max(1.0);
             let color = if ms > 16.7 { cx.theme().danger } else { cx.theme().chart_1 };
             let x = ((index as f64 - visible_start) / visible_span) as f32 * chart_width;
@@ -1654,7 +1759,16 @@ impl ProfilerPanel {
         uniform_list("profiler-ui-tree", item_count, {
             let rows = rows_rc.clone();
             let entity = entity.clone();
-            move |range: Range<usize>, _window: &mut Window, _cx: &mut App| {
+            move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
+                // Theme-token colors (rather than the ad hoc hex literals
+                // this used to hardcode) so the tree matches the rest of the
+                // Profiler tab -- and the Inspector panel's other tabs --
+                // instead of carrying its own one-off palette.
+                let muted = cx.theme().muted_foreground;
+                let selected_bg = cx.theme().list_active;
+                let hover_bg = cx.theme().list_hover;
+                let type_name_color = cx.theme().info;
+
                 range
                     .map(|i| {
                         let row = &rows[i];
@@ -1670,14 +1784,15 @@ impl ProfilerPanel {
                             .cursor_pointer()
                             .rounded_sm()
                             .text_xs()
-                            .when(row.is_selected, |s| s.bg(gpui::rgba(0x3070ff33)));
+                            .when(row.is_selected, |s| s.bg(selected_bg))
+                            .hover(|s| s.bg(hover_bg));
 
                         if row.has_children {
                             let entity_for_toggle = entity.clone();
                             el = el.child(
                                 div()
                                     .w(px(14.))
-                                    .text_color(gpui::rgba(0x888888ff))
+                                    .text_color(muted)
                                     .child(if row.is_expanded { "▼" } else { "▶" })
                                     .on_mouse_down(MouseButton::Left, move |_, _window, cx| {
                                         entity_for_toggle.update(cx, |state, cx| {
@@ -1693,13 +1808,8 @@ impl ProfilerPanel {
                         }
 
                         el = el
-                            .child(div().text_color(gpui::rgba(0x8888ffff)).child(row.type_name.clone()))
-                            .child(
-                                div()
-                                    .ml(px(6.))
-                                    .text_color(gpui::rgba(0x888888ff))
-                                    .child(row.bounds_label.clone()),
-                            );
+                            .child(div().text_color(type_name_color).child(row.type_name.clone()))
+                            .child(div().ml(px(6.)).text_color(muted).child(row.bounds_label.clone()));
 
                         let entity_for_click = entity.clone();
                         el.on_click(move |_, _window, cx| {
@@ -2246,8 +2356,12 @@ impl ProfilerPanel {
 }
 
 fn profiler_empty_state(message: impl Into<SharedString>, cx: &Context<ProfilerPanel>) -> AnyElement {
+    // `px(8.)`, matching the empty/placeholder-state padding `inspector.rs`
+    // uses for its own tabs (Styles/Layout/Event Listeners), so the Profiler
+    // tab's empty states read as part of the same panel rather than using
+    // their own one-off spacing.
     div()
-        .p(px(12.))
+        .p(px(8.))
         .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(message.into())
@@ -2388,6 +2502,28 @@ fn bar_screen_rect(bar: &FlameBar, visible_start_ns: f64, visible_span_ns: f64, 
     let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
     let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
     (x, width)
+}
+
+/// Case-insensitive substring search that doesn't allocate a lowercased copy
+/// of `haystack`. Called for every visible bar's label on every render
+/// whenever the flame chart search box is non-empty, so avoiding a
+/// per-bar/per-render `String` allocation here (the previous
+/// `haystack.to_lowercase().contains(needle_lower)`) matters at real span
+/// counts. Span labels are Rust identifiers/type names, so plain ASCII
+/// case-folding is sufficient -- this intentionally isn't full Unicode
+/// case-insensitive matching.
+fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    let haystack = haystack.as_bytes();
+    let needle = needle_lower.as_bytes();
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window.iter().zip(needle).all(|(&h, &n)| h.to_ascii_lowercase() == n))
 }
 
 /// Maps a nanosecond instant to an x pixel coordinate in the current zoom
