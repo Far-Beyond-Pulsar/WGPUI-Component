@@ -34,7 +34,7 @@ inspector = ["gpui-ce/inspector"]
 # panel's "Profiler" tab. Forwards to gpui-ce's own `flamegraph` feature,
 # which gates `InspectorTab::Profiler` and the capture/replay APIs this
 # crate's `profiler` module builds against.
-flamegraph = ["gpui-ce/flamegraph", "dep:wgpu"]
+flamegraph = ["gpui-ce/flamegraph", "dep:wgpu", "dep:bytemuck"]
 
 # (no engine feature flags — all engine deps have been removed)
 
@@ -77,6 +77,10 @@ uuid = { version = "1", features = ["v4"] }
 # Cargo's feature unification means this crate doesn't need to repeat
 # gpui-ce's backend feature list.
 wgpu = { version = "30", default-features = false, optional = true }
+# Only needed to build the flame chart's per-instance GPU bar buffer
+# (`profiler.rs`'s `BarInstance`, feature = "flamegraph"). Matches gpui-ce's
+# own `bytemuck` version so there is one copy in the dependency graph.
+bytemuck = { version = "1.24", features = ["derive"], optional = true }
 
 aho-corasick   = "1.1"
 enum-iterator  = "2.3"
@@ -138,5 +142,11 @@ path = "../../examples/button_custom_hover_active.rs"
 
 [dev-dependencies]
 indoc = "=2.0.7"
+env_logger = "0.11"
+# Enables `gpui::TestAppContext`/`#[gpui::test]` for headless render-path
+# performance tests (see `profiler.rs`'s flame-chart benchmark). Only pulled
+# in for test binaries, thanks to the workspace's resolver = "2" per-target
+# feature unification -- normal library/binary builds are unaffected.
+gpui-ce = { workspace = true, features = ["test-support"] }
 
 

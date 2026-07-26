@@ -282,6 +282,7 @@ impl Render for DemoView {
 }
 
 fn main() {
+    env_logger::init();
     Application::new().run(|cx| {
         ui::init(cx);
         // Default to dark mode. Set before the window opens (Theme::change
