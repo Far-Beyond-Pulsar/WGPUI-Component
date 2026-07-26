@@ -55,13 +55,19 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, img, prelude::FluentBuilder as _, px, uniform_list, AnyElement, App,
+    canvas, div, img, point, prelude::FluentBuilder as _, px, uniform_list, AnyElement, App,
     AppContext as _, Bounds, ClickEvent, Context, DeepCaptureDrawCall, DeepCaptureReplay,
     DragMoveEvent, DrawCallResourceStatus, Empty, Entity, FontWeight, Global, ImageSource,
-    Inspector, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels,
-    Render, RenderImage, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled,
-    Subscription, Task, Timer, UiElementNode, UiTreeReplay, Window,
+    Inspector, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Pixels, Point, Render, RenderImage, ScrollWheelEvent,
+    SharedString, StatefulInteractiveElement as _, Styled, Subscription, Task, Timer,
+    UiElementNode, UiTreeReplay, Window, wgpu_surface,
 };
+// `wgpu` and `bytemuck` are used fully-qualified below (both are direct,
+// `flamegraph`-gated dependencies of this crate; see `Cargo.toml`), matching
+// how `wgpu::Device`/`wgpu::Queue` are already referenced elsewhere in this
+// file for the GPU deep-capture preview.
+use wgpu::util::DeviceExt as _;
 
 use crate::{
     alert::Alert,
@@ -391,6 +397,24 @@ pub struct ProfilerPanel {
     flame_chart_bounds: Bounds<Pixels>,
     flame_pan_last_x: Option<f32>,
 
+    // GPU-rendered flame bars (perf fix, `Far-Beyond-Pulsar/WGPUI-Component`
+    // flame-chart perf bug): one `wgpu_surface` + instanced draw call per
+    // lane instead of one GPUI `div()` per span bar. `flame_bar_pipeline` is
+    // compiled once and shared across every lane's own `FlameLaneGpu` (a
+    // `wgpu::RenderPipeline` only depends on the shader + target format, not
+    // on any lane's instance data). `flame_lane_gpu`/`flame_lane_bounds` are
+    // indexed by the lane's position in `build_flame_lanes`'s output for the
+    // currently selected frame; both are resized to match on every render.
+    // `flame_gpu_unavailable` latches once `Window::create_wgpu_surface`
+    // ever returns `None` (headless test platform, or a backend/platform
+    // that doesn't support it), so the "GPU unavailable" notice doesn't
+    // flicker if creation transiently fails on exactly one render.
+    flame_bar_pipeline: Option<Rc<FlameBarPipeline>>,
+    flame_lane_gpu: Vec<Option<FlameLaneGpu>>,
+    flame_lane_bounds: Vec<Bounds<Pixels>>,
+    flame_gpu_unavailable: bool,
+    hovered_bar: Option<HoveredBar>,
+
     // Counters sparkline pan/zoom over the frame-index axis (same math as
     // `flame_zoom`, independent state since it's a different domain).
     counters_zoom: RangeZoom,
@@ -422,6 +446,13 @@ pub struct ProfilerPanel {
     deep_capture_view: ImageViewport,
     deep_capture_preview_bounds: Bounds<Pixels>,
     deep_capture_pan_last: Option<(f32, f32)>,
+    // Measured bounds of the preview panel's own outer container (*not* the
+    // fixed-width viewport div inside it -- that div's width is derived
+    // *from* this measurement, so capturing bounds on it would be
+    // circular). Lets the displayed preview image scale to the Inspector
+    // sidebar's actual, user-resizable width instead of a hardcoded
+    // constant.
+    deep_capture_panel_bounds: Bounds<Pixels>,
 
     _subscriptions: Vec<Subscription>,
 }
@@ -457,6 +488,12 @@ impl ProfilerPanel {
             flame_chart_bounds: Bounds::default(),
             flame_pan_last_x: None,
 
+            flame_bar_pipeline: None,
+            flame_lane_gpu: Vec::new(),
+            flame_lane_bounds: Vec::new(),
+            flame_gpu_unavailable: false,
+            hovered_bar: None,
+
             counters_zoom: RangeZoom::full(0.0, 1.0),
             counters_chart_bounds: Bounds::default(),
             counters_pan_last_x: None,
@@ -481,6 +518,7 @@ impl ProfilerPanel {
             deep_capture_view: ImageViewport::new(),
             deep_capture_preview_bounds: Bounds::default(),
             deep_capture_pan_last: None,
+            deep_capture_panel_bounds: Bounds::default(),
 
             _subscriptions,
         }
@@ -498,7 +536,7 @@ impl ProfilerPanel {
                     .min_h(px(0.))
                     .when(self.section != ProfilerSection::FlameChart, |d| d.overflow_y_scroll())
                     .child(match self.section {
-                        ProfilerSection::FlameChart => self.render_flame_chart_section(cx),
+                        ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
                         ProfilerSection::Counters => self.render_counters_section(cx),
                         ProfilerSection::Memory => self.render_memory_section(window, cx),
                         ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
@@ -564,7 +602,7 @@ impl ProfilerPanel {
         cx.notify();
     }
 
-    fn render_flame_chart_section(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_flame_chart_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let is_recording = self.capture_handle.is_some();
         let frame_count = self.capture.as_ref().map(|c| c.frame_count()).unwrap_or(0);
 
@@ -674,7 +712,7 @@ impl ProfilerPanel {
                 .overflow_y_scroll()
                 .px_2()
                 .pb_2()
-                .child(self.render_flame_chart_body(cx)),
+                .child(self.render_flame_chart_body(window, cx)),
         );
         if let Some(span) = self.selected_span.clone() {
             body = body.child(self.render_selected_span_details(&span, cx));
@@ -683,7 +721,7 @@ impl ProfilerPanel {
         body.into_any_element()
     }
 
-    fn render_flame_chart_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_flame_chart_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(capture) = self.capture.as_ref() else {
             return profiler_empty_state(
                 "Start a capture, interact with the app, then stop it to inspect recorded frames.",
@@ -704,6 +742,37 @@ impl ProfilerPanel {
             return profiler_empty_state("This frame recorded no spans.", cx);
         }
 
+        let cpu_gpu_submit_ns = frame.cpu_gpu_submit_ns;
+        let cpu_gpu_fence_observed_ns = frame.cpu_gpu_fence_observed_ns;
+
+        self.render_flame_lanes_body(
+            &lanes,
+            cpu_gpu_submit_ns,
+            cpu_gpu_fence_observed_ns,
+            window,
+            cx,
+        )
+    }
+
+    /// Renders the flame chart's interactive lane/bar area for an
+    /// already-built `lanes` slice. Split out from [`Self::render_flame_chart_body`]
+    /// so the flame-chart performance benchmark (see the `tests` module) can
+    /// exercise the exact same rendering path against synthetic `FlameLane`
+    /// data, without needing a live `gpui::Capture` session (which can only
+    /// be produced by an actual `start_capture`/`stop` round trip).
+    ///
+    /// `cpu_gpu_submit_ns`/`cpu_gpu_fence_observed_ns` are the current
+    /// frame's CPU-observed GPU submit/fence-observed instants (see
+    /// `gpui::FrameCapture`'s doc comments), plotted as timeline markers
+    /// alongside the calibrated GPU span bars when both are `Some`.
+    fn render_flame_lanes_body(
+        &mut self,
+        lanes: &[FlameLane],
+        cpu_gpu_submit_ns: Option<u64>,
+        cpu_gpu_fence_observed_ns: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         // `set_domain` already ran in `render_flame_chart_section` for this
         // same frame, so this just reads the (possibly zoomed/panned)
         // visible window back out.
@@ -712,6 +781,12 @@ impl ProfilerPanel {
         let visible_span_ns = self.flame_zoom.visible_span();
 
         const ROW_HEIGHT: f32 = 20.0;
+        // Approximates the label line (`text_xs` + `mt(6px)`) each lane used
+        // to render above its bar row, plus the `gap_1()` between lane
+        // blocks -- used only to estimate the lanes' total content height
+        // for the timeline markers below, not for any hit-testing math.
+        const LANE_LABEL_HEIGHT: f32 = 22.0;
+        const LANE_GAP: f32 = 4.0;
         const DEFAULT_CHART_WIDTH: f32 = 900.0;
         // The chart canvas has no way to know its own rendered pixel width
         // before layout runs, so bar positions are computed against the
@@ -727,8 +802,16 @@ impl ProfilerPanel {
             .as_ref()
             .map(|s| (s.name.clone(), s.depth, s.duration_ns));
 
+        // Keep the per-lane GPU state and hit-test bounds sized to the
+        // current lane count so a frame with fewer lanes than the last one
+        // doesn't leave stale surfaces/bounds hanging around.
+        self.flame_lane_gpu.truncate(lanes.len());
+        self.flame_lane_bounds.resize(lanes.len(), Bounds::default());
+
         let mut lane_elements: Vec<AnyElement> = Vec::new();
-        for lane in &lanes {
+        let mut total_content_height: f32 = 0.0;
+
+        for (lane_index, lane) in lanes.iter().enumerate() {
             lane_elements.push(
                 div()
                     .text_xs()
@@ -737,21 +820,31 @@ impl ProfilerPanel {
                     .child(format!("{} ({} spans)", lane.label, lane.bars.len()))
                     .into_any_element(),
             );
+            total_content_height += LANE_LABEL_HEIGHT;
 
             let lane_height = (lane.max_depth as f32 + 1.0) * ROW_HEIGHT;
-            let mut bar_elements: Vec<AnyElement> = Vec::new();
+            total_content_height += lane_height + LANE_GAP;
 
-            for (bar_index, bar) in lane.bars.iter().enumerate() {
+            // One instance per visible bar for the GPU pass, plus an owned
+            // "hit bar" list the hover/click handlers below can test against
+            // without any per-bar GPUI element -- built once, from the same
+            // culled set, so the two can never disagree about which bars
+            // are on screen.
+            let mut instances: Vec<BarInstance> = Vec::with_capacity(lane.bars.len());
+            let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
+
+            for bar in &lane.bars {
                 let bar_start_ns = bar.start_ns as f64;
                 let bar_end_ns = bar_start_ns + bar.duration_ns as f64;
                 // Cull spans that don't intersect the current zoomed/panned
                 // window at all — cheaper, and keeps a deeply-zoomed-in view
-                // from still building thousands of off-screen bar elements.
+                // from still building thousands of off-screen GPU instances.
                 if bar_end_ns < visible_start_ns || bar_start_ns > visible_end_ns {
                     continue;
                 }
-                let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
-                let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
+                let (x, width) = bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
+                let top = bar.depth as f32 * ROW_HEIGHT;
+
                 let color = match (bar.category, bar.gpu_pass_kind) {
                     (Some(cat), _) => category_color(cat, cx),
                     (None, Some(kind)) => gpu_pass_color(kind, cx),
@@ -761,68 +854,135 @@ impl ProfilerPanel {
                 let is_selected = selected_key.as_ref().is_some_and(|(name, depth, dur)| {
                     *name == bar.label && *depth == bar.depth && *dur == bar.duration_ns
                 });
+                let is_hovered = self.hovered_bar.as_ref().is_some_and(|h| {
+                    h.lane_index == lane_index && h.start_ns == bar.start_ns && h.depth == bar.depth
+                });
 
-                let tooltip_text: SharedString = format!(
-                    "{}\n{:.3}ms · depth {} · {}",
-                    bar.label,
-                    bar.duration_ns as f64 / 1.0e6,
-                    bar.depth,
-                    bar.category_label()
-                )
-                .into();
+                let mut rgba = color.to_rgb();
+                if !matches_search {
+                    rgba.a *= 0.25;
+                }
 
-                let lane_label = lane.label.clone();
-                let click_bar = bar.clone();
-
-                bar_elements.push(
-                    div()
-                        .id(SharedString::from(format!(
-                            "flame-{}-{}-{}",
-                            lane.label, bar.start_ns, bar_index
-                        )))
-                        .absolute()
-                        .top(px(bar.depth as f32 * ROW_HEIGHT))
-                        .left(px(x))
-                        .w(px(width))
-                        .h(px(ROW_HEIGHT - 2.0))
-                        .rounded_sm()
-                        .bg(color)
-                        .when(!matches_search, |d| d.opacity(0.25))
-                        .when(is_selected, |d| d.border_2().border_color(cx.theme().foreground))
-                        .overflow_hidden()
-                        .cursor_pointer()
-                        .tooltip(move |window, cx| Tooltip::new(tooltip_text.clone()).build(window, cx))
-                        .on_click(cx.listener(move |state, _, _window, cx| {
-                            state.selected_span = Some(SelectedSpan {
-                                name: click_bar.label.clone(),
-                                lane: lane_label.clone(),
-                                category_label: click_bar.category_label(),
-                                depth: click_bar.depth,
-                                duration_ns: click_bar.duration_ns,
-                                element_type: click_bar.element_type.clone(),
-                                element_source: click_bar.element_source.clone(),
-                            });
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .px(px(3.))
-                                .text_xs()
-                                .text_color(cx.theme().background)
-                                .child(bar.label.clone()),
-                        )
-                        .into_any_element(),
-                );
+                instances.push(BarInstance {
+                    rect_min: [x, top],
+                    rect_max: [x + width, top + (ROW_HEIGHT - 2.0)],
+                    color: [rgba.r, rgba.g, rgba.b, rgba.a],
+                    corner_radius: 3.0,
+                    highlight: if is_selected || is_hovered { 1.0 } else { 0.0 },
+                    _pad: [0.0, 0.0],
+                });
+                hit_bars.push(HitBar { bar: bar.clone(), x, width, top });
             }
 
-            lane_elements.push(
-                div()
-                    .relative()
-                    .w(px(chart_width))
-                    .h(px(lane_height))
-                    .children(bar_elements)
-                    .into_any_element(),
+            // Lazily create (and lazily paint into) this lane's own GPU
+            // surface. Falls back to "no bars drawn, but the row still lays
+            // out and the hit-test overlay still works" when GPU surfaces
+            // aren't available on this platform/build (see
+            // `flame_gpu_unavailable`) -- exactly the same data either way,
+            // just not turned into pixels.
+            let surface_handle = self.paint_flame_lane(lane_index, window, &instances);
+
+            let mut row = div()
+                .id(SharedString::from(format!("flame-lane-{lane_index}")))
+                .relative()
+                .w(px(chart_width))
+                .h(px(lane_height));
+
+            if let Some(handle) = surface_handle {
+                row = row.child(wgpu_surface(handle).absolute().inset_0());
+            }
+
+            let entity = cx.entity().clone();
+            row = row.child(
+                // Per-lane bounds capture, same purpose as the container's
+                // own canvas below: mouse events carry only window-absolute
+                // positions, so hit-testing needs this lane's own origin to
+                // convert them into the local (time, depth-row) space
+                // `hit_test_lane_bar` expects.
+                canvas(
+                    {
+                        let entity = entity.clone();
+                        move |bounds, _window, cx| {
+                            entity.update(cx, |state, _cx| {
+                                if let Some(slot) = state.flame_lane_bounds.get_mut(lane_index) {
+                                    *slot = bounds;
+                                }
+                            });
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
             );
+
+            // A single hit-test overlay per lane replaces what used to be a
+            // `.tooltip()`/`.on_click()` pair on *every* bar div: one real,
+            // stateful, interactive element per lane instead of one per bar.
+            let hit_bars_for_move = Rc::new(hit_bars);
+            let hit_bars_for_click = hit_bars_for_move.clone();
+            let lane_label_for_click = lane.label.clone();
+            row = row
+                .child(
+                    div()
+                        .id(SharedString::from(format!("flame-lane-hit-{lane_index}")))
+                        .absolute()
+                        .inset_0()
+                        .cursor_pointer()
+                        .on_mouse_move(cx.listener(move |state, event: &MouseMoveEvent, _window, cx| {
+                            state.update_flame_hover(lane_index, &hit_bars_for_move, event.position, cx);
+                        }))
+                        .on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
+                            state.select_flame_bar_at(
+                                lane_index,
+                                &hit_bars_for_click,
+                                lane_label_for_click.clone(),
+                                event.position(),
+                                cx,
+                            );
+                        })),
+                );
+
+            if let Some(hover) = self.hovered_bar.as_ref().filter(|h| h.lane_index == lane_index) {
+                row = row.child(flame_bar_tooltip(hover, cx));
+            }
+
+            lane_elements.push(row.into_any_element());
+        }
+
+        if self.flame_gpu_unavailable {
+            lane_elements.insert(
+                0,
+                Alert::warning(
+                    "flame-gpu-unavailable",
+                    "GPU-accelerated flame bars are unavailable on this platform/build; \
+                     lane rows still lay out and remain interactive, but bars aren't drawn.",
+                )
+                .into_any_element(),
+            );
+        }
+
+        // CPU-observed GPU submit/fence-observed timeline markers for the
+        // currently selected frame (see `gpui::FrameCapture::cpu_gpu_submit_ns`'s
+        // doc comment): thin vertical lines across the full lane stack,
+        // distinct from the GPU span bars themselves, so the gap between
+        // "CPU asked" / "GPU actually started" (first GPU bar) / "GPU
+        // actually finished" (last GPU bar) / "CPU found out" is visible on
+        // one chart. Only two elements regardless of span count, so these
+        // stay plain GPUI divs rather than folding into the instance buffer.
+        let mut marker_elements: Vec<AnyElement> = Vec::new();
+        if let (Some(submit_ns), Some(fence_ns)) = (cpu_gpu_submit_ns, cpu_gpu_fence_observed_ns) {
+            if let Some(x) = ns_to_x(submit_ns, visible_start_ns, visible_span_ns, chart_width) {
+                marker_elements.push(timeline_marker(x, total_content_height, cx.theme().warning, "CPU submit"));
+            }
+            if let Some(x) = ns_to_x(fence_ns, visible_start_ns, visible_span_ns, chart_width) {
+                marker_elements.push(timeline_marker(
+                    x,
+                    total_content_height,
+                    cx.theme().success,
+                    "CPU fence observed",
+                ));
+            }
         }
 
         let entity = cx.entity().clone();
@@ -891,8 +1051,157 @@ impl ProfilerPanel {
                 state.flame_pan_last_x = Some(x);
                 cx.notify();
             }))
+            // Right-click+drag pans the time axis too, alongside the
+            // left-button `on_drag`/`on_drag_move` above -- the flame
+            // chart's per-lane hit-test overlays use left-click for
+            // select-a-span, so right-drag is the conflict-free complement
+            // for panning without a modifier key.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|state, _event: &MouseDownEvent, _window, cx| {
+                    state.flame_pan_last_x = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|state, event: &MouseMoveEvent, _window, cx| {
+                if event.pressed_button != Some(MouseButton::Right) {
+                    return;
+                }
+                let width = f32::from(state.flame_chart_bounds.size.width).max(1.0);
+                let x = f32::from(event.position.x);
+                if let Some(last_x) = state.flame_pan_last_x {
+                    state.flame_zoom.pan_by_fraction(-(x - last_x) / width);
+                    cx.notify();
+                }
+                state.flame_pan_last_x = Some(x);
+            }))
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|state, _event: &MouseUpEvent, _window, cx| {
+                    state.flame_pan_last_x = None;
+                }),
+            )
             .child(v_flex().id("flame-chart-lanes").gap_1().children(lane_elements))
+            .children(marker_elements)
             .into_any_element()
+    }
+
+    /// Lazily creates this lane's `wgpu_surface` (and the shared
+    /// `FlameBarPipeline`, on the very first lane that manages to create
+    /// one) and paints `instances` into its current back buffer. Returns
+    /// the surface handle to embed in the element tree, or `None` if GPU
+    /// surfaces aren't available on this platform/build (in which case
+    /// `flame_gpu_unavailable` is latched so the caller can surface a
+    /// one-time notice instead of silently drawing nothing).
+    fn paint_flame_lane(
+        &mut self,
+        lane_index: usize,
+        window: &Window,
+        instances: &[BarInstance],
+    ) -> Option<gpui::WgpuSurfaceHandle> {
+        if self.flame_lane_gpu.len() <= lane_index {
+            self.flame_lane_gpu.resize_with(lane_index + 1, || None);
+        }
+
+        if self.flame_lane_gpu[lane_index].is_none() {
+            let Some(surface) = window.create_wgpu_surface(
+                // Real size doesn't matter here: the `WgpuSurface` element's
+                // own `prepaint` requests a resize to match its measured
+                // layout bounds every render, same as `back_view_with_size`
+                // lagging layout by one frame elsewhere in this file.
+                1,
+                1,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            ) else {
+                self.flame_gpu_unavailable = true;
+                return None;
+            };
+            let device = surface.device().clone();
+            if self.flame_bar_pipeline.is_none() {
+                self.flame_bar_pipeline = Some(Rc::new(FlameBarPipeline::new(&device, surface.format())));
+            }
+            let pipeline = self.flame_bar_pipeline.clone().unwrap();
+            self.flame_lane_gpu[lane_index] = Some(FlameLaneGpu::new(&device, surface, &pipeline));
+        }
+
+        let pipeline = self.flame_bar_pipeline.clone()?;
+        let gpu = self.flame_lane_gpu[lane_index].as_mut()?;
+        let handle = gpu.surface.clone();
+        let Some((view, (width, height))) = handle.back_view_with_size() else {
+            // Surface exists but isn't ready to accept a frame this render
+            // (e.g. mid-resize) -- the element still shows its last frame.
+            return Some(handle);
+        };
+        gpu.render(&pipeline, instances, &view, width, height);
+        drop(view);
+        handle.swap_buffers();
+        let _ = window;
+        Some(handle)
+    }
+
+    /// Hit-tests `local` (a cursor position already made relative to this
+    /// lane's own bounds) against `hit_bars`, updating `hovered_bar` and
+    /// notifying only when the hovered bar actually changed -- mouse-move
+    /// fires far more often than the hover target changes, and renotifying
+    /// on every pixel would defeat the point of cutting per-bar elements.
+    fn update_flame_hover(
+        &mut self,
+        lane_index: usize,
+        hit_bars: &[HitBar],
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.flame_lane_bounds.get(lane_index).copied().unwrap_or_default();
+        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
+        let found = hit_test_lane_bar(hit_bars, local);
+
+        let new_hover = found.map(|hb| HoveredBar {
+            lane_index,
+            start_ns: hb.bar.start_ns,
+            depth: hb.bar.depth,
+            label: hb.bar.label.clone(),
+            duration_ns: hb.bar.duration_ns,
+            category_label: hb.bar.category_label(),
+            local_pos: point(hb.x, hb.top),
+        });
+
+        let changed = match (&self.hovered_bar, &new_hover) {
+            (None, None) => false,
+            (Some(a), Some(b)) => a.lane_index != b.lane_index || a.start_ns != b.start_ns || a.depth != b.depth,
+            _ => true,
+        };
+        self.hovered_bar = new_hover;
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// Hit-tests `position` (window-absolute) against `lane_index`'s
+    /// `hit_bars` and, on a hit, sets `selected_span` -- this single hit-test
+    /// replaces what used to be a `.on_click()` closure per bar div.
+    fn select_flame_bar_at(
+        &mut self,
+        lane_index: usize,
+        hit_bars: &[HitBar],
+        lane_label: SharedString,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.flame_lane_bounds.get(lane_index).copied().unwrap_or_default();
+        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
+        let Some(hit) = hit_test_lane_bar(hit_bars, local) else {
+            return;
+        };
+        self.selected_span = Some(SelectedSpan {
+            name: hit.bar.label.clone(),
+            lane: lane_label,
+            category_label: hit.bar.category_label(),
+            depth: hit.bar.depth,
+            duration_ns: hit.bar.duration_ns,
+            element_type: hit.bar.element_type.clone(),
+            element_source: hit.bar.element_source.clone(),
+        });
+        cx.notify();
     }
 
     fn render_selected_span_details(&self, span: &SelectedSpan, cx: &Context<Self>) -> AnyElement {
@@ -1104,6 +1413,34 @@ impl ProfilerPanel {
                             cx.notify();
                         },
                     ))
+                    // Right-click+drag pans too, alongside the left-button
+                    // `on_drag`/`on_drag_move` above -- see the flame
+                    // chart's identical addition for why (button-agnostic
+                    // complement to GPUI's left-button-only drag system).
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|state, _event: &MouseDownEvent, _window, cx| {
+                            state.counters_pan_last_x = None;
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|state, event: &MouseMoveEvent, _window, cx| {
+                        if event.pressed_button != Some(MouseButton::Right) {
+                            return;
+                        }
+                        let width = f32::from(state.counters_chart_bounds.size.width).max(1.0);
+                        let x = f32::from(event.position.x);
+                        if let Some(last_x) = state.counters_pan_last_x {
+                            state.counters_zoom.pan_by_fraction(-(x - last_x) / width);
+                            cx.notify();
+                        }
+                        state.counters_pan_last_x = Some(x);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Right,
+                        cx.listener(|state, _event: &MouseUpEvent, _window, cx| {
+                            state.counters_pan_last_x = None;
+                        }),
+                    )
                     .children(bar_elements),
             )
             .into_any_element()
@@ -1609,6 +1946,23 @@ impl ProfilerPanel {
     }
 
     fn render_deep_capture_preview_panel(&self, cx: &Context<Self>) -> AnyElement {
+        let entity = cx.entity().clone();
+        // Bounds-capture overlay on the panel's own *outer* container --
+        // not the fixed-width viewport div further down, whose width is
+        // derived *from* this measurement, which would be circular. Lets
+        // `display_width` below track the Inspector sidebar's actual,
+        // user-resizable width instead of a hardcoded constant.
+        let bounds_capture = canvas(
+            move |bounds, _window, cx| {
+                entity.update(cx, |state, _cx| state.deep_capture_panel_bounds = bounds);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+
+        let measured_width = f32::from(self.deep_capture_panel_bounds.size.width);
+
         let mut title_row = h_flex().items_center().gap_2().child(
             div()
                 .text_xs()
@@ -1617,7 +1971,7 @@ impl ProfilerPanel {
                 .child("Live Preview"),
         );
 
-        match &self.deep_capture_preview {
+        let content = match &self.deep_capture_preview {
             None => v_flex()
                 .gap_1()
                 .child(title_row)
@@ -1634,7 +1988,7 @@ impl ProfilerPanel {
                 .child(Alert::warning("deep-capture-preview-unavailable", message.clone()))
                 .into_any_element(),
             Some(DeepCapturePreview::Image { image, width, height, texture_unavailable }) => {
-                let display_width = 280.0f32;
+                let display_width = if measured_width > 40.0 { measured_width } else { 280.0 };
                 let scale = display_width / (*width as f32).max(1.0);
                 let display_height = ((*height as f32) * scale).max(1.0);
 
@@ -1764,6 +2118,39 @@ impl ProfilerPanel {
                                     cx.notify();
                                 },
                             ))
+                            // Right-click+drag pans too, alongside the
+                            // left-button `on_drag`/`on_drag_move` above --
+                            // see the flame chart's identical addition for
+                            // why.
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(|state, _event: &MouseDownEvent, _window, cx| {
+                                    state.deep_capture_pan_last = None;
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(|state, event: &MouseMoveEvent, _window, cx| {
+                                if event.pressed_button != Some(MouseButton::Right) {
+                                    return;
+                                }
+                                let width = f32::from(state.deep_capture_preview_bounds.size.width).max(1.0);
+                                let height = f32::from(state.deep_capture_preview_bounds.size.height).max(1.0);
+                                let x = f32::from(event.position.x);
+                                let y = f32::from(event.position.y);
+                                if let Some((last_x, last_y)) = state.deep_capture_pan_last {
+                                    state.deep_capture_view.pan_by_fraction(
+                                        -(x - last_x) / width,
+                                        -(y - last_y) / height,
+                                    );
+                                    cx.notify();
+                                }
+                                state.deep_capture_pan_last = Some((x, y));
+                            }))
+                            .on_mouse_up(
+                                MouseButton::Right,
+                                cx.listener(|state, _event: &MouseUpEvent, _window, cx| {
+                                    state.deep_capture_pan_last = None;
+                                }),
+                            )
                             .child(
                                 img(ImageSource::Render(image.clone()))
                                     .absolute()
@@ -1783,7 +2170,15 @@ impl ProfilerPanel {
                     })
                     .into_any_element()
             }
-        }
+        };
+
+        div()
+            .id("deep-capture-preview-panel")
+            .relative()
+            .w_full()
+            .child(bounds_capture)
+            .child(content)
+            .into_any_element()
     }
 }
 
@@ -1848,7 +2243,10 @@ fn zoom_pan_hint(cx: &Context<ProfilerPanel>) -> AnyElement {
         .px_2()
         .text_xs()
         .text_color(cx.theme().muted_foreground)
-        .child("Ctrl/Cmd + scroll to zoom \u{00B7} drag to pan \u{00B7} double-click to reset")
+        .child(
+            "Ctrl/Cmd + scroll to zoom \u{00B7} drag or right-click + drag to pan \u{00B7} \
+             double-click to reset",
+        )
         .into_any_element()
 }
 
@@ -1864,6 +2262,329 @@ fn format_bytes(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{value:.2} {}", UNITS[unit_index])
+    }
+}
+
+// ── Flame chart GPU rendering ────────────────────────────────────────────
+//
+// Perf fix for the flame chart bringing the app "to its knees" on real
+// captures: instead of one absolutely-positioned, `.tooltip()`/`.on_click()`
+// bearing GPUI `div()` per span bar (plus a nested label div, so *two* real
+// elements per bar), each lane renders its bars via a `wgpu_surface` and a
+// single instanced draw call (see `profiler_flame_shader.wgsl`). Interaction
+// (hover tooltip, click-to-select) is handled by one hit-test overlay div per
+// lane, testing the cursor position against the same bar geometry the GPU
+// instances were built from, in plain Rust -- not by any per-bar element.
+
+/// One instance of the flame bar shader's per-bar input (see
+/// `profiler_flame_shader.wgsl`'s `BarInstance`). `#[repr(C)]` + `Pod` so a
+/// `Vec<BarInstance>` can be uploaded directly via `bytemuck::cast_slice`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BarInstance {
+    rect_min: [f32; 2],
+    rect_max: [f32; 2],
+    color: [f32; 4],
+    corner_radius: f32,
+    highlight: f32,
+    _pad: [f32; 2],
+}
+
+/// A visible bar's screen-space geometry plus its underlying `FlameBar`,
+/// cloned out of `FlameLane::bars` once per render so the hover/click
+/// handlers built from it can outlive the `lanes: &[FlameLane]` borrow
+/// `render_flame_lanes_body` only holds for the duration of that call.
+#[derive(Clone)]
+struct HitBar {
+    bar: FlameBar,
+    x: f32,
+    width: f32,
+    top: f32,
+}
+
+/// The currently-hovered bar, if any, tracked so the single shared tooltip
+/// div (not a per-bar `.tooltip()`) knows what to show and where.
+#[derive(Clone)]
+struct HoveredBar {
+    lane_index: usize,
+    start_ns: u64,
+    depth: u16,
+    label: SharedString,
+    duration_ns: u32,
+    category_label: SharedString,
+    /// Position to anchor the tooltip at, in the hovered lane's own local
+    /// (relative-to-its-own-bounds) coordinate space.
+    local_pos: gpui::Point<f32>,
+}
+
+/// Computes a bar's `(x, width)` in chart pixels for the current zoom
+/// window. Shared by the GPU-instance builder and `hit_test_lane_bar` so the
+/// two can never disagree about where a bar is drawn.
+fn bar_screen_rect(bar: &FlameBar, visible_start_ns: f64, visible_span_ns: f64, chart_width: f32) -> (f32, f32) {
+    let bar_start_ns = bar.start_ns as f64;
+    let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
+    let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
+    (x, width)
+}
+
+/// Maps a nanosecond instant to an x pixel coordinate in the current zoom
+/// window, or `None` if it falls outside the visible range.
+fn ns_to_x(ns: u64, visible_start_ns: f64, visible_span_ns: f64, chart_width: f32) -> Option<f32> {
+    let fraction = (ns as f64 - visible_start_ns) / visible_span_ns;
+    if !(0.0..=1.0).contains(&fraction) {
+        return None;
+    }
+    Some(fraction as f32 * chart_width)
+}
+
+const FLAME_ROW_HEIGHT: f32 = 20.0;
+
+/// Linear scan over a lane's visible bars for the one under `local` (already
+/// relative to the lane's own bounds). Trivial CPU cost even at a few
+/// thousand bars per lane, called once per mouse-move/click -- nothing like
+/// building a GPUI element per bar on every render.
+fn hit_test_lane_bar(hit_bars: &[HitBar], local: gpui::Point<Pixels>) -> Option<&HitBar> {
+    let x = f32::from(local.x);
+    let y = f32::from(local.y);
+    if y < 0.0 {
+        return None;
+    }
+    hit_bars
+        .iter()
+        .find(|hb| y >= hb.top && y <= hb.top + FLAME_ROW_HEIGHT && x >= hb.x && x <= hb.x + hb.width)
+}
+
+fn flame_bar_tooltip(hover: &HoveredBar, cx: &Context<ProfilerPanel>) -> AnyElement {
+    div()
+        .absolute()
+        .left(px(hover.local_pos.x + 8.0))
+        .top(px(hover.local_pos.y + FLAME_ROW_HEIGHT))
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(cx.theme().popover)
+        .border_1()
+        .border_color(cx.theme().border)
+        .shadow_md()
+        .text_xs()
+        .text_color(cx.theme().popover_foreground)
+        .child(format!(
+            "{}\n{:.3}ms \u{00B7} depth {} \u{00B7} {}",
+            hover.label,
+            hover.duration_ns as f64 / 1.0e6,
+            hover.depth,
+            hover.category_label
+        ))
+        .into_any_element()
+}
+
+fn timeline_marker(x: f32, height: f32, color: gpui::Hsla, label: &'static str) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("flame-timeline-marker-{label}")))
+        .absolute()
+        .top(px(0.))
+        .left(px(x))
+        .w(px(1.5))
+        .h(px(height.max(1.0)))
+        .bg(color)
+        .into_any_element()
+}
+
+/// Compiled once (lazily, by the first lane that manages to create a GPU
+/// surface) and shared across every lane's own [`FlameLaneGpu`] -- a
+/// `wgpu::RenderPipeline` only depends on the shader + bind group layout +
+/// target format, not on any particular lane's instance data.
+struct FlameBarPipeline {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl FlameBarPipeline {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("flame_bar_shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("profiler_flame_shader.wgsl").into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("flame_bar_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("flame_bar_pipeline_layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("flame_bar_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_bar"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_bar"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        Self { pipeline, bind_group_layout }
+    }
+}
+
+/// Per-lane GPU render state: one `wgpu_surface` + instance buffer per lane,
+/// reused (and grown, never shrunk) across renders. A handful of these exist
+/// at once (one per flame-chart lane -- typically the main thread, a couple
+/// of background threads, and the GPU lane), nothing like one per bar.
+struct FlameLaneGpu {
+    surface: gpui::WgpuSurfaceHandle,
+    viewport_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: usize,
+    bind_group: wgpu::BindGroup,
+}
+
+impl FlameLaneGpu {
+    const INITIAL_CAPACITY: usize = 64;
+
+    fn new(device: &wgpu::Device, surface: gpui::WgpuSurfaceHandle, pipeline: &FlameBarPipeline) -> Self {
+        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("flame_bar_viewport"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let instance_buffer = Self::make_instance_buffer(device, Self::INITIAL_CAPACITY);
+        let bind_group = Self::make_bind_group(device, pipeline, &viewport_buffer, &instance_buffer);
+        Self {
+            surface,
+            viewport_buffer,
+            instance_buffer,
+            instance_capacity: Self::INITIAL_CAPACITY,
+            bind_group,
+        }
+    }
+
+    fn make_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("flame_bar_instances"),
+            size: (capacity.max(1) * std::mem::size_of::<BarInstance>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    fn make_bind_group(
+        device: &wgpu::Device,
+        pipeline: &FlameBarPipeline,
+        viewport_buffer: &wgpu::Buffer,
+        instance_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("flame_bar_bind_group"),
+            layout: &pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: instance_buffer.as_entire_binding() },
+            ],
+        })
+    }
+
+    fn ensure_capacity(&mut self, device: &wgpu::Device, pipeline: &FlameBarPipeline, needed: usize) {
+        if needed <= self.instance_capacity {
+            return;
+        }
+        let new_capacity = needed.next_power_of_two().max(Self::INITIAL_CAPACITY);
+        self.instance_buffer = Self::make_instance_buffer(device, new_capacity);
+        self.instance_capacity = new_capacity;
+        self.bind_group = Self::make_bind_group(device, pipeline, &self.viewport_buffer, &self.instance_buffer);
+    }
+
+    fn render(
+        &mut self,
+        pipeline: &FlameBarPipeline,
+        instances: &[BarInstance],
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        let device = self.surface.device().clone();
+        let queue = self.surface.queue().clone();
+        self.ensure_capacity(&device, pipeline, instances.len());
+
+        let viewport_data = [width as f32, height as f32, 0.0f32, 0.0f32];
+        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&viewport_data));
+        if !instances.is_empty() {
+            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        }
+
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("flame_bar_encoder") });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("flame_bar_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if !instances.is_empty() {
+                pass.set_pipeline(&pipeline.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.draw(0..4, 0..instances.len() as u32);
+            }
+        }
+        queue.submit(std::iter::once(encoder.finish()));
     }
 }
 
@@ -2139,6 +2860,56 @@ fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<Profiler
                     format!(
                         "{:.1}/{}",
                         summary.events.entities_invalidated.mean, summary.events.entities_invalidated.max
+                    ),
+                    1,
+                ),
+        )
+        .child(render_gpu_timeline_stats(summary, cx))
+        .into_any_element()
+}
+
+/// CPU-observed GPU submit/fence-observed timeline correlation stats (see
+/// `gpui::GpuTimelineSummary`'s doc comment): how long the GPU queue lagged
+/// behind CPU submission, and how long readback/polling latency was, over
+/// the capture window. This data is often sparse -- both instants and a
+/// finalized, non-empty GPU span set are needed for a frame to count, and
+/// GPU capture/readback lags CPU capture by design -- so `samples` (out of
+/// `summary.frame_count`) is surfaced alongside the mean/max, not hidden.
+fn render_gpu_timeline_stats(summary: &gpui::CounterSummary, cx: &Context<ProfilerPanel>) -> AnyElement {
+    let timeline = &summary.gpu_timeline;
+
+    v_flex()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .text_color(cx.theme().foreground)
+                .child(format!(
+                    "CPU/GPU Submit Timeline ({} of {} frames sampled)",
+                    timeline.samples, summary.frame_count
+                )),
+        )
+        .child(
+            DescriptionList::new()
+                .columns(1)
+                .label_width(px(190.))
+                .bordered(true)
+                .child(
+                    "Submit \u{2192} GPU Start",
+                    format!(
+                        "{:.3}ms / {:.3}ms",
+                        timeline.submit_to_gpu_start.mean / 1.0e6,
+                        timeline.submit_to_gpu_start.max as f64 / 1.0e6
+                    ),
+                    1,
+                )
+                .child(
+                    "GPU End \u{2192} Fence Observed",
+                    format!(
+                        "{:.3}ms / {:.3}ms",
+                        timeline.gpu_end_to_fence_observed.mean / 1.0e6,
+                        timeline.gpu_end_to_fence_observed.max as f64 / 1.0e6
                     ),
                     1,
                 ),
@@ -2578,6 +3349,237 @@ mod tests {
         assert_eq!(unknown_bar.category_label().to_string(), "—");
     }
 
+    // -- Flame chart render-path performance --------------------------------
+    //
+    // Regression coverage for the "hundreds/thousands of real GPUI elements
+    // per flame chart render" perf bug: `render_flame_lanes_body` used to
+    // build one absolutely-positioned, `.tooltip()`/`.on_click()`-bearing
+    // `div()` (plus a nested label div, triggering text shaping) *per span
+    // bar*, so a real capture with thousands of spans rebuilt, laid out,
+    // hit-test-registered, and painted thousands of stateful interactive
+    // elements on every single render. It's now a `wgpu_surface` instanced
+    // draw plus at most a couple of real elements (hover tooltip, timeline
+    // markers), regardless of span count.
+    //
+    // `gpui::CpuSpan::thread_id` is a `ThreadKey`, which has no public
+    // constructor, so a synthetic `gpui::FrameCapture` can only carry
+    // `gpu_spans` (see `build_flame_lanes_produces_a_flat_gpu_lane` above).
+    // To get thousands of *CPU* spans too, this builds `FlameLane`/`FlameBar`
+    // directly -- the exact data `render_flame_lanes_body` consumes, and the
+    // only place upstream of it that `ThreadKey` doesn't gate.
+    fn synthetic_flame_lanes(total_bars: usize) -> Vec<FlameLane> {
+        let cpu_bar_count = total_bars * 3 / 4;
+        let gpu_bar_count = total_bars - cpu_bar_count;
+
+        let mut cpu_bars = Vec::with_capacity(cpu_bar_count);
+        let mut start_ns: u64 = 0;
+        let mut max_depth: u16 = 0;
+        for i in 0..cpu_bar_count {
+            // Cycle depth 0..=7 to approximate realistic nested call-stack
+            // spans (element request_layout/prepaint/paint recursion).
+            let depth = (i % 8) as u16;
+            max_depth = max_depth.max(depth);
+            let duration_ns: u32 = 2_000 + (i % 50) as u32 * 100;
+            cpu_bars.push(FlameBar {
+                label: format!("element_{i}").into(),
+                depth,
+                start_ns,
+                duration_ns,
+                category: Some(gpui::SpanCategory::ElementPaint),
+                gpu_pass_kind: None,
+                element_type: Some("Div".into()),
+                element_source: Some("profiler.rs:1".into()),
+            });
+            start_ns += duration_ns as u64;
+        }
+
+        let mut gpu_bars = Vec::with_capacity(gpu_bar_count);
+        let mut gpu_start_ns: u64 = 0;
+        for i in 0..gpu_bar_count {
+            let duration_ns: u32 = 5_000 + (i % 20) as u32 * 50;
+            gpu_bars.push(FlameBar {
+                label: format!("gpu_pass_{i}").into(),
+                depth: 0,
+                start_ns: gpu_start_ns,
+                duration_ns,
+                category: None,
+                gpu_pass_kind: Some(gpui::GpuPassKind::Main),
+                element_type: None,
+                element_source: None,
+            });
+            gpu_start_ns += duration_ns as u64;
+        }
+
+        vec![
+            FlameLane { label: "Main Thread (CPU)".into(), bars: cpu_bars, max_depth },
+            FlameLane { label: "GPU".into(), bars: gpu_bars, max_depth: 0 },
+        ]
+    }
+
+    /// Real, reproducible before/after measurement for the flame-chart perf
+    /// fix: actually drives `render_flame_lanes_body` through a real (headless
+    /// test-platform) window's layout/prepaint/paint pipeline via
+    /// `VisualTestContext::draw`, not just constructing an `AnyElement` tree
+    /// and asserting on it. Run with `cargo test -p ui --features
+    /// "inspector,flamegraph" flame_chart_render_performance -- --nocapture`
+    /// to see the printed mean/max timings.
+    #[gpui::test]
+    fn flame_chart_render_performance(cx: &mut gpui::TestAppContext) {
+        use gpui::{point, size};
+
+        cx.update(|cx| crate::init(cx));
+
+        const TARGET_BARS: usize = 3200;
+        let lanes = synthetic_flame_lanes(TARGET_BARS);
+        let total_bars: usize = lanes.iter().map(|lane| lane.bars.len()).sum();
+        assert!(total_bars >= 3000, "expected at least 3000 synthetic bars, got {total_bars}");
+
+        let total_span_ns = lanes
+            .iter()
+            .flat_map(|lane| lane.bars.iter())
+            .map(|bar| bar.start_ns + bar.duration_ns as u64)
+            .max()
+            .unwrap_or(1)
+            .max(1);
+
+        // `ProfilerPanel` doesn't implement `Render` (it's driven directly by
+        // `inspector.rs` via a plain `fn render(&mut self, ...)`, not the
+        // `Render` trait `add_window_view` requires), so this opens an empty
+        // test window and constructs the panel entity inside it by hand --
+        // the same `cx.new(|cx| ProfilerPanel::new(window, cx))` call
+        // `profiler_panel()` makes in production.
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, app_cx| app_cx.new(|cx| ProfilerPanel::new(window, cx)));
+        view.update(cx, |state, _cx| {
+            // Mirrors what `render_flame_chart_section` does for a real
+            // capture: the visible window must cover the data's time range,
+            // or every bar gets culled before the (old) per-bar loop even
+            // gets a chance to build an element for it.
+            state.flame_zoom = RangeZoom::full(0.0, total_span_ns as f64);
+        });
+
+        // Stateful/interactive elements (the per-bar `.id()`/`.on_click()`
+        // divs in the old implementation, and the hit-test overlay in the
+        // new one) need `window.current_view()` to resolve at paint time,
+        // which only gets pushed onto the window's rendered-entity stack
+        // while painting an actual `Entity<impl Render>` -- drawing a
+        // pre-built, disembodied `AnyElement` via `cx.draw` directly panics
+        // (`current_view` unwraps an empty stack). This thin `Render` shim
+        // re-enters `ProfilerPanel::render_flame_lanes_body` from inside a
+        // real view render, so each timed iteration goes through the exact
+        // same paint path production does.
+        struct FlameBenchView {
+            panel: Entity<ProfilerPanel>,
+            lanes: Rc<Vec<FlameLane>>,
+        }
+        impl Render for FlameBenchView {
+            fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                let lanes = self.lanes.clone();
+                self.panel
+                    .update(cx, |state, cx| state.render_flame_lanes_body(&lanes, None, None, window, cx))
+            }
+        }
+
+        let lanes = Rc::new(lanes);
+
+        const ITERATIONS: usize = 30;
+        let mut durations: Vec<std::time::Duration> = Vec::with_capacity(ITERATIONS);
+        for _ in 0..ITERATIONS {
+            let panel = view.clone();
+            let lanes = lanes.clone();
+            let start = std::time::Instant::now();
+            cx.draw(point(px(0.), px(0.)), size(px(1400.), px(20_000.)), move |_, cx| {
+                cx.new(|_| FlameBenchView { panel, lanes })
+            });
+            durations.push(start.elapsed());
+        }
+
+        let total: std::time::Duration = durations.iter().sum();
+        let mean = total / ITERATIONS as u32;
+        let max = durations.iter().copied().max().unwrap();
+        eprintln!(
+            "[flame-chart-bench] bars={total_bars} lanes={} iterations={ITERATIONS} mean={:.4}ms max={:.4}ms",
+            lanes.len(),
+            mean.as_secs_f64() * 1000.0,
+            max.as_secs_f64() * 1000.0,
+        );
+    }
+
+    // -- GPU flame-bar geometry / hit-testing -------------------------------
+    //
+    // These are the pure-Rust pieces the GPU-instance builder and the
+    // per-lane hit-test overlay both call, so both agree on where a bar is
+    // drawn without needing any GPUI element or GPU surface to test.
+
+    fn sample_flame_bar(label: &str, depth: u16, start_ns: u64, duration_ns: u32) -> FlameBar {
+        FlameBar {
+            label: label.to_string().into(),
+            depth,
+            start_ns,
+            duration_ns,
+            category: Some(gpui::SpanCategory::ElementPaint),
+            gpu_pass_kind: None,
+            element_type: None,
+            element_source: None,
+        }
+    }
+
+    #[test]
+    fn bar_screen_rect_maps_a_bar_into_the_visible_window() {
+        let bar = sample_flame_bar("a", 0, 250_000, 250_000);
+        // Domain is 0..1_000_000ns, fully visible, chart is 1000px wide: the
+        // bar covers [250, 500)px.
+        let (x, width) = bar_screen_rect(&bar, 0.0, 1_000_000.0, 1000.0);
+        assert_eq!(x, 250.0);
+        assert_eq!(width, 250.0);
+    }
+
+    #[test]
+    fn bar_screen_rect_clamps_a_vanishingly_short_bar_to_a_minimum_width() {
+        let bar = sample_flame_bar("a", 0, 0, 1);
+        let (_, width) = bar_screen_rect(&bar, 0.0, 1_000_000.0, 1000.0);
+        assert_eq!(width, 1.5);
+    }
+
+    #[test]
+    fn ns_to_x_maps_an_instant_inside_the_visible_window() {
+        let x = ns_to_x(500_000, 0.0, 1_000_000.0, 1000.0);
+        assert_eq!(x, Some(500.0));
+    }
+
+    #[test]
+    fn ns_to_x_returns_none_outside_the_visible_window() {
+        assert_eq!(ns_to_x(2_000_000, 0.0, 1_000_000.0, 1000.0), None);
+        assert_eq!(ns_to_x(0, 500_000.0, 1_000_000.0, 1000.0), None);
+    }
+
+    fn sample_hit_bar(label: &str, depth: u16, x: f32, width: f32) -> HitBar {
+        HitBar {
+            bar: sample_flame_bar(label, depth, 0, 1000),
+            x,
+            width,
+            top: depth as f32 * FLAME_ROW_HEIGHT,
+        }
+    }
+
+    #[test]
+    fn hit_test_lane_bar_finds_the_bar_under_the_cursor() {
+        let hit_bars = vec![sample_hit_bar("a", 0, 0.0, 100.0), sample_hit_bar("b", 1, 50.0, 100.0)];
+
+        let hit = hit_test_lane_bar(&hit_bars, gpui::point(px(60.0), px(5.0)));
+        assert_eq!(hit.map(|hb| hb.bar.label.to_string()), Some("a".to_string()));
+
+        let hit = hit_test_lane_bar(&hit_bars, gpui::point(px(60.0), px(25.0)));
+        assert_eq!(hit.map(|hb| hb.bar.label.to_string()), Some("b".to_string()));
+    }
+
+    #[test]
+    fn hit_test_lane_bar_misses_outside_any_bar() {
+        let hit_bars = vec![sample_hit_bar("a", 0, 0.0, 100.0)];
+        assert!(hit_test_lane_bar(&hit_bars, gpui::point(px(200.0), px(5.0))).is_none());
+        assert!(hit_test_lane_bar(&hit_bars, gpui::point(px(60.0), px(-5.0))).is_none());
+    }
+
     fn sample_gpu_span(name: &'static str, start_ns: u64, duration_ns: u32) -> gpui::GpuSpan {
         gpui::GpuSpan {
             name: gpui::SpanName::Static(name),
@@ -2603,6 +3605,8 @@ mod tests {
             gpu_spans_truncated: false,
             frame_start_ns: 0,
             frame_end_ns: 6_000_000,
+            cpu_gpu_submit_ns: None,
+            cpu_gpu_fence_observed_ns: None,
             counters: Default::default(),
         };
 
@@ -2627,6 +3631,8 @@ mod tests {
             gpu_spans_truncated: false,
             frame_start_ns: 0,
             frame_end_ns: 0,
+            cpu_gpu_submit_ns: None,
+            cpu_gpu_fence_observed_ns: None,
             counters: Default::default(),
         };
         assert!(build_flame_lanes(&frame).is_empty());
