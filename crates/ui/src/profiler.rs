@@ -555,7 +555,7 @@ impl ProfilerPanel {
             .collect();
 
         TabBar::new("profiler-sections")
-            .segmented()
+            .underline()
             .small()
             .selected_index(active_idx)
             .on_click({
@@ -579,7 +579,30 @@ impl ProfilerPanel {
     fn toggle_capture(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.capture_handle.take() {
             let capture = handle.stop();
-            self.selected_frame = capture.frame_count().saturating_sub(1);
+            // The last handful of frames in a stopped capture trail off:
+            // whatever frame was still open (mid-`Window::draw`) at the
+            // exact instant `stop()` was called gets force-closed into the
+            // buffer by `finalize_open_frames` rather than dropped, but it
+            // only recorded however many spans happened before the
+            // interruption -- often one or two, not zero, so a bare
+            // "non-empty" check still lands on a near-empty frame that
+            // *looks* broken. Pick the last frame whose total span count is
+            // at least a fifth of the healthiest recent frame's, which
+            // reliably skips the trailing partial frames while still
+            // landing near the actual end of the capture.
+            let frames: Vec<_> = capture.frames().collect();
+            let span_count = |frame: &&gpui::FrameCapture| {
+                frame.cpu_spans.len() + frame.background_spans.len() + frame.gpu_spans.len()
+            };
+            let recent_max = frames.iter().rev().take(10).map(span_count).max().unwrap_or(0);
+            let threshold = (recent_max / 5).max(1);
+            let healthy_last = frames
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, frame)| span_count(frame) >= threshold)
+                .map(|(index, _)| index);
+            self.selected_frame = healthy_last.unwrap_or_else(|| capture.frame_count().saturating_sub(1));
             self.capture = Some(capture);
             self.selected_span = None;
             self.capture_error = None;
@@ -833,6 +856,16 @@ impl ProfilerPanel {
             let mut instances: Vec<BarInstance> = Vec::with_capacity(lane.bars.len());
             let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
 
+            // `BarInstance` coordinates feed a shader whose `viewport` uniform
+            // is the surface's *physical* pixel size (`back_view_with_size`,
+            // written by `WgpuSurface::prepaint` as `bounds * scale_factor`).
+            // Everything else in this function (`chart_width`, `ROW_HEIGHT`,
+            // `bar_screen_rect`, hit-testing) stays in logical pixels, since
+            // that's the space GPUI mouse events and `Bounds<Pixels>` are in
+            // -- only the values that cross into the GPU instance buffer get
+            // converted here, right at the boundary.
+            let scale = window.scale_factor();
+
             for bar in &lane.bars {
                 let bar_start_ns = bar.start_ns as f64;
                 let bar_end_ns = bar_start_ns + bar.duration_ns as f64;
@@ -864,10 +897,10 @@ impl ProfilerPanel {
                 }
 
                 instances.push(BarInstance {
-                    rect_min: [x, top],
-                    rect_max: [x + width, top + (ROW_HEIGHT - 2.0)],
+                    rect_min: [x * scale, top * scale],
+                    rect_max: [(x + width) * scale, (top + (ROW_HEIGHT - 2.0)) * scale],
                     color: [rgba.r, rgba.g, rgba.b, rgba.a],
-                    corner_radius: 3.0,
+                    corner_radius: 3.0 * scale,
                     highlight: if is_selected || is_hovered { 1.0 } else { 0.0 },
                     _pad: [0.0, 0.0],
                 });
@@ -889,7 +922,17 @@ impl ProfilerPanel {
                 .h(px(lane_height));
 
             if let Some(handle) = surface_handle {
-                row = row.child(wgpu_surface(handle).absolute().inset_0());
+                // Without this, every mouse-move tick during an Inspector
+                // sidebar resize (or a window resize) triggers a real
+                // background-thread texture reallocation for this lane's
+                // surface -- on top of the CPU-side instance rebuild and GPU
+                // submission `paint_flame_lane` already does per render.
+                // Deferring the actual reallocation until the drag/resize
+                // ends (showing a stretched copy of the last frame in the
+                // meantime, same as every other interactive-resize surface
+                // in this codebase) is what `WgpuSurface` exists to let us
+                // opt into.
+                row = row.child(wgpu_surface(handle).absolute().inset_0().defer_resize_until_mouse_up(true));
             }
 
             let entity = cx.entity().clone();
@@ -991,6 +1034,8 @@ impl ProfilerPanel {
             .id("flame-chart-canvas")
             .relative()
             .overflow_hidden()
+            .w_full()
+            .h_full()
             .child(
                 // Zero-footprint overlay that exists only to capture this
                 // container's screen bounds each render, so the scroll-wheel
@@ -1762,9 +1807,27 @@ impl ProfilerPanel {
             return;
         };
 
-        let viewport = window.viewport_size();
-        let width = (f32::from(viewport.width) as u32).clamp(1, 2048);
-        let height = (f32::from(viewport.height) as u32).clamp(1, 2048);
+        // Render at the actual panel size (times scale factor, for real
+        // pixel detail), not the full window -- panning/zooming this
+        // preview rescales an `img()` element on every mouse-move tick, and
+        // rescaling a full-window-resolution source image (often several
+        // times larger than the ~300px sidebar it's displayed in) is real,
+        // avoidable cost repeated on every pan step. Falls back to a modest
+        // default before the panel's bounds have been measured at least
+        // once (e.g. the very first capture before any render has run).
+        let scale = window.scale_factor();
+        let measured = self.deep_capture_panel_bounds.size;
+        let (fallback_w, fallback_h) = (320.0, 240.0);
+        let width = if f32::from(measured.width) > 1.0 {
+            ((f32::from(measured.width) * scale).round() as u32).clamp(1, 2048)
+        } else {
+            (fallback_w * scale) as u32
+        };
+        let height = if f32::from(measured.height) > 1.0 {
+            ((f32::from(measured.height) * scale).round() as u32).clamp(1, 2048)
+        } else {
+            (fallback_h * scale) as u32
+        };
 
         self.deep_capture_preview =
             Some(match gpui::render_deep_capture_step(&device, &queue, replay, step, width, height) {
@@ -2280,7 +2343,7 @@ fn format_bytes(bytes: u64) -> String {
 /// `profiler_flame_shader.wgsl`'s `BarInstance`). `#[repr(C)]` + `Pod` so a
 /// `Vec<BarInstance>` can be uploaded directly via `bytemuck::cast_slice`.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct BarInstance {
     rect_min: [f32; 2],
     rect_max: [f32; 2],
