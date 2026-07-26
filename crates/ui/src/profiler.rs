@@ -596,8 +596,7 @@ impl ProfilerPanel {
             .collect();
 
         TabBar::new("profiler-sections")
-            .underline()
-            .small()
+            .segmented()
             .selected_index(active_idx)
             .on_click({
                 let entity = cx.entity().clone();
