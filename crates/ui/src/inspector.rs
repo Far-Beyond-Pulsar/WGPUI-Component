@@ -610,7 +610,7 @@ fn render_inspector_tabs(
     let tabs_arc = Arc::new(tabs);
 
     TabBar::new("inspector-tabs")
-        .underline()
+        .segmented()
         .selected_index(active_idx)
         .on_click({
             let entity = cx.entity().clone();
