@@ -15,10 +15,10 @@ mod icon;
 mod index_path;
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod inspector;
-#[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
-mod profiler;
 mod kbd;
 pub mod menu;
+#[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
+mod profiler;
 mod root;
 pub mod states;
 mod styled;
@@ -52,6 +52,7 @@ pub mod button;
 pub mod chart;
 pub mod checkbox;
 pub mod clipboard;
+#[cfg(not(target_family = "wasm"))]
 pub mod code_editor; // Studio-quality virtualized code editor
 pub mod color_picker;
 pub mod description_list;
@@ -66,8 +67,8 @@ pub mod drop_area;
 pub mod dropdown;
 pub mod form;
 pub mod group_box;
-pub mod hierarchical_tree;
 pub mod hierarchical_list_view;
+pub mod hierarchical_tree;
 pub mod highlighter;
 pub mod history;
 pub mod indicator;
@@ -127,11 +128,11 @@ pub use form::{SettingCard, SettingRow};
 
 pub use accordion::{Accordion, AccordionItem, CollapsibleSection};
 pub use component::*;
-pub use hierarchical_tree::{
-    render_tree_category, render_tree_folder, render_tree_item, tree_colors,
-};
 pub use hierarchical_list_view::{
     HierarchicalTreeView, HierarchyConfig, HierarchyItem, HierarchyLayout,
+};
+pub use hierarchical_tree::{
+    render_tree_category, render_tree_folder, render_tree_item, tree_colors,
 };
 pub use icon::*;
 pub use kbd::*;
