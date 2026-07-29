@@ -9,7 +9,7 @@ members = [
 edition = "2021"
 
 [workspace.dependencies]
-gpui-ce = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI", rev = "2a8dd525e24c26686c7622412211468f49e2caf4" }
+gpui-ce = { path = "D:/GitHub/WGPUI" }
 ui-macros = { path = "crates/ui-macros" }
 
 anyhow        = "1"
@@ -89,3 +89,4 @@ tree-sitter-zig                 = { version = "1.1"}
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+
