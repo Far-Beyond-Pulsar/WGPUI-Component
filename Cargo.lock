@@ -2331,6 +2331,7 @@ dependencies = [
 [[package]]
 name = "gpui-ce"
 version = "1.0.0"
+source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=2a8dd525e24c26686c7622412211468f49e2caf4#2a8dd525e24c26686c7622412211468f49e2caf4"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2400,7 +2401,6 @@ dependencies = [
  "usvg",
  "uuid",
  "waker-fn",
- "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
