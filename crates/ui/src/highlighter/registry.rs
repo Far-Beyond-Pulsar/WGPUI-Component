@@ -56,6 +56,7 @@ pub(super) const HIGHLIGHT_NAMES: [&str; 40] = [
     "variant",
 ];
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageConfig {
     pub name: SharedString,
@@ -66,6 +67,7 @@ pub struct LanguageConfig {
     pub locals: SharedString,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl LanguageConfig {
     pub fn new(
         name: impl Into<SharedString>,
@@ -459,10 +461,12 @@ impl HighlightTheme {
 }
 
 /// Registry for code highlighter languages.
+#[cfg(not(target_family = "wasm"))]
 pub struct LanguageRegistry {
     languages: Mutex<HashMap<SharedString, LanguageConfig>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl LanguageRegistry {
     /// Returns the singleton instance of the `LanguageRegistry` with default languages and themes.
     pub fn singleton() -> &'static LazyLock<LanguageRegistry> {
@@ -501,7 +505,7 @@ impl LanguageRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use crate::highlighter::LanguageConfig;
 

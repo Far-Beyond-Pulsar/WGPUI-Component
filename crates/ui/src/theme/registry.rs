@@ -1,6 +1,7 @@
 use crate::{highlighter::HighlightTheme, Theme, ThemeColor, ThemeConfig, ThemeMode, ThemeSet};
 use anyhow::Result;
 use gpui::{App, Global, SharedString};
+#[cfg(not(target_family = "wasm"))]
 use notify::Watcher as _;
 use std::{
     collections::HashMap,
@@ -106,6 +107,7 @@ impl ThemeRegistry {
         on_load(cx);
 
         // Then watch for changes
+        #[cfg(not(target_family = "wasm"))]
         cx.spawn(async move |cx| {
             _ = cx.update(|cx| {
                 if let Err(err) = Self::_watch_themes_dir(themes_dir, cx) {
@@ -171,6 +173,7 @@ impl ThemeRegistry {
         tracing::info!("Loaded {} default themes", self.themes.len());
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn _watch_themes_dir(themes_dir: PathBuf, cx: &mut App) -> anyhow::Result<()> {
         if !themes_dir.exists() {
             fs::create_dir_all(&themes_dir)?;

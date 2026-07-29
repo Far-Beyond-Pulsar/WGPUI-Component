@@ -29,8 +29,10 @@ pub use line_cache::{CachedLineLayout, OptimizedLineCache};
 pub use lsp::*;
 pub use mask_pattern::MaskPattern;
 pub use minimap::{
-    Minimap, MinimapDrag, MinimapLineCache, MinimapSpan, MinimapState, MINIMAP_WIDTH,
+    MinimapDrag, MinimapLineCache, MinimapSpan, MinimapState, MINIMAP_WIDTH,
 };
+#[cfg(not(target_family = "wasm"))]
+pub use minimap::Minimap;
 pub use mode::TabSize;
 pub use number_input::{NumberInput, NumberInputEvent, StepAction};
 pub use otp_input::*;

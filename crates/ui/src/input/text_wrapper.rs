@@ -5,6 +5,7 @@ use ropey::Rope;
 use smallvec::SmallVec;
 
 use crate::input::RopeExt;
+use crate::input::rope_ext::Point as TSPoint;
 
 /// A line with soft wrapped lines info.
 #[derive(Debug, Clone)]
@@ -310,12 +311,12 @@ impl TextWrapper {
         return self.text.len();
     }
 
-    pub(crate) fn display_point_to_point(&self, point: DisplayPoint) -> tree_sitter::Point {
+    pub(crate) fn display_point_to_point(&self, point: DisplayPoint) -> TSPoint {
         let offset = self.display_point_to_offset(point);
         self.text.offset_to_point(offset)
     }
 
-    pub(crate) fn point_to_display_point(&self, point: tree_sitter::Point) -> DisplayPoint {
+    pub(crate) fn point_to_display_point(&self, point: TSPoint) -> DisplayPoint {
         let offset = self.text.point_to_offset(point);
         self.offset_to_display_point(offset)
     }

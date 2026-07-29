@@ -16,17 +16,20 @@ use gpui::{
 use markdown::mdast;
 use once_cell::sync::Lazy;
 use regex;
+#[cfg(not(target_family = "wasm"))]
 use resvg::{tiny_skia, usvg};
 use ropey::Rope;
 use std::sync::Mutex;
 
 use crate::{
     h_flex,
-    highlighter::{HighlightTheme, SyntaxHighlighter},
+    highlighter::HighlightTheme,
     text::inline::{Inline, InlineState},
     tooltip::Tooltip,
     v_flex, ActiveTheme as _, Icon, IconName, StyledExt,
 };
+#[cfg(not(target_family = "wasm"))]
+use crate::highlighter::SyntaxHighlighter;
 
 use super::{utils::list_item_prefix, TextViewStyle};
 
@@ -367,9 +370,12 @@ impl CodeBlock {
     ) -> Self {
         let mut styles = vec![];
         if let Some(lang) = &lang {
-            let mut highlighter = SyntaxHighlighter::new(&lang);
-            highlighter.update(None, &Rope::from_str(code.as_str()));
-            styles = highlighter.styles(&(0..code.len()), highlight_theme);
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let mut highlighter = SyntaxHighlighter::new(&lang);
+                highlighter.update(None, &Rope::from_str(code.as_str()));
+                styles = highlighter.styles(&(0..code.len()), highlight_theme);
+            }
         };
 
         Self {
@@ -688,6 +694,7 @@ impl Paragraph {
         re.replace_all(svg, "").to_string()
     }
 
+    #[allow(unused)]
     fn render_cached_svg(
         svg: &str,
         text_color: gpui::TextColor,
@@ -697,7 +704,6 @@ impl Paragraph {
         let mut svg_to_render = if colorize {
             Self::colorize_svg(svg, text_color)
         } else {
-            // Strip background from Mermaid diagrams
             Self::strip_background_from_svg(svg)
         };
         let scale_key = (raster_scale * 100.0).round().clamp(1.0, u16::MAX as f32) as u16;
@@ -715,35 +721,41 @@ impl Paragraph {
             return Some(cached);
         }
 
-        let options = usvg::Options::default();
-        let tree = usvg::Tree::from_str(&svg_to_render, &options).ok()?;
-        let logical_size = tree.size();
-        let width_px = logical_size.width();
-        let height_px = logical_size.height();
-        let raster_width = (width_px * raster_scale).ceil().max(1.0) as u32;
-        let raster_height = (height_px * raster_scale).ceil().max(1.0) as u32;
+        #[cfg(target_family = "wasm")]
+        return None;
 
-        let mut pixmap = tiny_skia::Pixmap::new(raster_width, raster_height)?;
-        resvg::render(
-            &tree,
-            tiny_skia::Transform::from_scale(raster_scale, raster_scale),
-            &mut pixmap.as_mut(),
-        );
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let options = usvg::Options::default();
+            let tree = usvg::Tree::from_str(&svg_to_render, &options).ok()?;
+            let logical_size = tree.size();
+            let width_px = logical_size.width();
+            let height_px = logical_size.height();
+            let raster_width = (width_px * raster_scale).ceil().max(1.0) as u32;
+            let raster_height = (height_px * raster_scale).ceil().max(1.0) as u32;
 
-        let png_bytes = pixmap.encode_png().ok()?;
-        let rgba = image::load_from_memory(&png_bytes).ok()?.into_rgba8();
-        let frame = image::Frame::new(rgba);
-        let cached = Arc::new(CachedSvgImage {
-            image: Arc::new(RenderImage::new(smallvec::smallvec![frame])),
-            width_px,
-            height_px,
-        });
+            let mut pixmap = tiny_skia::Pixmap::new(raster_width, raster_height)?;
+            resvg::render(
+                &tree,
+                tiny_skia::Transform::from_scale(raster_scale, raster_scale),
+                &mut pixmap.as_mut(),
+            );
 
-        if let Ok(mut cache) = SVG_RENDER_CACHE.lock() {
-            cache.insert((svg_hash, scale_key), cached.clone());
+            let png_bytes = pixmap.encode_png().ok()?;
+            let rgba = image::load_from_memory(&png_bytes).ok()?.into_rgba8();
+            let frame = image::Frame::new(rgba);
+            let cached = Arc::new(CachedSvgImage {
+                image: Arc::new(RenderImage::new(smallvec::smallvec![frame])),
+                width_px,
+                height_px,
+            });
+
+            if let Ok(mut cache) = SVG_RENDER_CACHE.lock() {
+                cache.insert((svg_hash, scale_key), cached.clone());
+            }
+
+            Some(cached)
         }
-
-        Some(cached)
     }
 
     fn render(

@@ -2,9 +2,28 @@ use std::ops::Range;
 
 use gpui_sum_tree::Bias;
 use ropey::{LineType, Rope, RopeSlice};
-use tree_sitter::Point;
 
 use crate::input::Position;
+
+/// Byte-offset-based coordinate (row, column) mirroring `tree_sitter::Point`.
+///
+/// On native targets this IS `tree_sitter::Point`; on wasm it is a local
+/// equivalent so the `RopeExt` trait can be compiled without that crate.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use tree_sitter::Point;
+
+#[cfg(target_family = "wasm")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Point {
+    pub row: usize,
+    pub column: usize,
+}
+#[cfg(target_family = "wasm")]
+impl Point {
+    pub fn new(row: usize, column: usize) -> Self {
+        Self { row, column }
+    }
+}
 
 /// An iterator over the lines of a `Rope`.
 pub struct RopeLines<'a> {
@@ -394,7 +413,6 @@ impl RopeExt for Rope {
 mod tests {
     use gpui_sum_tree::Bias;
     use ropey::Rope;
-    use tree_sitter::Point;
 
     use crate::input::{Position, RopeExt};
 

@@ -11,6 +11,7 @@ use gpui::{
     KeyBinding, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     Point, RenderOnce, SharedString, Size, Styled, Timer, Window,
 };
+#[cfg(not(target_family = "wasm"))]
 use smol::stream::StreamExt;
 
 use crate::highlighter::HighlightTheme;
@@ -109,6 +110,7 @@ enum Update {
     Style(Box<TextViewStyle>),
 }
 
+#[cfg(not(target_family = "wasm"))]
 struct UpdateFuture {
     type_: TextViewType,
     highlight_theme: Arc<HighlightTheme>,
@@ -120,6 +122,7 @@ struct UpdateFuture {
     delay: Duration,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl UpdateFuture {
     fn new(
         type_: TextViewType,
@@ -143,6 +146,7 @@ impl UpdateFuture {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Future for UpdateFuture {
     type Output = ();
 
@@ -209,6 +213,7 @@ enum InitState {
         style: Box<TextViewStyle>,
         highlight_theme: Arc<HighlightTheme>,
     },
+    #[cfg(not(target_family = "wasm"))]
     Initialized {
         tx: smol::channel::Sender<Update>,
     },
@@ -216,6 +221,7 @@ enum InitState {
 
 pub(crate) struct TextViewState {
     parent_entity: Option<EntityId>,
+    #[cfg(not(target_family = "wasm"))]
     tx: Option<smol::channel::Sender<Update>>,
     parsed_result: Option<Result<ParsedContent, SharedString>>,
     focus_handle: Option<FocusHandle>,
@@ -234,6 +240,7 @@ impl TextViewState {
         let focus_handle = cx.focus_handle();
         Self {
             parent_entity: None,
+            #[cfg(not(target_family = "wasm"))]
             tx: None,
             parsed_result: None,
             focus_handle: Some(focus_handle),
@@ -370,21 +377,21 @@ impl RenderOnce for Text {
 impl TextView {
     fn create_init_state(
         type_: TextViewType,
-        text: &SharedString,
+        text: &str,
         highlight_theme: &Arc<HighlightTheme>,
         state: &Entity<TextViewState>,
         cx: &mut App,
     ) -> InitState {
         let state = state.read(cx);
+        #[cfg(not(target_family = "wasm"))]
         if let Some(tx) = &state.tx {
-            InitState::Initialized { tx: tx.clone() }
-        } else {
-            InitState::Initializing {
-                type_,
-                text: text.clone(),
-                style: Default::default(),
-                highlight_theme: highlight_theme.clone(),
-            }
+            return InitState::Initialized { tx: tx.clone() };
+        }
+        InitState::Initializing {
+            type_,
+            text: text.into(),
+            style: Default::default(),
+            highlight_theme: highlight_theme.clone(),
         }
     }
 
@@ -413,6 +420,7 @@ impl TextView {
             &state,
             cx,
         );
+        #[cfg(not(target_family = "wasm"))]
         if let Some(tx) = &state.read(cx).tx {
             let _ = tx.try_send(Update::Text(markdown));
         }
@@ -460,6 +468,7 @@ impl TextView {
             });
         let init_state =
             Self::create_init_state(TextViewType::Html, &html, &highlight_theme, &state, cx);
+        #[cfg(not(target_family = "wasm"))]
         if let Some(tx) = &state.read(cx).tx {
             let _ = tx.try_send(Update::Text(html));
         }
@@ -477,6 +486,7 @@ impl TextView {
         if let Some(init_state) = &mut self.init_state {
             match init_state {
                 InitState::Initializing { text, .. } => *text = raw.into(),
+                #[cfg(not(target_family = "wasm"))]
                 InitState::Initialized { tx } => {
                     let _ = tx.try_send(Update::Text(raw.into()));
                 }
@@ -491,6 +501,7 @@ impl TextView {
         if let Some(init_state) = &mut self.init_state {
             match init_state {
                 InitState::Initializing { style: s, .. } => *s = Box::new(style),
+                #[cfg(not(target_family = "wasm"))]
                 InitState::Initialized { tx } => {
                     let _ = tx.try_send(Update::Style(Box::new(style)));
                 }
@@ -541,6 +552,7 @@ impl Element for TextView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        #[cfg(not(target_family = "wasm"))]
         if let Some(InitState::Initializing {
             type_,
             text,
@@ -559,6 +571,7 @@ impl Element for TextView {
                 let tx = tx.clone();
                 |state, _| {
                     state.parsed_result = Some(parsed_result);
+                    #[cfg(not(target_family = "wasm"))]
                     state.tx = Some(tx);
                 }
             });

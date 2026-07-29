@@ -122,7 +122,10 @@ impl EngineSettings {
 
     /// Get the default config file path in the user's app data directory.
     pub fn default_path() -> Option<PathBuf> {
-        directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
-            .map(|proj| proj.data_dir().join("configs/engine.toml"))
+        #[cfg(not(target_family = "wasm"))]
+        return directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
+            .map(|proj| proj.data_dir().join("configs/engine.toml"));
+        #[cfg(target_family = "wasm")]
+        None
     }
 }

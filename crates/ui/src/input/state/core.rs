@@ -13,9 +13,10 @@ use gpui::{
 use gpui_sum_tree::Bias;
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
-use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+#[cfg(not(target_family = "wasm"))]
+use std::cell::RefCell;
 use unicode_segmentation::*;
 
 use crate::input::{
@@ -513,6 +514,7 @@ impl InputState {
     /// - Auto Indent
     /// - Line Number
     /// - Large Text support, up to 50K lines.
+    #[cfg(not(target_family = "wasm"))]
     pub fn code_editor(mut self, language: impl Into<SharedString>) -> Self {
         let language: SharedString = language.into();
         self.mode = InputMode::CodeEditor {
@@ -541,6 +543,7 @@ impl InputState {
     }
 
     /// Set enable/disable line number, only for [`InputMode::CodeEditor`] mode.
+    #[cfg(not(target_family = "wasm"))]
     pub fn line_number(mut self, line_number: bool) -> Self {
         debug_assert!(self.mode.is_code_editor());
         if let InputMode::CodeEditor { line_number: l, .. } = &mut self.mode {
@@ -557,6 +560,7 @@ impl InputState {
     }
 
     /// Set line number, only for [`InputMode::CodeEditor`] mode.
+    #[cfg(not(target_family = "wasm"))]
     pub fn set_line_number(&mut self, line_number: bool, _: &mut Window, cx: &mut Context<Self>) {
         debug_assert!(self.mode.is_code_editor());
         if let InputMode::CodeEditor { line_number: l, .. } = &mut self.mode {
@@ -569,9 +573,10 @@ impl InputState {
     ///
     /// Only for [`InputMode::MultiLine`] and [`InputMode::CodeEditor`] mode.
     pub fn tab_size(mut self, tab: TabSize) -> Self {
-        debug_assert!(self.mode.is_multi_line() || self.mode.is_code_editor());
+        debug_assert!(self.mode.is_multi_line());
         match &mut self.mode {
             InputMode::MultiLine { tab: t, .. } => *t = tab,
+            #[cfg(not(target_family = "wasm"))]
             InputMode::CodeEditor { tab: t, .. } => *t = tab,
             _ => {}
         }
@@ -600,6 +605,7 @@ impl InputState {
     }
 
     /// Set highlighter language for for [`InputMode::CodeEditor`] mode.
+    #[cfg(not(target_family = "wasm"))]
     pub fn set_highlighter(
         &mut self,
         new_language: impl Into<SharedString>,
@@ -619,6 +625,7 @@ impl InputState {
         cx.notify();
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn reset_highlighter(&mut self, cx: &mut Context<Self>) {
         match &mut self.mode {
             InputMode::CodeEditor { highlighter, .. } => {
@@ -739,6 +746,7 @@ impl InputState {
         let text: SharedString = text.into();
         let range = 0..self.text.chars().map(|c| c.len_utf16()).sum();
         self.replace_text_in_range_silent(Some(range), &text, window, cx);
+        #[cfg(not(target_family = "wasm"))]
         self.reset_highlighter(cx);
     }
 
@@ -1054,6 +1062,7 @@ impl Focusable for InputState {
 
 impl Render for InputState {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(not(target_family = "wasm"))]
         self.mode
             .update_highlighter(&(0..0), &self.text, "", false, cx);
 

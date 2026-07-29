@@ -714,7 +714,7 @@ impl TextElement {
         lines
     }
 
-    /// First usize is the offset of skipped.
+    #[cfg(not(target_family = "wasm"))]
     fn highlight_lines(
         &mut self,
         visible_range: &Range<usize>,
@@ -903,12 +903,15 @@ impl Element for TextElement {
             .text
             .line_end_offset(visible_range.end.saturating_sub(1));
 
+        #[cfg(not(target_family = "wasm"))]
         let highlight_styles = self.highlight_lines(
             &visible_range,
             visible_top,
             visible_start_offset..visible_end_offset,
             cx,
         );
+        #[cfg(target_family = "wasm")]
+        let highlight_styles: Option<Vec<(Range<usize>, HighlightStyle)>> = None;
 
         let state = self.state.read(cx);
         let multi_line = state.mode.is_multi_line();

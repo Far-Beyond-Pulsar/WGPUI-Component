@@ -1,3 +1,6 @@
+
+#[cfg(target_family = "wasm")] async fn sleep(d: std::time::Duration) { /* no-op on WASM */ }
+#[cfg(not(target_family = "wasm"))] async fn sleep(d: std::time::Duration) { gpui::Timer::after(d).await; }
 use std::{
     cell::Cell,
     ops::Deref,
@@ -623,7 +626,7 @@ impl Element for Scrollbar {
                                 let next_delay = Duration::from_secs_f32(FADE_OUT_DELAY - elapsed);
                                 window
                                     .spawn(cx, async move |cx| {
-                                        Timer::after(next_delay).await;
+                                        sleep(next_delay).await;
                                         state.set(state.get().with_idle_timer_scheduled(false));
                                         cx.update(|_, cx| cx.notify(current_view)).ok();
                                     })
@@ -944,3 +947,5 @@ impl Element for Scrollbar {
         );
     }
 }
+
+

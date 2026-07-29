@@ -176,6 +176,7 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
+        #[cfg(not(target_family = "wasm"))]
         self.mode
             .update_highlighter(&range, &self.text, &new_text, true, cx);
         self.selected_range = (new_offset..new_offset).into();
@@ -229,6 +230,7 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
+        #[cfg(not(target_family = "wasm"))]
         self.mode
             .update_highlighter(&range, &self.text, &new_text, true, cx);
         if new_text.is_empty() {

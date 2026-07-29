@@ -24,12 +24,12 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct ModalInit;
-impl crate::registry::UiComponentInit for ModalInit {
+#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for ModalInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-crate::register_ui_component!(ModalInit);
+#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(ModalInit);
 
 type RenderButtonFn = Box<dyn FnOnce(&mut Window, &mut App) -> AnyElement>;
 type FooterFn =

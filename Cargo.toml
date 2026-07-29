@@ -57,8 +57,6 @@ mermaid-rs-renderer             = { version = "0.2.2", default-features = false 
 num-traits                      = "0.2"
 paste                           = "1"
 rust_decimal                    = "1.37"
-tree-sitter                     = "0.26"
-tree-sitter-json                = "0.24.8"
 unicode-segmentation            = "1.12"
 tree-sitter-bash                = { version = "0.25"}
 tree-sitter-c                   = { version = "0.24"}
@@ -91,3 +89,4 @@ tree-sitter-zig                 = { version = "1.1"}
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+

@@ -227,7 +227,9 @@ impl TextInput {
 
                     if is_code_editor {
                         use super::editor_scrollbar::EditorScrollbar;
-                        use super::minimap::{Minimap, MINIMAP_WIDTH};
+                        use super::minimap::MINIMAP_WIDTH;
+                        #[cfg(not(target_family = "wasm"))]
+                        use super::minimap::Minimap;
                         use ropey::LineType;
 
                         let total_lines = state.text.len_lines(LineType::LF);
@@ -248,6 +250,7 @@ impl TextInput {
                         ));
 
                         // Minimap (only when enabled)
+                        #[cfg(not(target_family = "wasm"))]
                         if show_minimap {
                             container = container.child(Minimap::new(
                                 state.text.clone(),

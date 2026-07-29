@@ -39,12 +39,12 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct TableInit;
-impl crate::registry::UiComponentInit for TableInit {
+#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for TableInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-crate::register_ui_component!(TableInit);
+#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(TableInit);
 
 /// Tracks which dimension (rows vs columns) currently holds focus.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

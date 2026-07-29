@@ -11,6 +11,7 @@ use gpui::{
     IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
     StyleRefinement, Styled, Subscription, Window,
 };
+#[cfg(not(target_family = "wasm"))]
 use smol::Timer;
 
 use crate::{
@@ -260,7 +261,7 @@ impl Notification {
 
         // Dismiss the notification after 0.15s to show the animation.
         cx.spawn(async move |view, cx| {
-            Timer::after(Duration::from_secs_f32(0.15)).await;
+            cx.background_executor().timer(Duration::from_secs_f32(0.15)).await;
             cx.update(|cx| {
                 if let Some(view) = view.upgrade() {
                     view.update(cx, |view, cx| {
@@ -489,7 +490,7 @@ impl NotificationList {
         //   2. autohide == true (and not already complete) — standard 5 s timer
         if is_complete {
             cx.spawn_in(window, async move |_, cx| {
-                Timer::after(autohide_delay).await;
+                cx.background_executor().timer(autohide_delay).await;
                 if let Err(err) =
                     notification.update_in(cx, |note, window, cx| note.dismiss(window, cx))
                 {
@@ -499,7 +500,7 @@ impl NotificationList {
             .detach();
         } else if autohide {
             cx.spawn_in(window, async move |_, cx| {
-                Timer::after(autohide_delay).await;
+                cx.background_executor().timer(autohide_delay).await;
                 if let Err(err) =
                     notification.update_in(cx, |note, window, cx| note.dismiss(window, cx))
                 {

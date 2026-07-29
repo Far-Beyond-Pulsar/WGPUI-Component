@@ -9,7 +9,9 @@ use std::{cell::Cell, cell::RefCell, rc::Rc};
 use gpui::*;
 use ropey::{LineType, Rope};
 
-use crate::{highlighter::SyntaxHighlighter, ActiveTheme};
+use crate::ActiveTheme;
+#[cfg(not(target_family = "wasm"))]
+use crate::highlighter::SyntaxHighlighter;
 
 pub const MINIMAP_WIDTH: Pixels = px(110.0);
 const LINE_PX: f32 = 2.0;
@@ -116,6 +118,7 @@ impl MinimapState {
 
 // ── Element ───────────────────────────────────────────────────────────────────
 
+#[cfg(not(target_family = "wasm"))]
 pub struct Minimap {
     text: Rope,
     total_lines: usize,
@@ -127,6 +130,7 @@ pub struct Minimap {
     drag_state: MinimapState,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Minimap {
     pub fn new(
         text: Rope,
@@ -155,6 +159,7 @@ pub struct MinimapPrepaint {
     bounds: Bounds<Pixels>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl IntoElement for Minimap {
     type Element = Self;
     fn into_element(self) -> Self {
@@ -162,6 +167,7 @@ impl IntoElement for Minimap {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Element for Minimap {
     type RequestLayoutState = ();
     type PrepaintState = MinimapPrepaint;
@@ -403,6 +409,7 @@ impl Element for Minimap {
 
 // ── Span computation (called only on cache miss) ──────────────────────────────
 
+#[cfg(not(target_family = "wasm"))]
 fn compute_line_spans(
     line_str: &str,
     byte_start: usize,

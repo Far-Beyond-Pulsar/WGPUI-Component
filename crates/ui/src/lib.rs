@@ -13,7 +13,7 @@ mod event;
 mod global_state;
 mod icon;
 mod index_path;
-#[cfg(any(feature = "inspector", debug_assertions))]
+#[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
 mod inspector;
 mod kbd;
 pub mod menu;
@@ -33,7 +33,15 @@ pub mod gpu_compat;
 // using `ui::GpuTextureHandle`/`ui::GpuCanvasSource` just like before.
 pub use gpu_compat::{gpu_canvas as gpu_canvas_element, GpuCanvasSource, GpuTextureHandle};
 pub mod component; // Component-based UI architecture
+#[cfg(not(target_family = "wasm"))]
 pub mod registry;
+
+// On WASM, provide a no-op stub for register_ui_component!
+#[cfg(target_family = "wasm")]
+#[macro_export]
+macro_rules! register_ui_component {
+    ($name:ident) => {};
+}
 pub mod selection;
 pub mod setting;
 mod virtual_list;
@@ -111,7 +119,7 @@ pub use wry;
 pub use crate::Disableable;
 pub use event::InteractiveElementExt;
 pub use index_path::IndexPath;
-#[cfg(any(feature = "inspector", debug_assertions))]
+#[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
 pub use inspector::*;
 pub use menu::{context_menu, popup_menu, AppMenusCache};
 pub use root::{ContextModal, Root};
@@ -188,13 +196,13 @@ pub fn init(cx: &mut App) {
     global_state::init(cx);
     #[cfg(feature = "pulsar-engine")]
     replication::init(cx);
-    #[cfg(any(feature = "inspector", debug_assertions))]
+    #[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
     inspector::init(cx);
     root::init(cx);
     dock::init(cx);
     input::init(cx);
     // All components registered via `register_ui_component!` are initialized here.
-    registry::init_all_components(cx);
+    #[cfg(not(target_family = "wasm"))] registry::init_all_components(cx);
 }
 
 #[inline]
@@ -209,16 +217,19 @@ pub fn set_locale(locale: &str) {
 
 #[inline]
 pub fn open_external_url(url: &str) {
-    let mut last_opened = LAST_OPENED_URL.lock();
-    let now = Instant::now();
-    if let Some((last_url, last_time)) = last_opened.as_ref() {
-        if last_url == url && now.duration_since(*last_time) <= Duration::from_millis(500) {
-            return;
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let mut last_opened = LAST_OPENED_URL.lock();
+        let now = Instant::now();
+        if let Some((last_url, last_time)) = last_opened.as_ref() {
+            if last_url == url && now.duration_since(*last_time) <= Duration::from_millis(500) {
+                return;
+            }
         }
-    }
 
-    *last_opened = Some((url.to_string(), now));
-    let _ = open::that(url);
+        *last_opened = Some((url.to_string(), now));
+        let _ = open::that(url);
+    }
 }
 
 #[inline]
@@ -268,3 +279,4 @@ impl Measure {
         tracing::trace!("{} in {:?}", self.name, duration);
     }
 }
+

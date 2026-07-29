@@ -203,3 +203,4 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
     };
     Some(edge)
 }
+

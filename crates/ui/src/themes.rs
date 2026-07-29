@@ -49,10 +49,14 @@ use rust_embed::RustEmbed;
 struct EmbeddedThemes;
 
 fn get_state_file_path() -> PathBuf {
-    let proj_dirs = directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
-        .expect("Could not determine app data directory");
-    let app_data_dir = proj_dirs.data_dir();
-    app_data_dir.join("state.json")
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let proj_dirs = directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
+            .expect("Could not determine app data directory");
+        return proj_dirs.data_dir().join("state.json");
+    }
+    #[cfg(target_family = "wasm")]
+    PathBuf::from("state.json")
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -80,10 +84,15 @@ pub fn init(cx: &mut App) {
     let state = serde_json::from_str::<State>(&json).unwrap_or_default();
 
     // Get app data directory
-    let proj_dirs = directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
-        .expect("Could not determine app data directory");
-    let app_data_dir = proj_dirs.data_dir();
-    let themes_dir = app_data_dir.join("themes");
+    #[cfg(not(target_family = "wasm"))]
+    let themes_dir = {
+        let proj_dirs = directories::ProjectDirs::from("com", "Pulsar", "Pulsar_Engine")
+            .expect("Could not determine app data directory");
+        let app_data_dir = proj_dirs.data_dir();
+        app_data_dir.join("themes")
+    };
+    #[cfg(target_family = "wasm")]
+    let themes_dir = PathBuf::from("themes");
 
     // Ensure bundled themes exist in app data without overwriting user edits.
     std::fs::create_dir_all(&themes_dir).expect("Failed to create themes directory");

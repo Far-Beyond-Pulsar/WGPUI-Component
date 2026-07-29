@@ -1,22 +1,28 @@
-use crate::highlighter::{HighlightTheme, LanguageRegistry};
-use crate::input::RopeExt;
-
-use anyhow::{anyhow, Context, Result};
-use gpui::{HighlightStyle, SharedString};
-
-use gpui_sum_tree::Bias;
-use ropey::{ChunkCursor, Rope};
 use std::{
     collections::{BTreeSet, HashMap},
     ops::Range,
     usize,
 };
+
+#[cfg(not(target_family = "wasm"))]
+use crate::highlighter::{HighlightTheme, LanguageRegistry};
+#[cfg(not(target_family = "wasm"))]
+use crate::input::RopeExt;
+
+#[cfg(not(target_family = "wasm"))]
+use anyhow::{anyhow, Context, Result};
+use gpui::{HighlightStyle, SharedString};
+
+use gpui_sum_tree::Bias;
+use ropey::{ChunkCursor, Rope};
+#[cfg(not(target_family = "wasm"))]
 use tree_sitter::{
     InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatch, StreamingIterator, Tree,
 };
 
 /// A syntax highlighter that supports incremental parsing, multiline text,
 /// and caching of highlight results.
+#[cfg(not(target_family = "wasm"))]
 #[allow(unused)]
 pub struct SyntaxHighlighter {
     language: SharedString,
@@ -41,11 +47,15 @@ pub struct SyntaxHighlighter {
     tree: Option<Tree>,
 }
 
+#[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_family = "wasm"))]
 struct TextProvider<'a>(&'a Rope);
+#[cfg(not(target_family = "wasm"))]
 struct ByteChunks<'a> {
     cursor: ChunkCursor<'a>,
     end: usize,
 }
+#[cfg(not(target_family = "wasm"))]
 impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
     type I = ByteChunks<'a>;
 
@@ -60,6 +70,7 @@ impl<'a> tree_sitter::TextProvider<&'a [u8]> for TextProvider<'a> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<'a> Iterator for ByteChunks<'a> {
     type Item = &'a [u8];
 
@@ -75,6 +86,7 @@ impl<'a> Iterator for ByteChunks<'a> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Default, Clone)]
 struct HighlightSummary {
     count: usize,
@@ -85,6 +97,7 @@ struct HighlightSummary {
 }
 
 /// The highlight item, the range is offset of the token in the tree.
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Default, Clone)]
 struct HighlightItem {
     /// The byte range of the highlight in the text.
@@ -93,6 +106,7 @@ struct HighlightItem {
     name: SharedString,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl HighlightItem {
     pub fn new(range: Range<usize>, name: impl Into<SharedString>) -> Self {
         Self {
@@ -102,6 +116,7 @@ impl HighlightItem {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl gpui_sum_tree::Item for HighlightItem {
     type Summary = HighlightSummary;
     fn summary(&self, _cx: &()) -> Self::Summary {
@@ -115,6 +130,7 @@ impl gpui_sum_tree::Item for HighlightItem {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl gpui_sum_tree::Summary for HighlightSummary {
     type Context<'a> = &'a ();
     fn zero(_: Self::Context<'_>) -> Self {
@@ -136,6 +152,7 @@ impl gpui_sum_tree::Summary for HighlightSummary {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<'a> gpui_sum_tree::Dimension<'a, HighlightSummary> for usize {
     fn zero(_: &()) -> Self {
         0
@@ -144,6 +161,7 @@ impl<'a> gpui_sum_tree::Dimension<'a, HighlightSummary> for usize {
     fn add_summary(&mut self, _: &'a HighlightSummary, _: &()) {}
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<'a> gpui_sum_tree::Dimension<'a, HighlightSummary> for Range<usize> {
     fn zero(_: &()) -> Self {
         Default::default()
@@ -155,6 +173,7 @@ impl<'a> gpui_sum_tree::Dimension<'a, HighlightSummary> for Range<usize> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl SyntaxHighlighter {
     /// Create a new SyntaxHighlighter for HTML.
     pub fn new(lang: &str) -> Self {
@@ -725,7 +744,7 @@ fn merge_highlight_style(style: &mut HighlightStyle, other: &HighlightStyle) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use gpui::Hsla;
 

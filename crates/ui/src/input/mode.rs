@@ -1,14 +1,20 @@
-use std::rc::Rc;
-use std::{cell::RefCell, ops::Range};
+use std::ops::Range;
 
 use gpui::{App, SharedString};
 use ropey::Rope;
-use tree_sitter::InputEdit;
 
+use crate::input::RopeExt as _;
+
+#[cfg(not(target_family = "wasm"))]
+use std::rc::Rc;
+#[cfg(not(target_family = "wasm"))]
+use std::{cell::RefCell};
 use super::text_wrapper::TextWrapper;
 use crate::highlighter::DiagnosticSet;
+#[cfg(not(target_family = "wasm"))]
+use tree_sitter::InputEdit;
+#[cfg(not(target_family = "wasm"))]
 use crate::highlighter::SyntaxHighlighter;
-use crate::input::RopeExt as _;
 
 #[derive(Debug, Copy, Clone)]
 pub struct TabSize {
@@ -50,6 +56,7 @@ pub enum InputMode {
         min_rows: usize,
         max_rows: usize,
     },
+    #[cfg(not(target_family = "wasm"))]
     CodeEditor {
         tab: TabSize,
         rows: usize,
@@ -70,6 +77,9 @@ impl InputMode {
 
     #[inline]
     pub(super) fn is_code_editor(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        return false;
+        #[cfg(not(target_family = "wasm"))]
         matches!(self, InputMode::CodeEditor { .. })
     }
 
@@ -80,10 +90,13 @@ impl InputMode {
 
     #[inline]
     pub(super) fn is_multi_line(&self) -> bool {
-        matches!(
+        #[cfg(not(target_family = "wasm"))]
+        return matches!(
             self,
             InputMode::MultiLine { .. } | InputMode::AutoGrow { .. } | InputMode::CodeEditor { .. }
-        )
+        );
+        #[cfg(target_family = "wasm")]
+        matches!(self, InputMode::MultiLine { .. } | InputMode::AutoGrow { .. })
     }
 
     pub(super) fn set_rows(&mut self, new_rows: usize) {
@@ -91,6 +104,7 @@ impl InputMode {
             InputMode::MultiLine { rows, .. } => {
                 *rows = new_rows;
             }
+            #[cfg(not(target_family = "wasm"))]
             InputMode::CodeEditor { rows, .. } => {
                 *rows = new_rows;
             }
@@ -116,39 +130,48 @@ impl InputMode {
 
     /// At least 1 row be return.
     pub(super) fn rows(&self) -> usize {
-        match self {
+        let base = match self {
             InputMode::MultiLine { rows, .. } => *rows,
+            #[cfg(not(target_family = "wasm"))]
             InputMode::CodeEditor { rows, .. } => *rows,
             InputMode::AutoGrow { rows, .. } => *rows,
             _ => 1,
-        }
-        .max(1)
+        };
+        base.max(1)
     }
 
     /// At least 1 row be return.
     #[allow(unused)]
     pub(super) fn min_rows(&self) -> usize {
-        match self {
-            InputMode::MultiLine { .. } | InputMode::CodeEditor { .. } => 1,
+        let base = match self {
+            InputMode::MultiLine { .. } => 1,
+            #[cfg(not(target_family = "wasm"))]
+            InputMode::CodeEditor { .. } => 1,
             InputMode::AutoGrow { min_rows, .. } => *min_rows,
             _ => 1,
-        }
-        .max(1)
+        };
+        base.max(1)
     }
 
     #[allow(unused)]
     pub(super) fn max_rows(&self) -> usize {
-        match self {
-            InputMode::MultiLine { .. } | InputMode::CodeEditor { .. } => usize::MAX,
+        let base = match self {
+            InputMode::MultiLine { .. } => usize::MAX,
+            #[cfg(not(target_family = "wasm"))]
+            InputMode::CodeEditor { .. } => usize::MAX,
             InputMode::AutoGrow { max_rows, .. } => *max_rows,
             _ => 1,
-        }
+        };
+        base
     }
 
     /// Return false if the mode is not [`InputMode::CodeEditor`].
     #[allow(unused)]
     #[inline]
     pub(super) fn line_number(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        return false;
+        #[cfg(not(target_family = "wasm"))]
         match self {
             InputMode::CodeEditor { line_number, .. } => *line_number,
             _ => false,
@@ -159,11 +182,13 @@ impl InputMode {
     pub(super) fn tab_size(&self) -> Option<&TabSize> {
         match self {
             InputMode::MultiLine { tab, .. } => Some(tab),
+            #[cfg(not(target_family = "wasm"))]
             InputMode::CodeEditor { tab, .. } => Some(tab),
             _ => None,
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(super) fn update_highlighter(
         &mut self,
         selected_range: &Range<usize>,
@@ -196,10 +221,6 @@ impl InputMode {
                 let mut selected_range = selected_range.clone();
                 selected_range.end = selected_range.end.min(text.len());
 
-                // If insert a chart, this is 1.
-                // If backspace or delete, this is -1.
-                // If selected to delete, this is the length of the selected text.
-                // let changed_len = new_text.len() as isize - selected_range.len() as isize;
                 let changed_len = new_text.len() as isize - selected_range.len() as isize;
                 let new_end = (selected_range.end as isize + changed_len) as usize;
 
@@ -224,6 +245,9 @@ impl InputMode {
 
     #[allow(unused)]
     pub(super) fn diagnostics(&self) -> Option<&DiagnosticSet> {
+        #[cfg(target_family = "wasm")]
+        return None;
+        #[cfg(not(target_family = "wasm"))]
         match self {
             InputMode::CodeEditor { diagnostics, .. } => Some(diagnostics),
             _ => None,
@@ -231,6 +255,9 @@ impl InputMode {
     }
 
     pub(super) fn diagnostics_mut(&mut self) -> Option<&mut DiagnosticSet> {
+        #[cfg(target_family = "wasm")]
+        return None;
+        #[cfg(not(target_family = "wasm"))]
         match self {
             InputMode::CodeEditor { diagnostics, .. } => Some(diagnostics),
             _ => None,
@@ -238,6 +265,7 @@ impl InputMode {
     }
 
     /// Returns a clone of the syntax highlighter handle for code-editor mode.
+    #[cfg(not(target_family = "wasm"))]
     pub(in crate::input) fn highlighter_ref(
         &self,
     ) -> Option<Rc<RefCell<Option<SyntaxHighlighter>>>> {

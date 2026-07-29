@@ -16,12 +16,12 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct PopoverInit;
-impl crate::registry::UiComponentInit for PopoverInit {
+#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for PopoverInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-crate::register_ui_component!(PopoverInit);
+#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(PopoverInit);
 
 pub struct PopoverContent {
     style: StyleRefinement,

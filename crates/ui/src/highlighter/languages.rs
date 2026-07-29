@@ -1,5 +1,6 @@
 use gpui::SharedString;
 
+#[cfg(not(target_family = "wasm"))]
 use crate::highlighter::LanguageConfig;
 
 #[cfg(not(feature = "tree-sitter-languages"))]
@@ -175,6 +176,7 @@ impl Language {
     /// Return the language info for the language.
     ///
     /// (language, query, injection, locals)
+    #[cfg(not(target_family = "wasm"))]
     pub(super) fn config(&self) -> LanguageConfig {
         #[cfg(not(feature = "tree-sitter-languages"))]
         let (language, query, injection, locals) = match self {
@@ -371,7 +373,7 @@ impl Language {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     #[test]
     #[cfg(feature = "tree-sitter-languages")]

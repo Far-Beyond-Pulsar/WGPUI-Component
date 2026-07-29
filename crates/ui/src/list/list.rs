@@ -22,6 +22,7 @@ use gpui::{
     MouseDownEvent, Pixels, ScrollStrategy, Subscription,
 };
 use rust_i18n::t;
+#[cfg(not(target_family = "wasm"))]
 use smol::Timer;
 
 pub(crate) fn init(cx: &mut App) {
@@ -36,12 +37,12 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct ListInit;
-impl crate::registry::UiComponentInit for ListInit {
+#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for ListInit {
     fn init(&self, cx: &mut gpui::App) {
         init(cx);
     }
 }
-crate::register_ui_component!(ListInit);
+#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(ListInit);
 
 #[derive(Clone)]
 pub enum ListEvent {
@@ -290,7 +291,8 @@ where
                     });
 
                     // Always wait 100ms to avoid flicker
-                    Timer::after(Duration::from_millis(100)).await;
+                    #[cfg(not(target_family = "wasm"))]
+                    gpui::Executor::timer(gpui::Executor::background_executor(&cx), Duration::from_millis(100)).await;
                     _ = this.update_in(window, |this, window, cx| {
                         this.set_querying(false, window, cx);
                     });
@@ -668,3 +670,5 @@ where
             })
     }
 }
+
+

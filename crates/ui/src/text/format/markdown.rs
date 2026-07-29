@@ -3,9 +3,11 @@ use markdown::{
     mdast::{self, Node},
     Constructs, ParseOptions,
 };
+#[cfg(not(target_family = "wasm"))]
 use mathjax_svg_rs::{
     render_tex as render_mathjax_tex, HorizontalAlign, Options as MathJaxOptions,
 };
+#[cfg(not(target_family = "wasm"))]
 use mermaid_rs_renderer::render as render_mermaid;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -82,6 +84,7 @@ fn normalize_svg(svg: &str) -> String {
     XLINK_HREF_RE.replace_all(&normalized, "href=").into_owned()
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn render_math_svg(value: &str, display_mode: bool) -> Option<SharedString> {
     let cache_key = (display_mode, value.to_string());
     if let Some(cached) = MATH_SVG_CACHE.lock().ok()?.get(&cache_key).cloned() {
@@ -106,6 +109,7 @@ fn render_math_svg(value: &str, display_mode: bool) -> Option<SharedString> {
     Some(svg)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn render_mermaid_svg(value: &str) -> Option<SharedString> {
     if let Some(cached) = MERMAID_SVG_CACHE.lock().ok()?.get(value).cloned() {
         return Some(cached);
@@ -120,7 +124,7 @@ fn render_mermaid_svg(value: &str) -> Option<SharedString> {
     Some(svg)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::render_math_svg;
 
@@ -325,6 +329,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
         }
         Node::InlineMath(raw) => {
             text = raw.value.clone();
+            #[cfg(not(target_family = "wasm"))]
             if let Some(svg) = render_math_svg(&raw.value, false) {
                 paragraph.push_image(ImageNode {
                     url: raw.value.clone().into(),
@@ -335,11 +340,12 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                     math_display_mode: false,
                     ..Default::default()
                 });
-            } else {
-                paragraph.push(
-                    InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().code())]),
-                );
+                break 'node;
             }
+            paragraph.push(
+                InlineNode::new(&text)
+                    .marks(vec![(0..text.len(), TextMark::default().code())]),
+            );
         }
         Node::MdxTextExpression(raw) => {
             text = raw.value.clone();
@@ -469,6 +475,7 @@ fn ast_to_node(
                 .unwrap_or(false);
 
             if is_mermaid {
+                #[cfg(not(target_family = "wasm"))]
                 if let Some(svg) = render_mermaid_svg(&raw.value) {
                     let mut paragraph = Paragraph::default();
                     paragraph.push_image(ImageNode {
@@ -479,15 +486,14 @@ fn ast_to_node(
                         mermaid_svg: Some(svg),
                         ..Default::default()
                     });
-                    node::Node::Paragraph(paragraph)
-                } else {
-                    node::Node::CodeBlock(CodeBlock::new(
-                        raw.value.into(),
-                        lang.map(|s| s.into()),
-                        style,
-                        highlight_theme,
-                    ))
+                    return node::Node::Paragraph(paragraph);
                 }
+                node::Node::CodeBlock(CodeBlock::new(
+                    raw.value.into(),
+                    lang.map(|s| s.into()),
+                    style,
+                    highlight_theme,
+                ))
             } else {
                 node::Node::CodeBlock(CodeBlock::new(
                     raw.value.into(),
@@ -509,6 +515,7 @@ fn ast_to_node(
             }
         }
         Node::Math(val) => {
+            #[cfg(not(target_family = "wasm"))]
             if let Some(svg) = render_math_svg(&val.value, true) {
                 let mut paragraph = Paragraph::default();
                 paragraph.push_image(ImageNode {
@@ -520,15 +527,14 @@ fn ast_to_node(
                     math_display_mode: true,
                     ..Default::default()
                 });
-                node::Node::Paragraph(paragraph)
-            } else {
-                node::Node::CodeBlock(CodeBlock::new(
-                    val.value.into(),
-                    None,
-                    style,
-                    highlight_theme,
-                ))
+                return node::Node::Paragraph(paragraph);
             }
+            node::Node::CodeBlock(CodeBlock::new(
+                val.value.into(),
+                None,
+                style,
+                highlight_theme,
+            ))
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
             Ok(el) => el,
