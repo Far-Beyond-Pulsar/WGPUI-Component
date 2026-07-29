@@ -45,19 +45,15 @@ ui-macros = { path = "../ui-macros" }
 anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-directories = "5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 lazy_static = "1"
 linkme = "0.3"
 lsp-types = "0.97"
-notify = "6"
 once_cell = "1"
-open = "5"
 parking_lot = "0.12"
 proc-macro2 = "1"
 quote = "1"
 regex = "1"
-resvg = "0.47"
 ropey = { version = "=2.0.0-beta.1", features = ["metric_utf16", "metric_lines_lf"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path", "include-exclude"] }
 rust-i18n = "4"
@@ -66,20 +62,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_repr = "0.1"
 smallvec = "1"
-smol = "2"
 toml = "0.8"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
-# Only needed to name `wgpu::Device`/`wgpu::Queue` when calling gpui-ce's
-# `Window::gpu_device_and_queue` / `flamegraph_replay::render_deep_capture_step`
-# (Profiler tab's GPU deep-capture preview, feature = "flamegraph"). Version
-# pinned to match gpui-ce's own `wgpu` dependency so the types are identical;
-# Cargo's feature unification means this crate doesn't need to repeat
-# gpui-ce's backend feature list.
 wgpu = { version = "30", default-features = false, optional = true }
-# Only needed to build the flame chart's per-instance GPU bar buffer
-# (`profiler.rs`'s `BarInstance`, feature = "flamegraph"). Matches gpui-ce's
-# own `bytemuck` version so there is one copy in the dependency graph.
 bytemuck = { version = "1.24", features = ["derive"], optional = true }
 
 aho-corasick   = "1.1"
@@ -89,14 +75,22 @@ html5ever      = "0.39"
 itertools      = "0.14"
 markdown       = "1.0"
 markup5ever_rcdom = "0.39"
-mathjax-svg-rs = "0.4"
-mermaid-rs-renderer = { version = "0.2.2", default-features = false }
 num-traits     = "0.2"
 paste          = "1"
-rust_decimal   = { version = "1.37", optional = true }
 tree-sitter    = "0.26"
 tree-sitter-json = "0.24.8"
 unicode-segmentation = "1.12"
+
+# Native-only deps (excluded on WASM)
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+directories = "5"
+notify = "6"
+open = "5"
+smol = "2"
+resvg = "0.47"
+mathjax-svg-rs = "0.4"
+mermaid-rs-renderer = { version = "0.2.2", default-features = false }
+rust_decimal = "1.37"
 
 # Tree-sitter language grammars (all optional, enabled by tree-sitter-languages feature)
 tree-sitter-bash               = { version = "0.25",  optional = true }
@@ -135,6 +129,11 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi",       "Win32_Graphics_Dxgi_Common",
     "Win32_Foundation",
 ] }
+
+# Ensure getrandom has wasm_js feature for WASM builds
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom_4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 [[example]]
 name = "button_custom_hover_active"

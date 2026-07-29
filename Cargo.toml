@@ -9,7 +9,7 @@ members = [
 edition = "2021"
 
 [workspace.dependencies]
-gpui-ce = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI", rev = "e1b4a1305b" }
+gpui-ce = { path = "D:/GitHub/WGPUI" }
 ui-macros = { path = "crates/ui-macros" }
 
 anyhow        = "1"
@@ -30,17 +30,64 @@ regex         = "1"
 resvg         = "0.47"
 ropey         = { version = "=2.0.0-beta.1", features = ["metric_utf16", "metric_lines_lf"] }
 rust-embed    = { version = "8", features = ["interpolate-folder-path", "include-exclude"] }
-rust-i18n     = "3"
+rust-i18n     = "4"
 schemars      = "1.2.0"
 serde         = { version = "1", features = ["derive"] }
 serde_json    = "1"
 serde_repr    = "0.1"
 smallvec      = "1"
 smol          = "2"
-syn           = { version = "2", features = ["full"] }
 toml          = "0.8"
 tracing       = "0.1"
 uuid          = { version = "1", features = ["v4"] }
+wgpu          = { version = "30", default-features = false }
+bytemuck      = { version = "1.24", features = ["derive"] }
+getrandom_03  = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_04  = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
+aho-corasick                    = "1.1"
+enum-iterator                   = "2.3"
+gpui_sum_tree                   = "0.2.2"
+html5ever                       = "0.39"
+itertools                       = "0.14"
+markdown                        = "1.0"
+markup5ever_rcdom               = "0.39"
+mathjax-svg-rs                  = "0.4"
+mermaid-rs-renderer             = { version = "0.2.2", default-features = false }
+num-traits                      = "0.2"
+paste                           = "1"
+rust_decimal                    = "1.37"
+tree-sitter                     = "0.26"
+tree-sitter-json                = "0.24.8"
+unicode-segmentation            = "1.12"
+tree-sitter-bash                = { version = "0.25"}
+tree-sitter-c                   = { version = "0.24"}
+tree-sitter-c-sharp             = { version = "0.23"}
+tree-sitter-cmake               = { version = "0.7"}
+tree-sitter-cpp                 = { version = "0.23"}
+tree-sitter-css                 = { version = "0.25"}
+tree-sitter-diff                = { version = "0.1"}
+tree-sitter-elixir              = { version = "0.3"}
+tree-sitter-embedded-template   = { version = "0.25"}
+tree-sitter-go                  = { version = "0.25"}
+tree-sitter-graphql             = { version = "0.1"}
+tree-sitter-html                = { version = "0.23"}
+tree-sitter-java                = { version = "0.23"}
+tree-sitter-javascript          = { version = "0.25"}
+tree-sitter-jsdoc               = { version = "0.25"}
+tree-sitter-make                = { version = "1.1"}
+tree-sitter-md                  = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", tag = "v0.5.3"}
+tree-sitter-proto               = { version = "0.4"}
+tree-sitter-python              = { version = "0.25"}
+tree-sitter-ruby                = { version = "0.23"}
+tree-sitter-rust                = { version = "0.24"}
+tree-sitter-scala               = { version = "0.26"}
+tree-sitter-sequel              = { version = "0.3"}
+tree-sitter-swift               = { version = "0.7"}
+tree-sitter-toml-ng             = { version = "0.7"}
+tree-sitter-typescript          = { version = "0.23"}
+tree-sitter-yaml                = { version = "0.7"}
+tree-sitter-zig                 = { version = "1.1"}
 
 [workspace.lints.rust]
-unsafe_code = "warn"
+unsafe_code = "deny"
