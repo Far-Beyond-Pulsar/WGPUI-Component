@@ -282,6 +282,7 @@ where
                     self._set_selected_index(None, window, cx);
                 }
 
+                let background = cx.background_executor().clone();
                 self._search_task = cx.spawn_in(window, async move |this, window| {
                     search.await;
 
@@ -292,7 +293,7 @@ where
 
                     // Always wait 100ms to avoid flicker
                     #[cfg(not(target_family = "wasm"))]
-                    gpui::Executor::timer(gpui::Executor::background_executor(&cx), Duration::from_millis(100)).await;
+                    background.timer(Duration::from_millis(100)).await;
                     _ = this.update_in(window, |this, window, cx| {
                         this.set_querying(false, window, cx);
                     });

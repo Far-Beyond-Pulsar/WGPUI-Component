@@ -16,8 +16,11 @@ use gpui::{HighlightStyle, SharedString};
 use gpui_sum_tree::Bias;
 use ropey::{ChunkCursor, Rope};
 #[cfg(not(target_family = "wasm"))]
+#[cfg(not(target_family = "wasm"))]
+use streaming_iterator::StreamingIterator;
+#[cfg(not(target_family = "wasm"))]
 use tree_sitter::{
-    InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatch, StreamingIterator, Tree,
+    InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatch, Tree,
 };
 
 /// A syntax highlighter that supports incremental parsing, multiline text,
@@ -351,7 +354,7 @@ impl SyntaxHighlighter {
             .unwrap_or(self.parser.parse("", None).unwrap());
         old_tree.edit(&edit);
 
-        let new_tree = self.parser.parse_with_options(
+        let new_tree = self.parser.parse_with(
             &mut move |offset, _| {
                 if offset >= text.len() {
                     ""
@@ -361,7 +364,6 @@ impl SyntaxHighlighter {
                 }
             },
             Some(&old_tree),
-            None,
         );
 
         let Some(new_tree) = new_tree else {

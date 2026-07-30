@@ -21,11 +21,11 @@ tree-sitter-languages = [
     "dep:tree-sitter-diff",    "dep:tree-sitter-elixir",    "dep:tree-sitter-embedded-template",
     "dep:tree-sitter-go",      "dep:tree-sitter-graphql",   "dep:tree-sitter-html",
     "dep:tree-sitter-java",    "dep:tree-sitter-javascript","dep:tree-sitter-jsdoc",
-    "dep:tree-sitter-make",    "dep:tree-sitter-md",        "dep:tree-sitter-proto",
-    "dep:tree-sitter-python",  "dep:tree-sitter-ruby",      "dep:tree-sitter-rust",
-    "dep:tree-sitter-scala",   "dep:tree-sitter-sequel",    "dep:tree-sitter-swift",
-    "dep:tree-sitter-toml-ng", "dep:tree-sitter-typescript","dep:tree-sitter-yaml",
-    "dep:tree-sitter-zig",
+    "dep:tree-sitter-make",    "dep:tree-sitter-md",
+    "dep:tree-sitter-proto",   "dep:tree-sitter-python",    "dep:tree-sitter-ruby",
+    "dep:tree-sitter-rust",    "dep:tree-sitter-scala",     "dep:tree-sitter-sequel",
+    "dep:tree-sitter-swift",   "dep:tree-sitter-toml-ng",   "dep:tree-sitter-typescript",
+    "dep:tree-sitter-yaml",    "dep:tree-sitter-zig",
 ]
 
 inspector = ["gpui-ce/inspector"]
@@ -89,6 +89,9 @@ resvg = "0.47"
 mathjax-svg-rs = "0.4"
 mermaid-rs-renderer = { version = "0.2.2", default-features = false }
 rust_decimal = "1.37"
+streaming-iterator = "0.1"
+tree-sitter = "0.24"
+tree-sitter-json = "0.24"
 
 # Tree-sitter language grammars (all optional, enabled by tree-sitter-languages feature)
 tree-sitter-bash               = { version = "0.25",  optional = true }

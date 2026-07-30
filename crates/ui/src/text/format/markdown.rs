@@ -340,7 +340,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                     math_display_mode: false,
                     ..Default::default()
                 });
-                break 'node;
+                return text;
             }
             paragraph.push(
                 InlineNode::new(&text)

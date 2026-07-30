@@ -642,6 +642,8 @@ fn render_tab_content(
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
         #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
+        #[cfg(not(feature = "flamegraph"))]
+        InspectorTab::Profiler => gpui::div().into_any_element(),
     };
 
     // Elements and Profiler manage their own internal scrolling (Profiler's

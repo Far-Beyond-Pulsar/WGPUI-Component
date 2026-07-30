@@ -571,7 +571,6 @@ impl Element for TextView {
                 let tx = tx.clone();
                 |state, _| {
                     state.parsed_result = Some(parsed_result);
-                    #[cfg(not(target_family = "wasm"))]
                     state.tx = Some(tx);
                 }
             });
