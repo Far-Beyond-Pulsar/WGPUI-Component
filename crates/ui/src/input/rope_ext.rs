@@ -414,6 +414,7 @@ mod tests {
     use gpui_sum_tree::Bias;
     use ropey::Rope;
 
+    use super::Point;
     use crate::input::{Position, RopeExt};
 
     #[test]
