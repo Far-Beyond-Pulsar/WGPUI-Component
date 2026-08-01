@@ -1507,9 +1507,32 @@ impl Element for TextElement {
         }
 
         self.state.update(cx, |state, cx| {
+            // This block records what was just painted. Notifying about it
+            // unconditionally used to be free: gpui silently swallowed any
+            // `cx.notify()` issued while a draw was in progress. It no longer
+            // does — a mid-draw notify is now deferred and applied at the end
+            // of the draw, which marks the window dirty and schedules another
+            // frame (`WindowInvalidator::flush_deferred_notifications`). An
+            // unconditional notify here would therefore make every window
+            // containing a text input redraw forever and never go idle.
+            //
+            // So notify only when one of the values observers actually react to
+            // moved. `last_layout` is deliberately not part of the comparison:
+            // it is a cache of this frame's own layout output, and the things
+            // downstream reads from it — bounds, scroll size, scroll offset —
+            // are compared directly.
+            let cursor = state.cursor();
+            let changed = state.last_bounds != Some(bounds)
+                || state.last_cursor != Some(cursor)
+                || state.last_selected_range != Some(selected_range)
+                || state.scroll_size != prepaint.scroll_size
+                || state.scroll_handle.offset() != prepaint.cursor_scroll_offset
+                || state.deferred_scroll_offset.is_some();
+
             state.last_layout = Some(prepaint.last_layout.clone());
             state.last_bounds = Some(bounds);
-            state.last_cursor = Some(state.cursor());
+            state.last_cursor = Some(cursor);
+            // Notifies on its own, and only when the wrap width actually moved.
             state.set_input_bounds(input_bounds, cx);
             state.last_selected_range = Some(selected_range);
             state.scroll_size = prepaint.scroll_size;
@@ -1518,7 +1541,9 @@ impl Element for TextElement {
                 .set_offset(prepaint.cursor_scroll_offset);
             state.deferred_scroll_offset = None;
 
-            cx.notify();
+            if changed {
+                cx.notify();
+            }
         });
 
         if let Some(hitbox) = prepaint.hover_definition_hitbox.as_ref() {
