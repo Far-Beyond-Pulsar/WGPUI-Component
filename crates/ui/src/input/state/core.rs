@@ -665,12 +665,32 @@ impl InputState {
     /// Set the text of the input field.
     ///
     /// And the selection_range will be reset to 0..0.
+    ///
+    /// Setting the value it already holds is a no-op: it does not reset the
+    /// selection or scroll offset, and it does not notify.
+    ///
+    /// That matters because callers push values in from `render`. Property
+    /// panels re-assert every field's current value on each render so external
+    /// edits (undo, a viewport drag, another panel) reach the editor. Notifying
+    /// unconditionally turned that into a self-sustaining loop — render →
+    /// `set_value` → `notify` → the view is dirty → render — one per field, so a
+    /// panel with many rows could never go clean and was rebuilt every frame.
+    /// It also meant the cursor and scroll position were reset out from under
+    /// anyone typing into such a field.
     pub fn set_value(
         &mut self,
         value: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let value: SharedString = value.into();
+
+        // `Rope::len` is O(1), so an unchanged large document short-circuits
+        // before the comparison allocates.
+        if self.text.len() == value.len() && self.text.to_string() == value.as_ref() {
+            return;
+        }
+
         self.history.ignore = true;
         let was_disabled = self.disabled;
         self.replace_text(value, window, cx);
