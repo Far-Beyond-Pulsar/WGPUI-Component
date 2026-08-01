@@ -147,6 +147,11 @@ impl Panel for Tiles {
         "Tiles"
     }
 
+    /// Every tile is rendered, so caching this panel would freeze all of them.
+    fn cacheable(&self, cx: &App) -> bool {
+        self.panels.iter().all(|item| item.panel.cacheable(cx))
+    }
+
     fn title(&self, _window: &Window, _cx: &App) -> AnyElement {
         "Tiles".into_any_element()
     }

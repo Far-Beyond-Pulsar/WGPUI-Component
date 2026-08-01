@@ -56,4 +56,11 @@ impl Panel for TabPanel {
         self.active_panel(cx)
             .map_or(true, |panel| panel.inner_padding(cx))
     }
+
+    /// Only the active panel is rendered, so only the active panel can be
+    /// frozen by caching this one.
+    fn cacheable(&self, cx: &App) -> bool {
+        self.active_panel(cx)
+            .map_or(true, |panel| panel.cacheable(cx))
+    }
 }
