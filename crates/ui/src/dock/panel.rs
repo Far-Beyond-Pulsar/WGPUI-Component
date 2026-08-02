@@ -173,45 +173,6 @@ pub trait Panel: EventEmitter<PanelEvent> + Render + Focusable {
         true
     }
 
-    /// Whether the dock may render this panel through [`gpui::AnyView::cached`],
-    /// default is `true`.
-    ///
-    /// A cached view that *reuses* never builds its element tree: its prepaint
-    /// and paint closures do not run, and `reuse_prepaint`/`reuse_paint` merely
-    /// replay the index ranges recorded on the frame that did run. Anything
-    /// stashed *by* those closures for later use therefore goes stale, which
-    /// silently breaks any component that converts a mouse position into
-    /// content coordinates using geometry it recorded at paint time. Known
-    /// examples:
-    ///
-    /// - [`crate::input::TextInput`], whose `TextElement::paint` records
-    ///   `last_bounds` / `last_layout` / `scroll_size` and whose mouse and
-    ///   scroll handlers read them back.
-    /// - A 3D viewport that captures its element bounds in a prepaint callback
-    ///   and normalises the cursor against them before handing the click to the
-    ///   engine.
-    /// - Any panel whose `render` has a side effect that must happen every
-    ///   frame (ticking a simulation, requesting the next animation frame).
-    ///
-    /// Return `false` from such a panel. It is then rendered as an ordinary
-    /// in-tree element, so its prepaint and paint run on every window draw.
-    /// Sibling panels keep their caching, which is where nearly all of the win
-    /// is — this is deliberately per-panel rather than the global
-    /// `WGPUI_NESTED_VIEW_CACHE=0` switch, which fixes the same bug by making
-    /// *every* nested cached view rebuild.
-    ///
-    /// Container panels ([`super::TabPanel`], [`super::StackPanel`],
-    /// [`super::Tiles`]) propagate this from the panels they contain, so an
-    /// opted-out panel is not re-frozen by a cached ancestor inside the same
-    /// dock. A panel that hosts its *own* nested [`super::DockArea`] is opaque
-    /// to that propagation and must return `false` itself if anything inside it
-    /// does.
-    ///
-    /// This method is called in Panel render, so it must be fast.
-    fn cacheable(&self, cx: &App) -> bool {
-        true
-    }
-
     // TODO This is cursed. When we do plugins their tabs will provide ALL RPC data to avoid this conditional garbage
     /// The Discord Rich Presence icon key for this panel type.
     ///
@@ -263,8 +224,6 @@ pub trait PanelView: 'static + Send + Sync {
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn dump(&self, cx: &App) -> PanelState;
     fn inner_padding(&self, cx: &App) -> bool;
-    /// Object-safe forwarder for [`Panel::cacheable`].
-    fn cacheable(&self, cx: &App) -> bool;
     fn discord_icon_key(&self, cx: &App) -> &'static str;
 }
 
@@ -351,10 +310,6 @@ impl<T: Panel> PanelView for Entity<T> {
 
     fn inner_padding(&self, cx: &App) -> bool {
         self.read(cx).inner_padding(cx)
-    }
-
-    fn cacheable(&self, cx: &App) -> bool {
-        self.read(cx).cacheable(cx)
     }
 
     fn discord_icon_key(&self, cx: &App) -> &'static str {

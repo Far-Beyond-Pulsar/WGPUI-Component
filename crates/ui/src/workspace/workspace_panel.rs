@@ -11,7 +11,6 @@ pub struct WorkspacePanel {
     id: SharedString,
     title: SharedString,
     closable: bool,
-    cacheable: bool,
     focus_handle: FocusHandle,
     render_fn: Rc<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>,
 }
@@ -28,7 +27,6 @@ impl WorkspacePanel {
             id: id.into(),
             title: title.into(),
             closable: true,
-            cacheable: true,
             focus_handle: cx.focus_handle(),
             render_fn: Rc::new(render_fn),
         }
@@ -40,15 +38,6 @@ impl WorkspacePanel {
         self
     }
 
-    /// Set whether the dock may render this panel through the view cache.
-    ///
-    /// Pass `false` when the render function stashes paint-time geometry for
-    /// later coordinate math, or has a per-frame side effect. See
-    /// [`Panel::cacheable`].
-    pub fn cacheable(mut self, cacheable: bool) -> Self {
-        self.cacheable = cacheable;
-        self
-    }
 }
 
 impl Panel for WorkspacePanel {
@@ -63,10 +52,6 @@ impl Panel for WorkspacePanel {
 
     fn closable(&self, _cx: &App) -> bool {
         self.closable
-    }
-
-    fn cacheable(&self, _cx: &App) -> bool {
-        self.cacheable
     }
 
     fn dump(&self, _cx: &App) -> PanelState {

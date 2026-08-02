@@ -672,24 +672,10 @@ impl TabPanel {
 
         let is_render_in_tabs = self.panels.len() > 1 && self.inner_padding(cx);
 
-        // A cached view that reuses never runs its prepaint/paint closures, so
-        // any panel that stashes geometry there for later coordinate math (see
-        // `Panel::cacheable`) has to be rendered as an ordinary in-tree element.
-        // The wrapper reproduces the layout the cached root style would have
-        // produced — absolute, filling the tab content — so the only difference
-        // is the caching.
-        let panel_content = if active_panel.cacheable(cx) {
-            active_panel
-                .view()
-                .cached(StyleRefinement::default().absolute().size_full())
-                .into_any_element()
-        } else {
-            div()
-                .absolute()
-                .size_full()
-                .child(active_panel.view())
-                .into_any_element()
-        };
+        let panel_content = active_panel
+            .view()
+            .cached(StyleRefinement::default().absolute().size_full())
+            .into_any_element();
 
         v_flex()
             .id("active-panel")

@@ -50,10 +50,6 @@ impl Panel for StackPanel {
         state
     }
 
-    /// Every child is rendered, so caching this panel would freeze all of them.
-    fn cacheable(&self, cx: &App) -> bool {
-        self.panels.iter().all(|panel| panel.cacheable(cx))
-    }
 }
 
 impl StackPanel {

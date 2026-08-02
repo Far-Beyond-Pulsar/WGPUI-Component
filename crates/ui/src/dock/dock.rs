@@ -397,21 +397,9 @@ impl Render for Dock {
             .map(|this| match &self.panel {
                 DockItem::Split { view, .. } => this.child(view.clone()),
                 DockItem::Tabs { view, .. } => this.child(view.clone()),
-                // A panel that stashes paint-time geometry (see
-                // `Panel::cacheable`) must not be cached: a reuse would replay
-                // its recorded ranges without ever running its prepaint/paint,
-                // leaving that geometry stale. The uncached arm reproduces the
-                // layout the cached root style would have produced, so only the
-                // caching changes.
-                DockItem::Panel { view, .. } if view.cacheable(cx) => {
+                DockItem::Panel { view, .. } => {
                     this.child(view.clone().view().cached(cache_style))
                 }
-                DockItem::Panel { view, .. } => this.child(
-                    div()
-                        .absolute()
-                        .size_full()
-                        .child(view.clone().view().into_any_element()),
-                ),
                 // Not support to render Tiles and Tile into Dock
                 DockItem::Tiles { .. } => this,
             })
