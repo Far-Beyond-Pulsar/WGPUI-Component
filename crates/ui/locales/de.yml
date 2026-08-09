@@ -1,0 +1,167 @@
+# WGPUI-Komponenten Übersetzungen - de
+
+# Dropdown
+Dropdown.placeholder: "Bitte auswählen"
+
+# Modal
+Modal.ok: "OK"
+Modal.cancel: "Abbrechen"
+
+# Dock
+Dock.Unnamed: "Unbenannt"
+Dock.Close: "Schließen"
+Dock.Zoom In: "Vergrößern"
+Dock.Zoom Out: "Verkleinern"
+Dock.Collapse: "Einklappen"
+Dock.Expand: "Ausklappen"
+
+# Kalender
+Calendar.week.0: "So"
+Calendar.week.1: "Mo"
+Calendar.week.2: "Di"
+Calendar.week.3: "Mi"
+Calendar.week.4: "Do"
+Calendar.week.5: "Fr"
+Calendar.week.6: "Sa"
+Calendar.month.January: "Januar"
+Calendar.month.February: "Februar"
+Calendar.month.March: "März"
+Calendar.month.April: "April"
+Calendar.month.May: "Mai"
+Calendar.month.June: "Juni"
+Calendar.month.July: "Juli"
+Calendar.month.August: "August"
+Calendar.month.September: "September"
+Calendar.month.October: "Oktober"
+Calendar.month.November: "November"
+Calendar.month.December: "Dezember"
+
+# Datumsauswahl
+DatePicker.placeholder: "Datum auswählen"
+
+# Eingabe (Suchleiste)
+Input.Replace: "Ersetzen"
+Input.Replace All: "Alle ersetzen"
+Input.Cut: "Ausschneiden"
+Input.Copy: "Kopieren"
+Input.Paste: "Einfügen"
+Input.Select All: "Alles auswählen"
+Input.Go to Definition: "Zur Definition springen"
+Input.Show Code Actions: "Code-Aktionen anzeigen"
+
+# Liste
+List.search_placeholder: "Suchen..."
+
+# Einstellungen
+Settings.search_placeholder: "Einstellungen durchsuchen..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "Mittlere Bildzeit"
+Profiler.MaxFrame: "Max. Bildzeit"
+Profiler.PresentMode: "Präsentationsmodus"
+Profiler.FramesCaptured: "Erfasste Bilder"
+Profiler.FullDrawFrames: "Vollständige Bilder"
+Profiler.FastPathFrames: "Schnellpfad-Bilder"
+Profiler.AtlasHitRate: "Atlas-Trefferquote"
+Profiler.MainThreadCPU: "Hauptthread (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "Hintergrundthread %{index}"
+Profiler.DrawCallsPrimitives: "Draw-Calls und Primitive"
+Profiler.CPUGPUTimeline: "CPU/GPU-Zeitstrahl"
+Profiler.CPUMemory: "CPU-Speicher"
+Profiler.GPUMemory: "GPU-Speicher"
+Profiler.LivePreview: "Live-Vorschau"
+Profiler.NodeDetails: "Knotendetails"
+Profiler.Quads: "Quadrate"
+Profiler.Shadows: "Schatten"
+Profiler.MonoSprites: "Monochrom-Sprites"
+Profiler.PolySprites: "Polygon-Sprites"
+Profiler.Paths: "Pfade"
+Profiler.Underlines: "Unterstriche"
+Profiler.BackdropFilters: "Hintergrundfilter"
+Profiler.Surfaces: "Oberflächen"
+Profiler.StartCapture: "Aufnahme starten"
+Profiler.StopCapture: "Aufnahme stoppen"
+Profiler.CaptureFrame: "Bild aufnehmen"
+Profiler.RefreshSnapshot: "Momentaufnahme aktualisieren"
+Profiler.CaptureUITree: "UI-Baum aufnehmen"
+Profiler.Duration: "Dauer"
+Profiler.Depth: "Tiefe"
+Profiler.Lane: "Spur"
+Profiler.Category: "Kategorie"
+Profiler.Element: "Element"
+Profiler.Source: "Quelle"
+Profiler.Type: "Typ"
+Profiler.Display: "Anzeige"
+Profiler.Visibility: "Sichtbarkeit"
+Profiler.Background: "Hintergrund"
+Profiler.TextColor: "Textfarbe"
+Profiler.ElementArena: "Element-Arena"
+Profiler.GlyphCache: "Glyphen-Cache"
+Profiler.ShapedLineCache: "Formatierter-Zeilen-Cache"
+Profiler.ImageCache: "Bild-Cache"
+Profiler.CaptureEngine: "Aufnahme-Engine"
+Profiler.FixedBuffers: "Feste Puffer"
+Profiler.AtlasTextures: "Atlas-Texturen"
+Profiler.SurfaceRegistry: "Oberflächenregister"
+Profiler.Swapchain: "Swapchain"
+
+# Inspektor
+Inspector.Title: "Inspektor"
+Inspector.RustStyles: "Rust-Stile"
+Inspector.JSONStyles: "JSON-Stile"
+Inspector.BoxModel: "Boxmodell"
+Inspector.Reset: "Zurücksetzen"
+Inspector.Width: "Breite"
+Inspector.Height: "Höhe"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "Außenabstand"
+Inspector.Border: "Rahmen"
+Inspector.Padding: "Innenabstand"
+Inspector.Content: "Inhalt"
+Inspector.NoElements: "Keine Elemente verfügbar."
+Inspector.SelectElement: "Wählen Sie ein Element aus, um seine Stile anzuzeigen."
+
+# Download-Element
+DownloadItem.Downloading: "Wird heruntergeladen"
+DownloadItem.Done: "Fertig"
+DownloadItem.Error: "Fehler"
+DownloadItem.Complete: "Abgeschlossen"
+DownloadItem.OpenFolder: "Ordner öffnen"
+DownloadItem.ETA: "Voraussichtlich %{eta}"
+
+# Download-Manager
+DownloadManager.Title: "Downloads"
+DownloadManager.Active: "Downloads — %{count} aktiv"
+DownloadManager.NoneYet: "Noch keine Downloads"
+
+# Code-Editor
+CodeEditor.LineCol: "Z. %{line}, Sp. %{col}"
+CodeEditor.TotalLines: "%{total_lines} Zeilen"
+CodeEditor.UTF8: "UTF-8"
+
+# Farbauswahl
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "Komplementär"
+ColorPicker.Analogous: "Analog"
+ColorPicker.Triadic: "Triadisch"
+ColorPicker.AllColors: "Alle Farben"
+ColorPicker.ColorRelations: "Farbbeziehungen"
+ColorPicker.Recent: "Zuletzt verwendet"
+ColorPicker.Code: "Code"
+ColorPicker.Palette: "Palette: %{name}"
+
+# Hierarchische Listenansicht
+HierarchicalListView.Objects: "%{count} Objekte"
+
+# Replikation
+Replication.LockedBy: "Gesperrt von %{user}"
+Replication.Plus: "+%{count}"
+
+# Fenstertitel
+Window.Title.FileManager: "Dateimanager"
