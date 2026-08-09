@@ -240,12 +240,28 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
 
         let content = self.content.clone();
 
+        // Determine effective expanded width from user's custom style or default.
+        // For collapsible sidebars this is the fully-expanded width; for
+        // non-collapsible sidebars this fills the parent container.
+        let expanded_width = self
+            .style
+            .size
+            .width
+            .and_then(|w| {
+                if let Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px))) = w {
+                    Some(px)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(DEFAULT_WIDTH);
+
         // Sidebar content renders at its target width immediately.
         // A wrapper div animates clip-width for smooth transitions
         // without re-laying out sidebar content each animation frame.
         let sidebar = v_flex()
             .id(id.clone())
-            .w(DEFAULT_WIDTH)
+            .w(expanded_width)
             .flex_shrink_0()
             .h_full()
             .overflow_hidden()
@@ -335,20 +351,6 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
         if !self.collapsible {
             return sidebar.into_any_element();
         }
-
-        // Determine effective expanded width from user's custom style or default
-        let expanded_width = self
-            .style
-            .size
-            .width
-            .and_then(|w| {
-                if let Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px))) = w {
-                    Some(px)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(DEFAULT_WIDTH);
 
         // Store animation widths in keyed state so they remain stable across
         // re-renders (GPUI re-renders the whole tree on each animation frame).

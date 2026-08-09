@@ -1,0 +1,167 @@
+# WGPUI Component Translations - en
+
+# Dropdown
+Dropdown.placeholder: "Please select"
+
+# Modal
+Modal.ok: "OK"
+Modal.cancel: "Cancel"
+
+# Dock
+Dock.Unnamed: "Unnamed"
+Dock.Close: "Close"
+Dock.Zoom In: "Zoom In"
+Dock.Zoom Out: "Zoom Out"
+Dock.Collapse: "Collapse"
+Dock.Expand: "Expand"
+
+# Calendar
+Calendar.week.0: "Su"
+Calendar.week.1: "Mo"
+Calendar.week.2: "Tu"
+Calendar.week.3: "We"
+Calendar.week.4: "Th"
+Calendar.week.5: "Fr"
+Calendar.week.6: "Sa"
+Calendar.month.January: "January"
+Calendar.month.February: "February"
+Calendar.month.March: "March"
+Calendar.month.April: "April"
+Calendar.month.May: "May"
+Calendar.month.June: "June"
+Calendar.month.July: "July"
+Calendar.month.August: "August"
+Calendar.month.September: "September"
+Calendar.month.October: "October"
+Calendar.month.November: "November"
+Calendar.month.December: "December"
+
+# DatePicker
+DatePicker.placeholder: "Select date"
+
+# Input (search bar)
+Input.Replace: "Replace"
+Input.Replace All: "Replace All"
+Input.Cut: "Cut"
+Input.Copy: "Copy"
+Input.Paste: "Paste"
+Input.Select All: "Select All"
+Input.Go to Definition: "Go to Definition"
+Input.Show Code Actions: "Show Code Actions"
+
+# List
+List.search_placeholder: "Search..."
+
+# Settings
+Settings.search_placeholder: "Search settings..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "Mean Frame"
+Profiler.MaxFrame: "Max Frame"
+Profiler.PresentMode: "Present Mode"
+Profiler.FramesCaptured: "Frames Captured"
+Profiler.FullDrawFrames: "Full-draw Frames"
+Profiler.FastPathFrames: "Fast-path Frames"
+Profiler.AtlasHitRate: "Atlas Hit Rate"
+Profiler.MainThreadCPU: "Main Thread (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "Background Thread %{index}"
+Profiler.DrawCallsPrimitives: "Draw Calls & Primitives"
+Profiler.CPUGPUTimeline: "CPU/GPU Submit Timeline"
+Profiler.CPUMemory: "CPU Memory"
+Profiler.GPUMemory: "GPU Memory"
+Profiler.LivePreview: "Live Preview"
+Profiler.NodeDetails: "Node Details"
+Profiler.Quads: "Quads"
+Profiler.Shadows: "Shadows"
+Profiler.MonoSprites: "Mono Sprites"
+Profiler.PolySprites: "Poly Sprites"
+Profiler.Paths: "Paths"
+Profiler.Underlines: "Underlines"
+Profiler.BackdropFilters: "Backdrop Filters"
+Profiler.Surfaces: "Surfaces"
+Profiler.StartCapture: "Start Capture"
+Profiler.StopCapture: "Stop Capture"
+Profiler.CaptureFrame: "Capture Frame"
+Profiler.RefreshSnapshot: "Refresh Snapshot"
+Profiler.CaptureUITree: "Capture UI Tree"
+Profiler.Duration: "Duration"
+Profiler.Depth: "Depth"
+Profiler.Lane: "Lane"
+Profiler.Category: "Category"
+Profiler.Element: "Element"
+Profiler.Source: "Source"
+Profiler.Type: "Type"
+Profiler.Display: "Display"
+Profiler.Visibility: "Visibility"
+Profiler.Background: "Background"
+Profiler.TextColor: "Text Color"
+Profiler.ElementArena: "Element Arena"
+Profiler.GlyphCache: "Glyph Cache"
+Profiler.ShapedLineCache: "Shaped Line Cache"
+Profiler.ImageCache: "Image Cache"
+Profiler.CaptureEngine: "Capture Engine"
+Profiler.FixedBuffers: "Fixed Buffers"
+Profiler.AtlasTextures: "Atlas Textures"
+Profiler.SurfaceRegistry: "Surface Registry"
+Profiler.Swapchain: "Swapchain"
+
+# Inspector
+Inspector.Title: "Inspector"
+Inspector.RustStyles: "Rust Styles"
+Inspector.JSONStyles: "JSON Styles"
+Inspector.BoxModel: "Box Model"
+Inspector.Reset: "Reset"
+Inspector.Width: "Width"
+Inspector.Height: "Height"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "Margin"
+Inspector.Border: "Border"
+Inspector.Padding: "Padding"
+Inspector.Content: "Content"
+Inspector.NoElements: "No elements available."
+Inspector.SelectElement: "Select an element to view its styles."
+
+# Download Item
+DownloadItem.Downloading: "Downloading"
+DownloadItem.Done: "Done"
+DownloadItem.Error: "Error"
+DownloadItem.Complete: "Complete"
+DownloadItem.OpenFolder: "Open Folder"
+DownloadItem.ETA: "ETA %{eta}"
+
+# Download Manager
+DownloadManager.Title: "Downloads"
+DownloadManager.Active: "Downloads — %{count} active"
+DownloadManager.NoneYet: "No downloads yet"
+
+# Code Editor
+CodeEditor.LineCol: "Ln %{line}, Col %{col}"
+CodeEditor.TotalLines: "%{total_lines} lines"
+CodeEditor.UTF8: "UTF-8"
+
+# Color Picker
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "Complementary"
+ColorPicker.Analogous: "Analogous"
+ColorPicker.Triadic: "Triadic"
+ColorPicker.AllColors: "All Colors"
+ColorPicker.ColorRelations: "Color Relations"
+ColorPicker.Recent: "Recent"
+ColorPicker.Code: "Code"
+ColorPicker.Palette: "Palette: %{name}"
+
+# Hierarchical List View
+HierarchicalListView.Objects: "%{count} objects"
+
+# Replication
+Replication.LockedBy: "Locked by %{user}"
+Replication.Plus: "+%{count}"
+
+# Window Titles (shared with ui_common)
+Window.Title.FileManager: "File Manager"
