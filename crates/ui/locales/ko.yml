@@ -1,0 +1,167 @@
+# WGPUI Component Translations - ko
+
+# Dropdown
+Dropdown.placeholder: "선택해 주세요"
+
+# Modal
+Modal.ok: "OK"
+Modal.cancel: "취소"
+
+# Dock
+Dock.Unnamed: "이름 없음"
+Dock.Close: "닫기"
+Dock.Zoom In: "확대"
+Dock.Zoom Out: "축소"
+Dock.Collapse: "접기"
+Dock.Expand: "펼치기"
+
+# Calendar
+Calendar.week.0: "일"
+Calendar.week.1: "월"
+Calendar.week.2: "화"
+Calendar.week.3: "수"
+Calendar.week.4: "목"
+Calendar.week.5: "금"
+Calendar.week.6: "토"
+Calendar.month.January: "1월"
+Calendar.month.February: "2월"
+Calendar.month.March: "3월"
+Calendar.month.April: "4월"
+Calendar.month.May: "5월"
+Calendar.month.June: "6월"
+Calendar.month.July: "7월"
+Calendar.month.August: "8월"
+Calendar.month.September: "9월"
+Calendar.month.October: "10월"
+Calendar.month.November: "11월"
+Calendar.month.December: "12월"
+
+# DatePicker
+DatePicker.placeholder: "날짜 선택"
+
+# Input (search bar)
+Input.Replace: "바꾸기"
+Input.Replace All: "모두 바꾸기"
+Input.Cut: "잘라내기"
+Input.Copy: "복사"
+Input.Paste: "붙여넣기"
+Input.Select All: "모두 선택"
+Input.Go to Definition: "정의로 이동"
+Input.Show Code Actions: "코드 작업 표시"
+
+# List
+List.search_placeholder: "검색..."
+
+# Settings
+Settings.search_placeholder: "설정 검색..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "평균 프레임"
+Profiler.MaxFrame: "최대 프레임"
+Profiler.PresentMode: "표시 모드"
+Profiler.FramesCaptured: "캡처된 프레임"
+Profiler.FullDrawFrames: "전체 그리기 프레임"
+Profiler.FastPathFrames: "빠른 경로 프레임"
+Profiler.AtlasHitRate: "아틀라스 적중률"
+Profiler.MainThreadCPU: "메인 스레드 (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "백그라운드 스레드 %{index}"
+Profiler.DrawCallsPrimitives: "드로우 콜 및 기본 요소"
+Profiler.CPUGPUTimeline: "CPU/GPU 제출 타임라인"
+Profiler.CPUMemory: "CPU 메모리"
+Profiler.GPUMemory: "GPU 메모리"
+Profiler.LivePreview: "실시간 미리 보기"
+Profiler.NodeDetails: "노드 세부 정보"
+Profiler.Quads: "쿼드"
+Profiler.Shadows: "그림자"
+Profiler.MonoSprites: "모노 스프라이트"
+Profiler.PolySprites: "폴리 스프라이트"
+Profiler.Paths: "경로"
+Profiler.Underlines: "밑줄"
+Profiler.BackdropFilters: "백드롭 필터"
+Profiler.Surfaces: "서피스"
+Profiler.StartCapture: "캡처 시작"
+Profiler.StopCapture: "캡처 중지"
+Profiler.CaptureFrame: "프레임 캡처"
+Profiler.RefreshSnapshot: "스냅샷 새로 고침"
+Profiler.CaptureUITree: "UI 트리 캡처"
+Profiler.Duration: "기간"
+Profiler.Depth: "깊이"
+Profiler.Lane: "레인"
+Profiler.Category: "범주"
+Profiler.Element: "요소"
+Profiler.Source: "소스"
+Profiler.Type: "유형"
+Profiler.Display: "표시"
+Profiler.Visibility: "표시 여부"
+Profiler.Background: "배경"
+Profiler.TextColor: "텍스트 색상"
+Profiler.ElementArena: "요소 아레나"
+Profiler.GlyphCache: "글리프 캐시"
+Profiler.ShapedLineCache: "셰이프 라인 캐시"
+Profiler.ImageCache: "이미지 캐시"
+Profiler.CaptureEngine: "캡처 엔진"
+Profiler.FixedBuffers: "고정 버퍼"
+Profiler.AtlasTextures: "아틀라스 텍스처"
+Profiler.SurfaceRegistry: "서피스 레지스트리"
+Profiler.Swapchain: "스왑체인"
+
+# Inspector
+Inspector.Title: "인스펙터"
+Inspector.RustStyles: "Rust 스타일"
+Inspector.JSONStyles: "JSON 스타일"
+Inspector.BoxModel: "박스 모델"
+Inspector.Reset: "초기화"
+Inspector.Width: "너비"
+Inspector.Height: "높이"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "여백"
+Inspector.Border: "테두리"
+Inspector.Padding: "안쪽 여백"
+Inspector.Content: "콘텐츠"
+Inspector.NoElements: "사용 가능한 요소가 없습니다."
+Inspector.SelectElement: "스타일을 보려면 요소를 선택하세요."
+
+# Download Item
+DownloadItem.Downloading: "다운로드 중"
+DownloadItem.Done: "완료"
+DownloadItem.Error: "오류"
+DownloadItem.Complete: "완료"
+DownloadItem.OpenFolder: "폴더 열기"
+DownloadItem.ETA: "ETA %{eta}"
+
+# Download Manager
+DownloadManager.Title: "다운로드"
+DownloadManager.Active: "다운로드 — %{count}개 진행 중"
+DownloadManager.NoneYet: "아직 다운로드 없음"
+
+# Code Editor
+CodeEditor.LineCol: "Ln %{line}, Col %{col}"
+CodeEditor.TotalLines: "%{total_lines}줄"
+CodeEditor.UTF8: "UTF-8"
+
+# Color Picker
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "보색"
+ColorPicker.Analogous: "유사색"
+ColorPicker.Triadic: "삼색"
+ColorPicker.AllColors: "모든 색상"
+ColorPicker.ColorRelations: "색상 관계"
+ColorPicker.Recent: "최근"
+ColorPicker.Code: "코드"
+ColorPicker.Palette: "팔레트: %{name}"
+
+# Hierarchical List View
+HierarchicalListView.Objects: "%{count}개 오브젝트"
+
+# Replication
+Replication.LockedBy: "%{user}님이 잠금"
+Replication.Plus: "+%{count}"
+
+# Window Titles (shared with ui_common)
+Window.Title.FileManager: "파일 관리자"

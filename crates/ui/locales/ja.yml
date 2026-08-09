@@ -1,0 +1,167 @@
+# WGPUI コンポーネント翻訳 - ja
+
+# ドロップダウン
+Dropdown.placeholder: "選択してください"
+
+# モーダル
+Modal.ok: "OK"
+Modal.cancel: "キャンセル"
+
+# ドック
+Dock.Unnamed: "名前なし"
+Dock.Close: "閉じる"
+Dock.Zoom In: "拡大"
+Dock.Zoom Out: "縮小"
+Dock.Collapse: "折りたたむ"
+Dock.Expand: "展開"
+
+# カレンダー
+Calendar.week.0: "日"
+Calendar.week.1: "月"
+Calendar.week.2: "火"
+Calendar.week.3: "水"
+Calendar.week.4: "木"
+Calendar.week.5: "金"
+Calendar.week.6: "土"
+Calendar.month.January: "1月"
+Calendar.month.February: "2月"
+Calendar.month.March: "3月"
+Calendar.month.April: "4月"
+Calendar.month.May: "5月"
+Calendar.month.June: "6月"
+Calendar.month.July: "7月"
+Calendar.month.August: "8月"
+Calendar.month.September: "9月"
+Calendar.month.October: "10月"
+Calendar.month.November: "11月"
+Calendar.month.December: "12月"
+
+# 日付ピッカー
+DatePicker.placeholder: "日付を選択"
+
+# 入力 (検索バー)
+Input.Replace: "置換"
+Input.Replace All: "すべて置換"
+Input.Cut: "切り取り"
+Input.Copy: "コピー"
+Input.Paste: "貼り付け"
+Input.Select All: "すべて選択"
+Input.Go to Definition: "定義へ移動"
+Input.Show Code Actions: "コードアクションを表示"
+
+# リスト
+List.search_placeholder: "検索..."
+
+# 設定
+Settings.search_placeholder: "設定を検索..."
+
+# プロファイラ
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "平均フレーム"
+Profiler.MaxFrame: "最大フレーム"
+Profiler.PresentMode: "プレゼントモード"
+Profiler.FramesCaptured: "取得済みフレーム数"
+Profiler.FullDrawFrames: "フル描画フレーム"
+Profiler.FastPathFrames: "高速パスフレーム"
+Profiler.AtlasHitRate: "アトラスのヒット率"
+Profiler.MainThreadCPU: "メインスレッド (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "バックグラウンドスレッド %{index}"
+Profiler.DrawCallsPrimitives: "ドローコールとプリミティブ"
+Profiler.CPUGPUTimeline: "CPU/GPU 送信タイムライン"
+Profiler.CPUMemory: "CPU メモリ"
+Profiler.GPUMemory: "GPU メモリ"
+Profiler.LivePreview: "ライブプレビュー"
+Profiler.NodeDetails: "ノードの詳細"
+Profiler.Quads: "クワッド"
+Profiler.Shadows: "シャドウ"
+Profiler.MonoSprites: "モノクロスプライト"
+Profiler.PolySprites: "ポリスプライト"
+Profiler.Paths: "パス"
+Profiler.Underlines: "下線"
+Profiler.BackdropFilters: "背景フィルター"
+Profiler.Surfaces: "サーフェス"
+Profiler.StartCapture: "キャプチャ開始"
+Profiler.StopCapture: "キャプチャ停止"
+Profiler.CaptureFrame: "フレームをキャプチャ"
+Profiler.RefreshSnapshot: "スナップショットを更新"
+Profiler.CaptureUITree: "UI ツリーをキャプチャ"
+Profiler.Duration: "所要時間"
+Profiler.Depth: "深度"
+Profiler.Lane: "レーン"
+Profiler.Category: "カテゴリ"
+Profiler.Element: "要素"
+Profiler.Source: "ソース"
+Profiler.Type: "タイプ"
+Profiler.Display: "表示"
+Profiler.Visibility: "表示状態"
+Profiler.Background: "背景"
+Profiler.TextColor: "テキストの色"
+Profiler.ElementArena: "要素アリーナ"
+Profiler.GlyphCache: "グリフキャッシュ"
+Profiler.ShapedLineCache: "整形済みラインキャッシュ"
+Profiler.ImageCache: "イメージキャッシュ"
+Profiler.CaptureEngine: "キャプチャエンジン"
+Profiler.FixedBuffers: "固定バッファ"
+Profiler.AtlasTextures: "アトラステクスチャ"
+Profiler.SurfaceRegistry: "サーフェスレジストリ"
+Profiler.Swapchain: "スワップチェーン"
+
+# インスペクタ
+Inspector.Title: "インスペクタ"
+Inspector.RustStyles: "Rust スタイル"
+Inspector.JSONStyles: "JSON スタイル"
+Inspector.BoxModel: "ボックスモデル"
+Inspector.Reset: "リセット"
+Inspector.Width: "幅"
+Inspector.Height: "高さ"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "マージン"
+Inspector.Border: "ボーダー"
+Inspector.Padding: "パディング"
+Inspector.Content: "コンテンツ"
+Inspector.NoElements: "利用可能な要素がありません。"
+Inspector.SelectElement: "要素を選択すると、そのスタイルを表示できます。"
+
+# ダウンロードアイテム
+DownloadItem.Downloading: "ダウンロード中"
+DownloadItem.Done: "完了"
+DownloadItem.Error: "エラー"
+DownloadItem.Complete: "完了"
+DownloadItem.OpenFolder: "フォルダを開く"
+DownloadItem.ETA: "ETA %{eta}"
+
+# ダウンロードマネージャー
+DownloadManager.Title: "ダウンロード"
+DownloadManager.Active: "ダウンロード — %{count} 件実行中"
+DownloadManager.NoneYet: "ダウンロードはまだありません"
+
+# コードエディタ
+CodeEditor.LineCol: "行 %{line}, 列 %{col}"
+CodeEditor.TotalLines: "%{total_lines} 行"
+CodeEditor.UTF8: "UTF-8"
+
+# カラーピッカー
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "補色"
+ColorPicker.Analogous: "類似色"
+ColorPicker.Triadic: "トライアド"
+ColorPicker.AllColors: "すべての色"
+ColorPicker.ColorRelations: "色の関係"
+ColorPicker.Recent: "最近使用した色"
+ColorPicker.Code: "コード"
+ColorPicker.Palette: "パレット: %{name}"
+
+# 階層リストビュー
+HierarchicalListView.Objects: "%{count} 個のオブジェクト"
+
+# レプリケーション
+Replication.LockedBy: "%{user} によってロックされています"
+Replication.Plus: "+%{count}"
+
+# ウィンドウタイトル (ui_common と共有)
+Window.Title.FileManager: "ファイルマネージャー"

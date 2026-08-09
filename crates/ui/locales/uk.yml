@@ -1,0 +1,167 @@
+# WGPUI Component Translations - uk
+
+# Dropdown
+Dropdown.placeholder: "Будь ласка, виберіть"
+
+# Modal
+Modal.ok: "Гаразд"
+Modal.cancel: "Скасувати"
+
+# Dock
+Dock.Unnamed: "Без назви"
+Dock.Close: "Закрити"
+Dock.Zoom In: "Збільшити"
+Dock.Zoom Out: "Зменшити"
+Dock.Collapse: "Згорнути"
+Dock.Expand: "Розгорнути"
+
+# Calendar
+Calendar.week.0: "Нд"
+Calendar.week.1: "Пн"
+Calendar.week.2: "Вт"
+Calendar.week.3: "Ср"
+Calendar.week.4: "Чт"
+Calendar.week.5: "Пт"
+Calendar.week.6: "Сб"
+Calendar.month.January: "Січень"
+Calendar.month.February: "Лютий"
+Calendar.month.March: "Березень"
+Calendar.month.April: "Квітень"
+Calendar.month.May: "Травень"
+Calendar.month.June: "Червень"
+Calendar.month.July: "Липень"
+Calendar.month.August: "Серпень"
+Calendar.month.September: "Вересень"
+Calendar.month.October: "Жовтень"
+Calendar.month.November: "Листопад"
+Calendar.month.December: "Грудень"
+
+# DatePicker
+DatePicker.placeholder: "Виберіть дату"
+
+# Input (search bar)
+Input.Replace: "Замінити"
+Input.Replace All: "Замінити всі"
+Input.Cut: "Вирізати"
+Input.Copy: "Копіювати"
+Input.Paste: "Вставити"
+Input.Select All: "Вибрати все"
+Input.Go to Definition: "Перейти до визначення"
+Input.Show Code Actions: "Показати дії з кодом"
+
+# List
+List.search_placeholder: "Пошук..."
+
+# Settings
+Settings.search_placeholder: "Пошук налаштувань..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "Середній кадр"
+Profiler.MaxFrame: "Макс. кадр"
+Profiler.PresentMode: "Режим представлення"
+Profiler.FramesCaptured: "Захоплено кадрів"
+Profiler.FullDrawFrames: "Повні кадри малювання"
+Profiler.FastPathFrames: "Кадри швидкого шляху"
+Profiler.AtlasHitRate: "Частота влучень атласу"
+Profiler.MainThreadCPU: "Головний потік (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "Фоновий потік %{index}"
+Profiler.DrawCallsPrimitives: "Виклики малювання та примітиви"
+Profiler.CPUGPUTimeline: "Часова шкала CPU/GPU"
+Profiler.CPUMemory: "Пам'ять CPU"
+Profiler.GPUMemory: "Пам'ять GPU"
+Profiler.LivePreview: "Попередній перегляд"
+Profiler.NodeDetails: "Деталі вузла"
+Profiler.Quads: "Чотирикутники"
+Profiler.Shadows: "Тіні"
+Profiler.MonoSprites: "Монохромні спрайти"
+Profiler.PolySprites: "Полігональні спрайти"
+Profiler.Paths: "Шляхи"
+Profiler.Underlines: "Підкреслення"
+Profiler.BackdropFilters: "Фільтри фону"
+Profiler.Surfaces: "Поверхні"
+Profiler.StartCapture: "Почати захоплення"
+Profiler.StopCapture: "Зупинити захоплення"
+Profiler.CaptureFrame: "Захопити кадр"
+Profiler.RefreshSnapshot: "Оновити знімок"
+Profiler.CaptureUITree: "Захопити дерево UI"
+Profiler.Duration: "Тривалість"
+Profiler.Depth: "Глибина"
+Profiler.Lane: "Доріжка"
+Profiler.Category: "Категорія"
+Profiler.Element: "Елемент"
+Profiler.Source: "Джерело"
+Profiler.Type: "Тип"
+Profiler.Display: "Відображення"
+Profiler.Visibility: "Видимість"
+Profiler.Background: "Фон"
+Profiler.TextColor: "Колір тексту"
+Profiler.ElementArena: "Арена елементів"
+Profiler.GlyphCache: "Кеш гліфів"
+Profiler.ShapedLineCache: "Кеш формованих рядків"
+Profiler.ImageCache: "Кеш зображень"
+Profiler.CaptureEngine: "Захопити двигун"
+Profiler.FixedBuffers: "Фіксовані буфери"
+Profiler.AtlasTextures: "Текстури атласу"
+Profiler.SurfaceRegistry: "Реєстр поверхонь"
+Profiler.Swapchain: "Ланцюг обміну"
+
+# Inspector
+Inspector.Title: "Інспектор"
+Inspector.RustStyles: "Стилі Rust"
+Inspector.JSONStyles: "Стилі JSON"
+Inspector.BoxModel: "Блокова модель"
+Inspector.Reset: "Скинути"
+Inspector.Width: "Ширина"
+Inspector.Height: "Висота"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "Відступ"
+Inspector.Border: "Межа"
+Inspector.Padding: "Заповнення"
+Inspector.Content: "Вміст"
+Inspector.NoElements: "Немає доступних елементів."
+Inspector.SelectElement: "Виберіть елемент, щоб переглянути його стилі."
+
+# Download Item
+DownloadItem.Downloading: "Завантаження"
+DownloadItem.Done: "Готово"
+DownloadItem.Error: "Помилка"
+DownloadItem.Complete: "Завершено"
+DownloadItem.OpenFolder: "Відкрити папку"
+DownloadItem.ETA: "Залишилося %{eta}"
+
+# Download Manager
+DownloadManager.Title: "Завантаження"
+DownloadManager.Active: "Завантаження — %{count} активних"
+DownloadManager.NoneYet: "Ще немає завантажень"
+
+# Code Editor
+CodeEditor.LineCol: "Ряд %{line}, Стовп %{col}"
+CodeEditor.TotalLines: "%{total_lines} рядків"
+CodeEditor.UTF8: "UTF-8"
+
+# Color Picker
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "Додатковий"
+ColorPicker.Analogous: "Аналогічний"
+ColorPicker.Triadic: "Тріадний"
+ColorPicker.AllColors: "Всі кольори"
+ColorPicker.ColorRelations: "Колірні відношення"
+ColorPicker.Recent: "Нещодавні"
+ColorPicker.Code: "Код"
+ColorPicker.Palette: "Палітра: %{name}"
+
+# Hierarchical List View
+HierarchicalListView.Objects: "%{count} об'єктів"
+
+# Replication
+Replication.LockedBy: "Заблоковано %{user}"
+Replication.Plus: "+%{count}"
+
+# Window Titles (shared with ui_common)
+Window.Title.FileManager: "Файловий менеджер"
