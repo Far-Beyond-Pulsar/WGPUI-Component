@@ -1,0 +1,167 @@
+# WGPUI Component Translations - ar
+
+# Dropdown
+Dropdown.placeholder: "يرجى التحديد"
+
+# Modal
+Modal.ok: "OK"
+Modal.cancel: "إلغاء"
+
+# Dock
+Dock.Unnamed: "بدون اسم"
+Dock.Close: "إغلاق"
+Dock.Zoom In: "تكبير"
+Dock.Zoom Out: "تصغير"
+Dock.Collapse: "طي"
+Dock.Expand: "توسيع"
+
+# Calendar
+Calendar.week.0: "أحد"
+Calendar.week.1: "اثنين"
+Calendar.week.2: "ثلاثاء"
+Calendar.week.3: "أربعاء"
+Calendar.week.4: "خميس"
+Calendar.week.5: "جمعة"
+Calendar.week.6: "سبت"
+Calendar.month.January: "يناير"
+Calendar.month.February: "فبراير"
+Calendar.month.March: "مارس"
+Calendar.month.April: "أبريل"
+Calendar.month.May: "مايو"
+Calendar.month.June: "يونيو"
+Calendar.month.July: "يوليو"
+Calendar.month.August: "أغسطس"
+Calendar.month.September: "سبتمبر"
+Calendar.month.October: "أكتوبر"
+Calendar.month.November: "نوفمبر"
+Calendar.month.December: "ديسمبر"
+
+# DatePicker
+DatePicker.placeholder: "حدد التاريخ"
+
+# Input (search bar)
+Input.Replace: "استبدال"
+Input.Replace All: "استبدال الكل"
+Input.Cut: "قص"
+Input.Copy: "نسخ"
+Input.Paste: "لصق"
+Input.Select All: "تحديد الكل"
+Input.Go to Definition: "الانتقال إلى التعريف"
+Input.Show Code Actions: "إظهار إجراءات الكود"
+
+# List
+List.search_placeholder: "بحث..."
+
+# Settings
+Settings.search_placeholder: "ابحث في الإعدادات..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "متوسط الإطار"
+Profiler.MaxFrame: "أقصى إطار"
+Profiler.PresentMode: "وضع العرض"
+Profiler.FramesCaptured: "الإطارات الملتقطة"
+Profiler.FullDrawFrames: "إطارات الرسم الكامل"
+Profiler.FastPathFrames: "إطارات المسار السريع"
+Profiler.AtlasHitRate: "معدل إصابة الأطلس"
+Profiler.MainThreadCPU: "الخيط الرئيسي (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "خيط الخلفية %{index}"
+Profiler.DrawCallsPrimitives: "استدعاءات الرسم والأوليات"
+Profiler.CPUGPUTimeline: "الخط الزمني لإرسال CPU/GPU"
+Profiler.CPUMemory: "ذاكرة CPU"
+Profiler.GPUMemory: "ذاكرة GPU"
+Profiler.LivePreview: "معاينة مباشرة"
+Profiler.NodeDetails: "تفاصيل العقدة"
+Profiler.Quads: "الأشكال الرباعية"
+Profiler.Shadows: "الظلال"
+Profiler.MonoSprites: "الرسومات أحادية اللون"
+Profiler.PolySprites: "الرسومات متعددة الألوان"
+Profiler.Paths: "المسارات"
+Profiler.Underlines: "التسطير"
+Profiler.BackdropFilters: "مرشحات الخلفية"
+Profiler.Surfaces: "السطوح"
+Profiler.StartCapture: "بدء الالتقاط"
+Profiler.StopCapture: "إيقاف الالتقاط"
+Profiler.CaptureFrame: "التقاط إطار"
+Profiler.RefreshSnapshot: "تحديث اللقطة"
+Profiler.CaptureUITree: "التقاط شجرة الواجهة"
+Profiler.Duration: "المدة"
+Profiler.Depth: "العمق"
+Profiler.Lane: "الممر"
+Profiler.Category: "الفئة"
+Profiler.Element: "العنصر"
+Profiler.Source: "المصدر"
+Profiler.Type: "النوع"
+Profiler.Display: "العرض"
+Profiler.Visibility: "الرؤية"
+Profiler.Background: "الخلفية"
+Profiler.TextColor: "لون النص"
+Profiler.ElementArena: "مساحة العناصر"
+Profiler.GlyphCache: "ذاكرة الحروف المؤقتة"
+Profiler.ShapedLineCache: "ذاكرة تشكيل الأسطر المؤقتة"
+Profiler.ImageCache: "ذاكرة الصور المؤقتة"
+Profiler.CaptureEngine: "محرك الالتقاط"
+Profiler.FixedBuffers: "المخازن الثابتة"
+Profiler.AtlasTextures: "أنسجة الأطلس"
+Profiler.SurfaceRegistry: "سجل الأسطح"
+Profiler.Swapchain: "سلسلة التبديل"
+
+# Inspector
+Inspector.Title: "المفتش"
+Inspector.RustStyles: "أنماط Rust"
+Inspector.JSONStyles: "أنماط JSON"
+Inspector.BoxModel: "نموذج الصندوق"
+Inspector.Reset: "إعادة تعيين"
+Inspector.Width: "العرض"
+Inspector.Height: "الارتفاع"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "الهامش"
+Inspector.Border: "الحدود"
+Inspector.Padding: "الحشوة"
+Inspector.Content: "المحتوى"
+Inspector.NoElements: "لا توجد عناصر متاحة."
+Inspector.SelectElement: "حدد عنصرًا لعرض أنماطه."
+
+# Download Item
+DownloadItem.Downloading: "جارٍ التنزيل"
+DownloadItem.Done: "تم"
+DownloadItem.Error: "خطأ"
+DownloadItem.Complete: "مكتمل"
+DownloadItem.OpenFolder: "فتح المجلد"
+DownloadItem.ETA: "ETA %{eta}"
+
+# Download Manager
+DownloadManager.Title: "التنزيلات"
+DownloadManager.Active: "التنزيلات — %{count} نشط"
+DownloadManager.NoneYet: "لا توجد تنزيلات بعد"
+
+# Code Editor
+CodeEditor.LineCol: "سطر %{line}، عمود %{col}"
+CodeEditor.TotalLines: "%{total_lines} سطر"
+CodeEditor.UTF8: "UTF-8"
+
+# Color Picker
+ColorPicker.R: "أحمر"
+ColorPicker.G: "أخضر"
+ColorPicker.B: "أزرق"
+ColorPicker.A: "ألفا"
+ColorPicker.Complementary: "مكمّل"
+ColorPicker.Analogous: "متشابه"
+ColorPicker.Triadic: "ثلاثي"
+ColorPicker.AllColors: "كل الألوان"
+ColorPicker.ColorRelations: "علاقات الألوان"
+ColorPicker.Recent: "الأخيرة"
+ColorPicker.Code: "الرمز"
+ColorPicker.Palette: "اللوحة: %{name}"
+
+# Hierarchical List View
+HierarchicalListView.Objects: "%{count} كائن"
+
+# Replication
+Replication.LockedBy: "مقفل بواسطة %{user}"
+Replication.Plus: "+%{count}"
+
+# Window Titles (shared with ui_common)
+Window.Title.FileManager: "مدير الملفات"

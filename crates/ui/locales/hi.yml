@@ -1,0 +1,167 @@
+# WGPUI Component Translations - hi
+
+# Dropdown
+Dropdown.placeholder: "कृपया चुनें"
+
+# Modal
+Modal.ok: "OK"
+Modal.cancel: "रद्द करें"
+
+# Dock
+Dock.Unnamed: "बिना नाम"
+Dock.Close: "बंद करें"
+Dock.Zoom In: "ज़ूम इन"
+Dock.Zoom Out: "ज़ूम आउट"
+Dock.Collapse: "संक्षिप्त करें"
+Dock.Expand: "विस्तार करें"
+
+# Calendar
+Calendar.week.0: "रवि"
+Calendar.week.1: "सोम"
+Calendar.week.2: "मंगल"
+Calendar.week.3: "बुध"
+Calendar.week.4: "गुरु"
+Calendar.week.5: "शुक्र"
+Calendar.week.6: "शनि"
+Calendar.month.January: "जनवरी"
+Calendar.month.February: "फ़रवरी"
+Calendar.month.March: "मार्च"
+Calendar.month.April: "अप्रैल"
+Calendar.month.May: "मई"
+Calendar.month.June: "जून"
+Calendar.month.July: "जुलाई"
+Calendar.month.August: "अगस्त"
+Calendar.month.September: "सितंबर"
+Calendar.month.October: "अक्टूबर"
+Calendar.month.November: "नवंबर"
+Calendar.month.December: "दिसंबर"
+
+# DatePicker
+DatePicker.placeholder: "तारीख़ चुनें"
+
+# Input (search bar)
+Input.Replace: "बदलें"
+Input.Replace All: "सभी बदलें"
+Input.Cut: "काटें"
+Input.Copy: "कॉपी"
+Input.Paste: "पेस्ट"
+Input.Select All: "सभी चुनें"
+Input.Go to Definition: "परिभाषा पर जाएँ"
+Input.Show Code Actions: "कोड एक्शन दिखाएँ"
+
+# List
+List.search_placeholder: "खोजें..."
+
+# Settings
+Settings.search_placeholder: "सेटिंग्स खोजें..."
+
+# Profiler
+Profiler.FPS: "FPS"
+Profiler.MeanFrame: "औसत फ़्रेम"
+Profiler.MaxFrame: "अधिकतम फ़्रेम"
+Profiler.PresentMode: "प्रेज़ेंट मोड"
+Profiler.FramesCaptured: "कैप्चर किए गए फ़्रेम"
+Profiler.FullDrawFrames: "फ़ुल-ड्रॉ फ़्रेम"
+Profiler.FastPathFrames: "फ़ास्ट-पाथ फ़्रेम"
+Profiler.AtlasHitRate: "एटलस हिट दर"
+Profiler.MainThreadCPU: "मुख्य थ्रेड (CPU)"
+Profiler.GPU: "GPU"
+Profiler.BackgroundThread: "बैकग्राउंड थ्रेड %{index}"
+Profiler.DrawCallsPrimitives: "ड्रॉ कॉल और प्रिमिटिव"
+Profiler.CPUGPUTimeline: "CPU/GPU सबमिट टाइमलाइन"
+Profiler.CPUMemory: "CPU मेमोरी"
+Profiler.GPUMemory: "GPU मेमोरी"
+Profiler.LivePreview: "लाइव प्रीव्यू"
+Profiler.NodeDetails: "नोड विवरण"
+Profiler.Quads: "क्वाड"
+Profiler.Shadows: "छायाएँ"
+Profiler.MonoSprites: "मोनो स्प्राइट"
+Profiler.PolySprites: "पॉली स्प्राइट"
+Profiler.Paths: "पाथ"
+Profiler.Underlines: "अंडरलाइन"
+Profiler.BackdropFilters: "बैकड्रॉप फ़िल्टर"
+Profiler.Surfaces: "सतह"
+Profiler.StartCapture: "कैप्चर शुरू करें"
+Profiler.StopCapture: "कैप्चर रोकें"
+Profiler.CaptureFrame: "फ़्रेम कैप्चर करें"
+Profiler.RefreshSnapshot: "स्नैपशॉट रीफ़्रेश करें"
+Profiler.CaptureUITree: "UI ट्री कैप्चर करें"
+Profiler.Duration: "अवधि"
+Profiler.Depth: "गहराई"
+Profiler.Lane: "लेन"
+Profiler.Category: "श्रेणी"
+Profiler.Element: "एलिमेंट"
+Profiler.Source: "स्रोत"
+Profiler.Type: "प्रकार"
+Profiler.Display: "डिस्प्ले"
+Profiler.Visibility: "दृश्यता"
+Profiler.Background: "पृष्ठभूमि"
+Profiler.TextColor: "टेक्स्ट रंग"
+Profiler.ElementArena: "एलिमेंट एरीना"
+Profiler.GlyphCache: "ग्लिफ़ कैश"
+Profiler.ShapedLineCache: "शेप्ड लाइन कैश"
+Profiler.ImageCache: "इमेज कैश"
+Profiler.CaptureEngine: "कैप्चर इंजन"
+Profiler.FixedBuffers: "फ़िक्स्ड बफ़र"
+Profiler.AtlasTextures: "एटलस टेक्सचर"
+Profiler.SurfaceRegistry: "सरफ़ेस रजिस्ट्री"
+Profiler.Swapchain: "स्वैपचेन"
+
+# Inspector
+Inspector.Title: "इंस्पेक्टर"
+Inspector.RustStyles: "Rust स्टाइल"
+Inspector.JSONStyles: "JSON स्टाइल"
+Inspector.BoxModel: "बॉक्स मॉडल"
+Inspector.Reset: "रीसेट करें"
+Inspector.Width: "चौड़ाई"
+Inspector.Height: "ऊँचाई"
+Inspector.X: "X"
+Inspector.Y: "Y"
+Inspector.Margin: "मार्जिन"
+Inspector.Border: "बॉर्डर"
+Inspector.Padding: "पैडिंग"
+Inspector.Content: "सामग्री"
+Inspector.NoElements: "कोई एलिमेंट उपलब्ध नहीं है।"
+Inspector.SelectElement: "इसकी स्टाइल देखने के लिए कोई एलिमेंट चुनें।"
+
+# Download Item
+DownloadItem.Downloading: "डाउनलोड हो रहा है"
+DownloadItem.Done: "पूर्ण"
+DownloadItem.Error: "त्रुटि"
+DownloadItem.Complete: "पूर्ण"
+DownloadItem.OpenFolder: "फ़ोल्डर खोलें"
+DownloadItem.ETA: "ETA %{eta}"
+
+# Download Manager
+DownloadManager.Title: "डाउनलोड"
+DownloadManager.Active: "डाउनलोड — %{count} सक्रिय"
+DownloadManager.NoneYet: "अभी कोई डाउनलोड नहीं"
+
+# Code Editor
+CodeEditor.LineCol: "Ln %{line}, Col %{col}"
+CodeEditor.TotalLines: "%{total_lines} पंक्तियाँ"
+CodeEditor.UTF8: "UTF-8"
+
+# Color Picker
+ColorPicker.R: "R"
+ColorPicker.G: "G"
+ColorPicker.B: "B"
+ColorPicker.A: "A"
+ColorPicker.Complementary: "पूरक"
+ColorPicker.Analogous: "समरूप"
+ColorPicker.Triadic: "त्रिकोणीय"
+ColorPicker.AllColors: "सभी रंग"
+ColorPicker.ColorRelations: "रंग संबंध"
+ColorPicker.Recent: "हाल के"
+ColorPicker.Code: "कोड"
+ColorPicker.Palette: "पैलेट: %{name}"
+
+# Hierarchical List View
+HierarchicalListView.Objects: "%{count} ऑब्जेक्ट"
+
+# Replication
+Replication.LockedBy: "%{user} द्वारा लॉक किया गया"
+Replication.Plus: "+%{count}"
+
+# Window Titles (shared with ui_common)
+Window.Title.FileManager: "फ़ाइल मैनेजर"
