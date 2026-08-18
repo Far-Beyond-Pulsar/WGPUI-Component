@@ -537,6 +537,29 @@ impl NodeContext {
 
 /// The AST Node of the rich text.
 #[derive(Debug, PartialEq)]
+/// GitHub-flavored markdown callout/alerts inside a blockquote
+/// (e.g. `> [!NOTE]`, `> [!WARNING]`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CalloutKind {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl CalloutKind {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Note => "NOTE",
+            Self::Tip => "TIP",
+            Self::Important => "IMPORTANT",
+            Self::Warning => "WARNING",
+            Self::Caution => "CAUTION",
+        }
+    }
+}
+
 pub(crate) enum Node {
     Root {
         children: Vec<Node>,
@@ -547,6 +570,10 @@ pub(crate) enum Node {
         children: Paragraph,
     },
     Blockquote {
+        children: Vec<Node>,
+    },
+    Callout {
+        kind: CalloutKind,
         children: Vec<Node>,
     },
     List {
@@ -632,6 +659,17 @@ impl Node {
                 }
             }
             Node::Blockquote { children } => {
+                let mut block_text = String::new();
+                for c in children.iter() {
+                    block_text.push_str(&c.selected_text(cx));
+                }
+
+                if !block_text.is_empty() {
+                    text.push_str(&block_text);
+                    text.push('\n');
+                }
+            }
+            Node::Callout { children, .. } => {
                 let mut block_text = String::new();
                 for c in children.iter() {
                     block_text.push_str(&c.selected_text(cx));
@@ -1242,6 +1280,55 @@ impl Node {
                     })
                 })
                 .into_any_element(),
+            Node::Callout { kind, children } => {
+                let color = match kind {
+                    CalloutKind::Note => cx.theme().accent,
+                    CalloutKind::Tip => cx.theme().success,
+                    CalloutKind::Important => cx.theme().warning,
+                    CalloutKind::Warning | CalloutKind::Caution => cx.theme().danger,
+                };
+                div()
+                    .id("callout")
+                    .w_full()
+                    .mb(mb)
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_4()
+                    .py_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(color.opacity(0.4))
+                    .bg(color.opacity(0.08))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(color)
+                                    .child(kind.label()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children({
+                                let children_len = children.len();
+                                children.iter_mut().enumerate().map(move |(index, c)| {
+                                    let is_last_child = is_root && index == children_len - 1;
+                                    c.render(None, false, is_last_child, node_cx, window, cx)
+                                })
+                            }),
+                    )
+                    .into_any_element()
+            }
             Node::List { children, ordered } => v_flex()
                 .id(if *ordered { "ol" } else { "ul" })
                 .mb(mb)
@@ -1376,6 +1463,23 @@ impl Node {
                     .map(|line| format!("> {}", line))
                     .collect::<Vec<_>>()
                     .join("\n")
+            }
+            Node::Callout { kind, children } => {
+                let content = children
+                    .iter()
+                    .map(|child| child.to_markdown())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                format!(
+                    "> [{}]\n{}",
+                    kind.label(),
+                    content
+                        .lines()
+                        .map(|line| format!("> {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
             }
             Node::List { children, ordered } => children
                 .iter()

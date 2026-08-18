@@ -412,6 +412,69 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
     text
 }
 
+/// Detect whether a blockquote's first paragraph is a GitHub callout (e.g.
+/// `> [!WARNING]`). Returns the callout kind and any text on that first line
+/// that follows the `]` (usually empty).
+fn callout_of(children: &[Node]) -> Option<(crate::text::node::CalloutKind, String)> {
+    let first = children.first()?;
+    let mdast::Node::Paragraph(paragraph) = first else {
+        return None;
+    };
+    let text = paragraph_plain_text(paragraph);
+    callout_kind_and_remainder(&text)
+}
+
+fn callout_kind_and_remainder(
+    text: &str,
+) -> Option<(crate::text::node::CalloutKind, String)> {
+    let trimmed = text.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+
+    let kinds = [
+        ("note", crate::text::node::CalloutKind::Note),
+        ("tip", crate::text::node::CalloutKind::Tip),
+        ("important", crate::text::node::CalloutKind::Important),
+        ("warning", crate::text::node::CalloutKind::Warning),
+        ("caution", crate::text::node::CalloutKind::Caution),
+    ];
+
+    for (keyword, kind) in kinds {
+        let token = format!("[!{}]", keyword);
+        if lower.starts_with(&token) {
+            let rest = trimmed[token.len()..].trim_start();
+            return Some((kind, rest.to_string()));
+        }
+    }
+    None
+}
+
+/// Concatenate the plain text of a paragraph's inline children (enough to
+/// detect a leading callout token).
+fn paragraph_plain_text(paragraph: &mdast::Paragraph) -> String {
+    let mut out = String::new();
+    for child in &paragraph.children {
+        match child {
+            mdast::Node::Text(t) => out.push_str(&t.value),
+            mdast::Node::InlineCode(c) => out.push_str(&c.value),
+            mdast::Node::Strong(s) | mdast::Node::Emphasis(s) => {
+                for c in &s.children {
+                    out.push_str(&paragraph_plain_text_of_node(c));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn paragraph_plain_text_of_node(node: &mdast::Node) -> String {
+    match node {
+        mdast::Node::Text(t) => t.value.clone(),
+        mdast::Node::InlineCode(c) => c.value.clone(),
+        _ => String::new(),
+    }
+}
+
 fn ast_to_node(
     value: mdast::Node,
     style: &TextViewStyle,
@@ -436,12 +499,28 @@ fn ast_to_node(
             node::Node::Paragraph(paragraph)
         }
         Node::Blockquote(val) => {
-            let children = val
-                .children
-                .into_iter()
-                .map(|c| ast_to_node(c, style, cx, highlight_theme))
-                .collect();
-            node::Node::Blockquote { children }
+            // GitHub-flavored callout/alerts like `> [!NOTE]`.
+            if let Some((kind, remainder)) = callout_of(&val.children) {
+                let mut children: Vec<node::Node> = Vec::new();
+                if !remainder.is_empty() {
+                    children.push(node::Node::Paragraph(node::Paragraph::new(remainder)));
+                }
+                children.extend(
+                    val.children
+                        .into_iter()
+                        .skip(1)
+                        .map(|c| ast_to_node(c, style, cx, highlight_theme))
+                        .filter(|n| !matches!(n, node::Node::Unknown)),
+                );
+                node::Node::Callout { kind, children }
+            } else {
+                let children = val
+                    .children
+                    .into_iter()
+                    .map(|c| ast_to_node(c, style, cx, highlight_theme))
+                    .collect();
+                node::Node::Blockquote { children }
+            }
         }
         Node::List(list) => {
             let children = list
