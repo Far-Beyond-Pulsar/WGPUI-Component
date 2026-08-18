@@ -865,7 +865,7 @@ impl Paragraph {
                     img(image_node.url.as_ref())
                         .id(ix)
                         .object_fit(ObjectFit::Contain)
-                        .w_full()
+                        .max_w_full()
                         .when_some(image_node.width, |this, width| this.w(width))
                         .when_some(image_node.height, |this, height| this.h(height))
                         .when_some(image_node.link.clone(), |this, link| {
