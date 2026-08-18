@@ -535,11 +535,9 @@ impl NodeContext {
     }
 }
 
-/// The AST Node of the rich text.
-#[derive(Debug, PartialEq)]
 /// GitHub-flavored markdown callout/alerts inside a blockquote
 /// (e.g. `> [!NOTE]`, `> [!WARNING]`).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CalloutKind {
     Note,
     Tip,
@@ -560,6 +558,8 @@ impl CalloutKind {
     }
 }
 
+/// The AST Node of the rich text.
+#[derive(Debug, PartialEq)]
 pub(crate) enum Node {
     Root {
         children: Vec<Node>,

@@ -456,7 +456,12 @@ fn paragraph_plain_text(paragraph: &mdast::Paragraph) -> String {
         match child {
             mdast::Node::Text(t) => out.push_str(&t.value),
             mdast::Node::InlineCode(c) => out.push_str(&c.value),
-            mdast::Node::Strong(s) | mdast::Node::Emphasis(s) => {
+            mdast::Node::Strong(s) => {
+                for c in &s.children {
+                    out.push_str(&paragraph_plain_text_of_node(c));
+                }
+            }
+            mdast::Node::Emphasis(s) => {
                 for c in &s.children {
                     out.push_str(&paragraph_plain_text_of_node(c));
                 }
