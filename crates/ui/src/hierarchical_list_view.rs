@@ -275,6 +275,12 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                             .when_some(root_drop_zone, |this, (label, on_drop_arc)| {
                                 this.child(
                                     DropArea::<Item::DragPayload>::new("hierarchy-root-drop")
+                                        // DropArea defaults to `size_full`, which would
+                                        // claim 100% of this definite-height column and
+                                        // squeeze the virtual list to half the panel once
+                                        // flex shrink runs. Keep it content-sized.
+                                        .h_auto()
+                                        .flex_shrink_0()
                                         .on_drop({
                                             move |payload, _, _| {
                                                 (on_drop_arc)(payload.clone());
@@ -430,6 +436,8 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                     .when_some(root_drop_zone, |this, (label, on_drop_arc)| {
                         this.child(
                             DropArea::<Item::DragPayload>::new("hierarchy-widget-root-drop")
+                                .h_auto()
+                                .flex_shrink_0()
                                 .on_drop({
                                     move |payload, _, _| {
                                         (on_drop_arc)(payload.clone());
