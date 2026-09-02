@@ -9,7 +9,7 @@ use gpui::{
     Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement as _, StyleRefinement,
     Styled, Window,
 };
-use gpui::{h_list, px, InteractiveElement, ScrollHandle};
+use gpui::{px, InteractiveElement, ScrollHandle};
 
 use super::{Tab, TabVariant};
 
@@ -180,6 +180,33 @@ impl RenderOnce for TabBar {
         let item_labels = self.item_labels.clone();
         let bar_height = variant.height(size);
 
+        // Tab bars contain only a handful of controls. Keep their labels in a
+        // normal natural-width row instead of routing them through `h_list`.
+        // `h_list` computes its viewport from the current available width and
+        // can end up with a zero-width paint mask when this bar is nested in a
+        // resized inspector/flex layout. The bar background then remains
+        // visible while every tab is clipped away. This viewport gives the
+        // row its intrinsic width and lets the viewport do the horizontal
+        // scrolling when the labels do not fit.
+        let tab_elements = (0..tab_count)
+            .filter_map(|ix| {
+                let build_tab = build_tab.as_ref()?;
+                let mut tab = build_tab(ix, window, cx);
+                tab = tab
+                    .id(ix)
+                    .mt(tab_item_top_offset)
+                    .with_variant(variant)
+                    .with_size(size)
+                    .when_some(selected_index, |this, sel_ix| {
+                        this.selected(sel_ix == ix)
+                    })
+                    .when_some(on_click.clone(), move |this, cb| {
+                        this.on_click(move |_, w, c| cb(&ix, w, c))
+                    });
+                Some(tab.into_any_element())
+            })
+            .collect::<Vec<_>>();
+
         self.base
             .group("tab-bar")
             .on_action({
@@ -222,37 +249,14 @@ impl RenderOnce for TabBar {
             .refine_style(&self.style)
             .when_some(self.prefix, |this, prefix| this.child(prefix))
             .child(
-                h_list(
-                    "tabs",
-                    tab_count,
-                    move |range, window: &mut Window, cx: &mut App| {
-                        let Some(build_tab) = build_tab.as_ref() else {
-                            return Vec::new();
-                        };
-                        range
-                            .map(|ix| {
-                                let mut tab = build_tab(ix, window, cx);
-                                tab = tab
-                                    .id(ix)
-                                    .mt(tab_item_top_offset)
-                                    .with_variant(variant)
-                                    .with_size(size)
-                                    .when_some(selected_index, |this, sel_ix| {
-                                        this.selected(sel_ix == ix)
-                                    })
-                                    .when_some(on_click.clone(), move |this, cb| {
-                                        this.on_click(move |_, w, c| cb(&ix, w, c))
-                                    });
-                                tab
-                            })
-                            .collect::<Vec<_>>()
-                    },
-                )
-                .flex_1()
-                .w_full()
-                .h(bar_height)
-                .min_h(bar_height)
-                .flex_shrink_0(),
+                h_flex()
+                    .id("tabs")
+                    .flex_1()
+                    .min_w(px(0.))
+                    .h(bar_height)
+                    .overflow_x_scroll()
+                    .flex_nowrap()
+                    .children(tab_elements),
             )
             .when(self.suffix.is_some() || self.menu, |this| {
                 this.child(self.last_empty_space)

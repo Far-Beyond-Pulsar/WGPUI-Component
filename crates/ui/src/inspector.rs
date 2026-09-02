@@ -501,6 +501,7 @@ fn render_inspector(
                 .h(px(36.))
                 .min_h(px(36.))
                 .flex_shrink_0()
+                .overflow_hidden()
                 .overflow_x_scroll()
                 .child(render_inspector_tabs(inspector, window, cx)),
         )
@@ -675,6 +676,7 @@ fn render_tab_content(
     if owns_own_scroll {
         div()
             .flex_1()
+            .w_full()
             .min_h(px(0.))
             .min_w(px(0.))
             .child(content)
@@ -682,6 +684,7 @@ fn render_tab_content(
     } else {
         div()
             .flex_1()
+            .w_full()
             .min_h(px(0.))
             .min_w(px(0.))
             .overflow_y_scroll()

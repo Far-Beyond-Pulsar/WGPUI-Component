@@ -574,6 +574,7 @@ impl ProfilerPanel {
         v_flex()
             .id("profiler-panel")
             .size_full()
+            .w_full()
             .min_w(px(0.))
             // Keep the navigation in a fixed, non-flexing slot. The tab bar
             // itself contains an h_list, whose intrinsic width can otherwise
@@ -586,6 +587,7 @@ impl ProfilerPanel {
                     .h(px(36.))
                     .min_h(px(36.))
                     .flex_shrink_0()
+                    .overflow_hidden()
                     .overflow_x_scroll()
                     .child(self.render_section_tabs(cx)),
             )
@@ -593,6 +595,7 @@ impl ProfilerPanel {
                 div()
                     .id("profiler-section-body")
                     .flex_1()
+                    .w_full()
                     .min_h(px(0.))
                     .min_w(px(0.))
                     .when(self.section != ProfilerSection::FlameChart, |d| {
