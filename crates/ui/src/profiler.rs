@@ -2315,7 +2315,14 @@ impl ProfilerPanel {
             .id("deep-capture-section")
             .gap_3()
             .p_2()
-            .size_full()
+            // This section lives inside the profiler body's vertical scroll
+            // viewport. Do not force the section to the viewport height: a
+            // selected draw call adds the details table and preview below the
+            // list, and a fixed-height flex column would shrink the list and
+            // details to make the preview fit instead of letting the body
+            // scroll.
+            .w_full()
+            .min_w(px(0.))
             .child(header);
 
         if let Some(err) = self.deep_capture_error.clone() {
@@ -2351,6 +2358,8 @@ impl ProfilerPanel {
 
         root = root.child(
             h_flex()
+                .w_full()
+                .flex_shrink_0()
                 .gap_2()
                 .items_center()
                 .child(
@@ -2383,7 +2392,9 @@ impl ProfilerPanel {
         root = root.child(
             div()
                 .id("deep-capture-list")
+                .w_full()
                 .max_h(px(220.))
+                .flex_shrink_0()
                 .overflow_y_scroll()
                 .border_1()
                 .border_color(cx.theme().border)
@@ -2394,10 +2405,20 @@ impl ProfilerPanel {
         );
 
         if let Some(call) = current_call {
-            root = root.child(render_deep_capture_call_details(&call, cx));
+            root = root.child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .child(render_deep_capture_call_details(&call, cx)),
+            );
         }
 
-        root = root.child(self.render_deep_capture_preview_panel(cx));
+        root = root.child(
+            div()
+                .w_full()
+                .flex_shrink_0()
+                .child(self.render_deep_capture_preview_panel(cx)),
+        );
 
         root.into_any_element()
     }
