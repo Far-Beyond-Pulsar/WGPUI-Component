@@ -2374,7 +2374,7 @@ dependencies = [
 [[package]]
 name = "gpui-ce"
 version = "1.0.0"
-source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=fd087f643f749e11f29ef53307b2fdcd83c1202a#fd087f643f749e11f29ef53307b2fdcd83c1202a"
+source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=e4a3848d3160cf558ae09252296bc13b3dfd6fc5#e4a3848d3160cf558ae09252296bc13b3dfd6fc5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2450,7 +2450,6 @@ dependencies = [
  "web-time",
  "wgpu",
  "winit",
- "x11-dl",
 ]
 
 [[package]]
