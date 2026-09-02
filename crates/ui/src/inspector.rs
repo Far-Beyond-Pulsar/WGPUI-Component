@@ -614,6 +614,11 @@ fn render_inspector_tabs(
 
     TabBar::new("inspector-tabs")
         .segmented()
+        // The inspector is a vertical flex layout. Keep this chrome out of
+        // flex shrinking so a large/empty tab body can never collapse the
+        // navigation bar to zero height.
+        .flex_shrink_0()
+        .min_h(px(36.))
         .selected_index(active_idx)
         .on_click({
             let entity = cx.entity().clone();

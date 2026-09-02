@@ -610,6 +610,11 @@ impl ProfilerPanel {
 
         TabBar::new("profiler-sections")
             .segmented()
+            // This is the second, nested tab bar in the inspector. Reserve
+            // its row even when the selected profiler view has no data or
+            // the panel is temporarily narrower than its tab labels.
+            .flex_shrink_0()
+            .min_h(px(36.))
             .selected_index(active_idx)
             .on_click({
                 let entity = cx.entity().clone();
