@@ -178,6 +178,7 @@ impl RenderOnce for TabBar {
         let selected_index = self.selected_index;
         let tab_item_top_offset = self.tab_item_top_offset;
         let item_labels = self.item_labels.clone();
+        let bar_height = variant.height(size);
 
         self.base
             .group("tab-bar")
@@ -193,6 +194,9 @@ impl RenderOnce for TabBar {
             .flex()
             .items_center()
             .w_full()
+            .h(bar_height)
+            .min_h(bar_height)
+            .flex_shrink_0()
             .bg(bg)
             .text_color(cx.theme().tab_foreground)
             .when(
@@ -246,7 +250,9 @@ impl RenderOnce for TabBar {
                 )
                 .flex_1()
                 .w_full()
-                .h(variant.height(size)),
+                .h(bar_height)
+                .min_h(bar_height)
+                .flex_shrink_0(),
             )
             .when(self.suffix.is_some() || self.menu, |this| {
                 this.child(self.last_empty_space)

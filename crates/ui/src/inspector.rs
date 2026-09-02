@@ -494,7 +494,16 @@ fn render_inspector(
         .text_color(cx.theme().foreground)
         .child(render_inspector_resize_handle(inspector, cx))
         .child(render_inspector_title_bar(inspector, window, cx))
-        .child(render_inspector_tabs(inspector, window, cx))
+        .child(
+            div()
+                .id("inspector-tabs-slot")
+                .w_full()
+                .h(px(36.))
+                .min_h(px(36.))
+                .flex_shrink_0()
+                .overflow_x_scroll()
+                .child(render_inspector_tabs(inspector, window, cx)),
+        )
         .child(render_tab_content(tab, inspector, window, cx))
         .into_any_element()
 }
@@ -664,10 +673,17 @@ fn render_tab_content(
     };
 
     if owns_own_scroll {
-        div().flex_1().child(content).into_any_element()
+        div()
+            .flex_1()
+            .min_h(px(0.))
+            .min_w(px(0.))
+            .child(content)
+            .into_any_element()
     } else {
         div()
             .flex_1()
+            .min_h(px(0.))
+            .min_w(px(0.))
             .overflow_y_scroll()
             .child(content)
             .into_any_element()

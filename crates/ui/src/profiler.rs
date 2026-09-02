@@ -574,12 +574,27 @@ impl ProfilerPanel {
         v_flex()
             .id("profiler-panel")
             .size_full()
-            .child(self.render_section_tabs(cx))
+            .min_w(px(0.))
+            // Keep the navigation in a fixed, non-flexing slot. The tab bar
+            // itself contains an h_list, whose intrinsic width can otherwise
+            // make the parent resolve to zero while a narrow inspector is
+            // laying out an empty/scrolling profiler view.
+            .child(
+                div()
+                    .id("profiler-section-tabs-slot")
+                    .w_full()
+                    .h(px(36.))
+                    .min_h(px(36.))
+                    .flex_shrink_0()
+                    .overflow_x_scroll()
+                    .child(self.render_section_tabs(cx)),
+            )
             .child(
                 div()
                     .id("profiler-section-body")
                     .flex_1()
                     .min_h(px(0.))
+                    .min_w(px(0.))
                     .when(self.section != ProfilerSection::FlameChart, |d| {
                         d.overflow_y_scroll()
                     })
@@ -884,7 +899,7 @@ impl ProfilerPanel {
         let lanes = if cache_hit {
             self.flame_lane_cache.as_ref().unwrap().lanes.clone()
         } else {
-            let lanes = Rc::new(build_flame_lanes(frame));
+            let lanes = Rc::new(build_flame_lanes_for_capture(frame, capture));
             self.flame_lane_cache = Some(FlameLaneCache {
                 capture_generation: self.capture_generation,
                 frame_index,
@@ -3183,9 +3198,9 @@ struct FlameBar {
 }
 
 impl FlameBar {
-    fn from_cpu(span: &gpui::CpuSpan) -> Self {
+    fn from_cpu_with_label(span: &gpui::CpuSpan, label: SharedString) -> Self {
         Self {
-            label: span_name_label(span.name),
+            label,
             depth: span.depth,
             start_ns: span.start_ns,
             duration_ns: span.duration_ns,
@@ -3199,9 +3214,9 @@ impl FlameBar {
         }
     }
 
-    fn from_gpu(span: &gpui::GpuSpan) -> Self {
+    fn from_gpu_with_label(span: &gpui::GpuSpan, label: SharedString) -> Self {
         Self {
-            label: span_name_label(span.name),
+            label,
             depth: 0,
             start_ns: span.start_ns,
             duration_ns: span.duration_ns,
@@ -3234,14 +3249,28 @@ fn span_name_label(name: gpui::SpanName) -> SharedString {
     }
 }
 
-fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
+fn span_name_label_resolved(capture: &gpui::Capture, name: gpui::SpanName) -> SharedString {
+    capture
+        .span_name(name)
+        .map(SharedString::from)
+        .unwrap_or_else(|| span_name_label(name))
+}
+
+fn build_flame_lanes_with_resolver<F>(frame: &gpui::FrameCapture, resolve: F) -> Vec<FlameLane>
+where
+    F: Fn(gpui::SpanName) -> SharedString + Copy,
+{
     let mut lanes = Vec::new();
 
     if !frame.cpu_spans.is_empty() {
         let max_depth = frame.cpu_spans.iter().map(|s| s.depth).max().unwrap_or(0);
         lanes.push(FlameLane {
             label: "Main Thread (CPU)".into(),
-            bars: frame.cpu_spans.iter().map(FlameBar::from_cpu).collect(),
+            bars: frame
+                .cpu_spans
+                .iter()
+                .map(|span| FlameBar::from_cpu_with_label(span, resolve(span.name)))
+                .collect(),
             max_depth,
         });
     }
@@ -3261,7 +3290,10 @@ fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
         let max_depth = spans.iter().map(|s| s.depth).max().unwrap_or(0);
         lanes.push(FlameLane {
             label: format!("Background Thread {}", index + 1).into(),
-            bars: spans.iter().map(FlameBar::from_cpu).collect(),
+            bars: spans
+                .iter()
+                .map(|span| FlameBar::from_cpu_with_label(span, resolve(span.name)))
+                .collect(),
             max_depth,
         });
     }
@@ -3269,12 +3301,27 @@ fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
     if !frame.gpu_spans.is_empty() {
         lanes.push(FlameLane {
             label: "GPU".into(),
-            bars: frame.gpu_spans.iter().map(FlameBar::from_gpu).collect(),
+            bars: frame
+                .gpu_spans
+                .iter()
+                .map(|span| FlameBar::from_gpu_with_label(span, resolve(span.name)))
+                .collect(),
             max_depth: 0,
         });
     }
 
     lanes
+}
+
+fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
+    build_flame_lanes_with_resolver(frame, span_name_label)
+}
+
+fn build_flame_lanes_for_capture(
+    frame: &gpui::FrameCapture,
+    capture: &gpui::Capture,
+) -> Vec<FlameLane> {
+    build_flame_lanes_with_resolver(frame, |name| span_name_label_resolved(capture, name))
 }
 
 fn diagnostic_details(event: &gpui::DiagnosticEvent) -> String {
