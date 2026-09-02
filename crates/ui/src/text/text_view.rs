@@ -214,9 +214,7 @@ enum InitState {
         highlight_theme: Arc<HighlightTheme>,
     },
     #[cfg(not(target_family = "wasm"))]
-    Initialized {
-        tx: smol::channel::Sender<Update>,
-    },
+    Initialized { tx: smol::channel::Sender<Update> },
 }
 
 pub(crate) struct TextViewState {

@@ -49,7 +49,6 @@ impl Panel for StackPanel {
 
         state
     }
-
 }
 
 impl StackPanel {

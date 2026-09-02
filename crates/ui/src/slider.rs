@@ -5,7 +5,8 @@ use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, Along, App, AppContext as _, Axis, Background,
     Bounds, Context, Corners, DragMoveEvent, Empty, Entity, EntityId, EventEmitter, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
-    Point, Render, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, TextColor, Window,
+    Point, Render, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, TextColor,
+    Window,
 };
 
 #[derive(Clone)]

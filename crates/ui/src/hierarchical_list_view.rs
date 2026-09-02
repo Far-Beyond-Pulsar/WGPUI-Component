@@ -13,9 +13,6 @@
 //! - Optional panel layout (full-page) vs widget layout (compact)
 //! - Custom item rendering with icons, colors, and extra content
 
-use gpui::{prelude::*, *};
-use std::rc::Rc;
-use std::sync::Arc;
 use crate::{
     button::{Button, ButtonVariants as _},
     draggable::{DragHandlePosition, Draggable},
@@ -24,8 +21,12 @@ use crate::{
     input::{InputState, TextInput},
     menu::{context_menu::ContextMenu, popup_menu::PopupMenu},
     scroll::{Scrollbar, ScrollbarState},
-    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt, VirtualListScrollHandle,
+    v_flex, v_virtual_list, ActiveTheme, Icon, IconName, Sizable, StyledExt,
+    VirtualListScrollHandle,
 };
+use gpui::{prelude::*, *};
+use std::rc::Rc;
+use std::sync::Arc;
 
 /// Trait for items that can be displayed in a hierarchical tree
 pub trait HierarchyItem: Clone + 'static {
@@ -138,7 +139,11 @@ pub struct HierarchicalTreeView<Item: HierarchyItem> {
 
 impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
     pub fn new(config: HierarchyConfig<Item>) -> Self {
-        Self { config, scroll_handle: VirtualListScrollHandle::new(), scrollbar_state: ScrollbarState::default() }
+        Self {
+            config,
+            scroll_handle: VirtualListScrollHandle::new(),
+            scrollbar_state: ScrollbarState::default(),
+        }
     }
 
     fn get_root_item_indices(&self) -> Vec<usize> {
@@ -521,7 +526,10 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                         .left_0()
                                         .right_0()
                                         .bottom_0()
-                                        .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
+                                        .child(Scrollbar::vertical(
+                                            &scrollbar_state,
+                                            &scroll_handle,
+                                        )),
                                 ),
                         )
                     }),

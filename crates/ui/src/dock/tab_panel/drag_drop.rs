@@ -241,13 +241,7 @@ impl TabPanel {
             let panel = panel.clone();
             move |window, cx| {
                 let dock = cx.new(|cx| {
-                    DockArea::new_with_channel(
-                        "detached-dock",
-                        Some(1),
-                        source_channel,
-                        window,
-                        cx,
-                    )
+                    DockArea::new_with_channel("detached-dock", Some(1), source_channel, window, cx)
                 });
                 let weak = dock.downgrade();
                 let tp = cx.new(|cx| {

@@ -88,5 +88,3 @@ impl BlinkCursor {
         .detach();
     }
 }
-
-

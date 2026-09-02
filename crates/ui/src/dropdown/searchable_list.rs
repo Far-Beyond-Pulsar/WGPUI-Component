@@ -253,7 +253,9 @@ impl<T: Clone + 'static> Render for SearchableList<T> {
                                                     Icon::new(IconName::Lock)
                                                         .size(px(11.0))
                                                         .text_color(
-                                                            cx.theme().muted_foreground.opacity(0.7),
+                                                            cx.theme()
+                                                                .muted_foreground
+                                                                .opacity(0.7),
                                                         ),
                                                 )
                                             }),

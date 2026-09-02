@@ -4,8 +4,8 @@ use gpui::{point, px, size, App, Font, LineFragment, Pixels, Point, ShapedLine, 
 use ropey::Rope;
 use smallvec::SmallVec;
 
-use crate::input::RopeExt;
 use crate::input::rope_ext::Point as TSPoint;
+use crate::input::RopeExt;
 
 /// A line with soft wrapped lines info.
 #[derive(Debug, Clone)]
@@ -130,9 +130,9 @@ impl TextWrapper {
         new_text: &Rope,
         cx: &mut App,
     ) {
-        let mut line_wrapper = cx
-            .text_system()
-            .line_wrapper(self.font.clone(), self.font_size, self.letter_spacing);
+        let mut line_wrapper =
+            cx.text_system()
+                .line_wrapper(self.font.clone(), self.font_size, self.letter_spacing);
         self._update(
             changed_text,
             range,

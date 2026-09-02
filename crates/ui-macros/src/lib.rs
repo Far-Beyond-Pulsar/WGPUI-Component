@@ -22,19 +22,31 @@ pub fn generate_icon_enum(input: TokenStream) -> TokenStream {
     let lit = parse_macro_input!(input as syn::LitStr);
     let icons_dir = std::path::Path::new(
         &std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"),
-    ).join(lit.value());
+    )
+    .join(lit.value());
 
     let mut entries: Vec<(String, String)> = std::fs::read_dir(&icons_dir)
-        .unwrap_or_else(|e| panic!("generate_icon_enum: cannot read '{}': {}", icons_dir.display(), e))
+        .unwrap_or_else(|e| {
+            panic!(
+                "generate_icon_enum: cannot read '{}': {}",
+                icons_dir.display(),
+                e
+            )
+        })
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.ends_with(".svg") { Some((to_pascal(&name), format!("icons/{name}"))) } else { None }
+            if name.ends_with(".svg") {
+                Some((to_pascal(&name), format!("icons/{name}")))
+            } else {
+                None
+            }
         })
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let variants: Vec<proc_macro2::Ident> = entries.iter()
+    let variants: Vec<proc_macro2::Ident> = entries
+        .iter()
         .map(|(n, _)| proc_macro2::Ident::new(n, proc_macro2::Span::call_site()))
         .collect();
     let paths: Vec<&str> = entries.iter().map(|(_, p)| p.as_str()).collect();
@@ -51,8 +63,16 @@ pub fn generate_icon_enum(input: TokenStream) -> TokenStream {
 }
 
 fn to_pascal(filename: &str) -> String {
-    filename.strip_suffix(".svg").unwrap_or(filename).to_lowercase()
+    filename
+        .strip_suffix(".svg")
+        .unwrap_or(filename)
+        .to_lowercase()
         .split('-')
-        .map(|p| { let mut c = p.chars(); c.next().map(|f| f.to_uppercase().to_string() + c.as_str()).unwrap_or_default() })
+        .map(|p| {
+            let mut c = p.chars();
+            c.next()
+                .map(|f| f.to_uppercase().to_string() + c.as_str())
+                .unwrap_or_default()
+        })
         .collect()
 }

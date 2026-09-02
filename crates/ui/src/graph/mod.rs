@@ -4,11 +4,11 @@
 //! types, and the sub-graph / macro system.  All types are pure data — they
 //! have no dependency on any engine crate.
 
-pub mod type_system;
 pub mod prefab;
+pub mod type_system;
 
-pub use type_system::*;
 pub use prefab::{BlueprintClassRef, ComponentInstance as PrefabComponentInstance, PrefabAsset};
+pub use type_system::*;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -913,11 +913,7 @@ impl SubGraphDefinition {
     }
 
     pub fn create_instance(&self, instance_id: &str, position: Position) -> NodeInstance {
-        let mut node = NodeInstance::new(
-            instance_id,
-            &format!("macro:{}", self.id),
-            position,
-        );
+        let mut node = NodeInstance::new(instance_id, &format!("macro:{}", self.id), position);
 
         node.set_property("macro_id", serde_json::json!(self.id));
 

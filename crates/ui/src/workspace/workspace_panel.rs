@@ -37,7 +37,6 @@ impl WorkspacePanel {
         self.closable = closable;
         self
     }
-
 }
 
 impl Panel for WorkspacePanel {

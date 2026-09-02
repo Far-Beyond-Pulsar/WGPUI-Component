@@ -28,11 +28,9 @@ pub use editor_scrollbar::{EditorScrollbar, EditorScrollbarDrag, EditorScrollbar
 pub use line_cache::{CachedLineLayout, OptimizedLineCache};
 pub use lsp::*;
 pub use mask_pattern::MaskPattern;
-pub use minimap::{
-    MinimapDrag, MinimapLineCache, MinimapSpan, MinimapState, MINIMAP_WIDTH,
-};
 #[cfg(not(target_family = "wasm"))]
 pub use minimap::Minimap;
+pub use minimap::{MinimapDrag, MinimapLineCache, MinimapSpan, MinimapState, MINIMAP_WIDTH};
 pub use mode::TabSize;
 pub use number_input::{NumberInput, NumberInputEvent, StepAction};
 pub use otp_input::*;

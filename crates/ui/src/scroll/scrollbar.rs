@@ -1,6 +1,10 @@
-
-#[cfg(target_family = "wasm")] async fn sleep(d: std::time::Duration) { /* no-op on WASM */ }
-#[cfg(not(target_family = "wasm"))] async fn sleep(d: std::time::Duration) { gpui::Timer::after(d).await; }
+#[cfg(target_family = "wasm")]
+async fn sleep(d: std::time::Duration) { /* no-op on WASM */
+}
+#[cfg(not(target_family = "wasm"))]
+async fn sleep(d: std::time::Duration) {
+    gpui::Timer::after(d).await;
+}
 use std::{
     cell::Cell,
     ops::Deref,
@@ -947,5 +951,3 @@ impl Element for Scrollbar {
         );
     }
 }
-
-

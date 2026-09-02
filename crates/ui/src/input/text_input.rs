@@ -227,9 +227,9 @@ impl TextInput {
 
                     if is_code_editor {
                         use super::editor_scrollbar::EditorScrollbar;
-                        use super::minimap::MINIMAP_WIDTH;
                         #[cfg(not(target_family = "wasm"))]
                         use super::minimap::Minimap;
+                        use super::minimap::MINIMAP_WIDTH;
                         use ropey::LineType;
 
                         let total_lines = state.text.len_lines(LineType::LF);

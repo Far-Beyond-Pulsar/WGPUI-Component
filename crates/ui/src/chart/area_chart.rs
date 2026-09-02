@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{px, App, Background, Bounds, Hsla, Pixels, SharedString, TextAlign, Window};
-use ui_macros::IntoPlot;
 use num_traits::{FromPrimitive, Num, ToPrimitive};
+use ui_macros::IntoPlot;
 
 use crate::{
     plot::{

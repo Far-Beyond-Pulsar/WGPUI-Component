@@ -23,12 +23,14 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct DrawerInit;
-#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for DrawerInit {
+#[cfg(not(target_family = "wasm"))]
+impl crate::registry::UiComponentInit for DrawerInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(DrawerInit);
+#[cfg(not(target_family = "wasm"))]
+crate::register_ui_component!(DrawerInit);
 
 #[derive(IntoElement)]
 pub struct Drawer {

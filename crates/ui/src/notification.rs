@@ -261,7 +261,9 @@ impl Notification {
 
         // Dismiss the notification after 0.15s to show the animation.
         cx.spawn(async move |view, cx| {
-            cx.background_executor().timer(Duration::from_secs_f32(0.15)).await;
+            cx.background_executor()
+                .timer(Duration::from_secs_f32(0.15))
+                .await;
             cx.update(|cx| {
                 if let Some(view) = view.upgrade() {
                     view.update(cx, |view, cx| {
@@ -409,7 +411,8 @@ impl Render for Notification {
                                             .with_easing(cubic_bezier(0.4, 0., 0.6, 1.)),
                                         |el, delta| {
                                             // Breathe: opacity cycles 1.0 → 0.45 → 1.0
-                                            let opacity = 1.0 - (delta * std::f32::consts::PI).sin() * 0.55;
+                                            let opacity =
+                                                1.0 - (delta * std::f32::consts::PI).sin() * 0.55;
                                             el.opacity(opacity)
                                         },
                                     ),

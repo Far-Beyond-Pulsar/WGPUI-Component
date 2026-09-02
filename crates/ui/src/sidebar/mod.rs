@@ -206,27 +206,19 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
         let content_len = self.content.len();
         let collapsed = self.collapsed;
 
-        let view = window.use_keyed_state(
-            format!("{}-view", id),
-            cx,
-            |_, _| SidebarListView,
-        );
+        let view = window.use_keyed_state(format!("{}-view", id), cx, |_, _| SidebarListView);
 
         let scroll_handle = window
-            .use_keyed_state(
-                format!("{}-scroll-handle", id),
-                cx,
-                |_, _| VirtualListScrollHandle::new(),
-            )
+            .use_keyed_state(format!("{}-scroll-handle", id), cx, |_, _| {
+                VirtualListScrollHandle::new()
+            })
             .read(cx)
             .clone();
 
         let scrollbar_state = window
-            .use_keyed_state(
-                format!("{}-scrollbar-state", id),
-                cx,
-                |_, _| ScrollbarState::default(),
-            )
+            .use_keyed_state(format!("{}-scrollbar-state", id), cx, |_, _| {
+                ScrollbarState::default()
+            })
             .read(cx)
             .clone();
 
@@ -329,10 +321,7 @@ impl<E: SidebarItem> RenderOnce for Sidebar<E> {
                                 .left_0()
                                 .right_0()
                                 .bottom_0()
-                                .child(Scrollbar::vertical(
-                                    &scrollbar_state,
-                                    &scroll_handle,
-                                )),
+                                .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
                         ),
                 ),
             )

@@ -56,5 +56,4 @@ impl Panel for TabPanel {
         self.active_panel(cx)
             .map_or(true, |panel| panel.inner_padding(cx))
     }
-
 }

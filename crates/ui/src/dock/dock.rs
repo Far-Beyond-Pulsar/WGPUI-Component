@@ -397,9 +397,7 @@ impl Render for Dock {
             .map(|this| match &self.panel {
                 DockItem::Split { view, .. } => this.child(view.clone()),
                 DockItem::Tabs { view, .. } => this.child(view.clone()),
-                DockItem::Panel { view, .. } => {
-                    this.child(view.clone().view().cached(cache_style))
-                }
+                DockItem::Panel { view, .. } => this.child(view.clone().view().cached(cache_style)),
                 // Not support to render Tiles and Tile into Dock
                 DockItem::Tiles { .. } => this,
             })

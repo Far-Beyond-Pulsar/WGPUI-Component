@@ -343,8 +343,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                 return text;
             }
             paragraph.push(
-                InlineNode::new(&text)
-                    .marks(vec![(0..text.len(), TextMark::default().code())]),
+                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().code())]),
             );
         }
         Node::MdxTextExpression(raw) => {
@@ -424,9 +423,7 @@ fn callout_of(children: &[Node]) -> Option<(crate::text::node::CalloutKind, Stri
     callout_kind_and_remainder(&text)
 }
 
-fn callout_kind_and_remainder(
-    text: &str,
-) -> Option<(crate::text::node::CalloutKind, String)> {
+fn callout_kind_and_remainder(text: &str) -> Option<(crate::text::node::CalloutKind, String)> {
     let trimmed = text.trim_start();
     let lower = trimmed.to_ascii_lowercase();
 

@@ -14,9 +14,11 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct TextInit;
-#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for TextInit {
+#[cfg(not(target_family = "wasm"))]
+impl crate::registry::UiComponentInit for TextInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(TextInit);
+#[cfg(not(target_family = "wasm"))]
+crate::register_ui_component!(TextInit);

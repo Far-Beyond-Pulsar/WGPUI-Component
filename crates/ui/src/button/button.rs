@@ -10,7 +10,7 @@ use gpui::{
     div, prelude::FluentBuilder as _, px, relative, Action, AnyElement, App, ClickEvent, Context,
     Corner, Corners, Div, Edges, ElementId, Hsla, InteractiveElement, Interactivity, IntoElement,
     ParentElement, Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window
+    StyleRefinement, Styled, Window,
 };
 use std::rc::Rc;
 

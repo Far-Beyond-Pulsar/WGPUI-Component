@@ -27,7 +27,6 @@ use super::{
     PanelState, PanelStyle, PanelView, StackPanel, ToggleZoom,
 };
 
-
 pub mod drag_drop;
 pub mod render;
 pub mod serialization;

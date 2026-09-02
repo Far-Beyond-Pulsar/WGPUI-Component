@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{App, Bounds, Hsla, Pixels, Window};
-use ui_macros::IntoPlot;
 use num_traits::Zero;
+use ui_macros::IntoPlot;
 
 use crate::{
     plot::{

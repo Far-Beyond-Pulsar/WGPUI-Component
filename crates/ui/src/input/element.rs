@@ -1608,7 +1608,7 @@ mod tests {
             strikethrough: None,
             letter_spacing: None,
         };
-        
+
         // use hello this-is-test
         let runs = vec![
             // use

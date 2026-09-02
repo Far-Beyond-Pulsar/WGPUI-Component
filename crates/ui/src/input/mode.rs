@@ -5,16 +5,16 @@ use ropey::Rope;
 
 use crate::input::RopeExt as _;
 
-#[cfg(not(target_family = "wasm"))]
-use std::rc::Rc;
-#[cfg(not(target_family = "wasm"))]
-use std::{cell::RefCell};
 use super::text_wrapper::TextWrapper;
 use crate::highlighter::DiagnosticSet;
 #[cfg(not(target_family = "wasm"))]
-use tree_sitter::InputEdit;
-#[cfg(not(target_family = "wasm"))]
 use crate::highlighter::SyntaxHighlighter;
+#[cfg(not(target_family = "wasm"))]
+use std::cell::RefCell;
+#[cfg(not(target_family = "wasm"))]
+use std::rc::Rc;
+#[cfg(not(target_family = "wasm"))]
+use tree_sitter::InputEdit;
 
 #[derive(Debug, Copy, Clone)]
 pub struct TabSize {
@@ -96,7 +96,10 @@ impl InputMode {
             InputMode::MultiLine { .. } | InputMode::AutoGrow { .. } | InputMode::CodeEditor { .. }
         );
         #[cfg(target_family = "wasm")]
-        matches!(self, InputMode::MultiLine { .. } | InputMode::AutoGrow { .. })
+        matches!(
+            self,
+            InputMode::MultiLine { .. } | InputMode::AutoGrow { .. }
+        )
     }
 
     pub(super) fn set_rows(&mut self, new_rows: usize) {
@@ -207,47 +210,47 @@ impl InputMode {
                     return;
                 }
 
-                        // When full text changed, the selected_range may be out of bound (The before version).
-                        let mut selected_range = selected_range.clone();
-                        selected_range.end = selected_range.end.min(text.len());
+                // When full text changed, the selected_range may be out of bound (The before version).
+                let mut selected_range = selected_range.clone();
+                selected_range.end = selected_range.end.min(text.len());
 
-                        let changed_len = new_text.len() as isize - selected_range.len() as isize;
-                        let new_end = (selected_range.end as isize + changed_len) as usize;
+                let changed_len = new_text.len() as isize - selected_range.len() as isize;
+                let new_end = (selected_range.end as isize + changed_len) as usize;
 
-                        // If the highlighter was just nulled (e.g. by set_highlighter after a
-                        // language change), the no-op edit (0..0 → 0) from render() would leave
-                        // the tree-sitter tree empty and no syntax colours would be applied.
-                        // A None edit triggers a full re-parse of the buffer.
-                        let was_null = highlighter.borrow().is_none();
+                // If the highlighter was just nulled (e.g. by set_highlighter after a
+                // language change), the no-op edit (0..0 → 0) from render() would leave
+                // the tree-sitter tree empty and no syntax colours would be applied.
+                // A None edit triggers a full re-parse of the buffer.
+                let was_null = highlighter.borrow().is_none();
 
-                        let mut highlighter = highlighter.borrow_mut();
-                        if highlighter.is_none() {
-                            let new_highlighter = SyntaxHighlighter::new(language);
-                            highlighter.replace(new_highlighter);
-                        }
+                let mut highlighter = highlighter.borrow_mut();
+                if highlighter.is_none() {
+                    let new_highlighter = SyntaxHighlighter::new(language);
+                    highlighter.replace(new_highlighter);
+                }
 
-                        let Some(highlighter) = highlighter.as_mut() else {
-                            return;
-                        };
+                let Some(highlighter) = highlighter.as_mut() else {
+                    return;
+                };
 
-                        if was_null {
-                            highlighter.update(None, text);
-                        } else {
-                            let start_pos = text.offset_to_point(selected_range.start);
-                            let old_end_pos = text.offset_to_point(selected_range.end);
-                            let new_end_pos = text.offset_to_point(new_end);
+                if was_null {
+                    highlighter.update(None, text);
+                } else {
+                    let start_pos = text.offset_to_point(selected_range.start);
+                    let old_end_pos = text.offset_to_point(selected_range.end);
+                    let new_end_pos = text.offset_to_point(new_end);
 
-                            let edit = InputEdit {
-                                start_byte: selected_range.start,
-                                old_end_byte: selected_range.end,
-                                new_end_byte: new_end,
-                                start_position: start_pos,
-                                old_end_position: old_end_pos,
-                                new_end_position: new_end_pos,
-                            };
+                    let edit = InputEdit {
+                        start_byte: selected_range.start,
+                        old_end_byte: selected_range.end,
+                        new_end_byte: new_end,
+                        start_position: start_pos,
+                        old_end_position: old_end_pos,
+                        new_end_position: new_end_pos,
+                    };
 
-                            highlighter.update(Some(edit), text);
-                        }
+                    highlighter.update(Some(edit), text);
+                }
             }
             _ => {}
         }

@@ -13,10 +13,10 @@ use gpui::{
 use gpui_sum_tree::Bias;
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
-use std::ops::Range;
-use std::rc::Rc;
 #[cfg(not(target_family = "wasm"))]
 use std::cell::RefCell;
+use std::ops::Range;
+use std::rc::Rc;
 use unicode_segmentation::*;
 
 use crate::input::{

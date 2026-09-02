@@ -9,9 +9,9 @@ use std::{cell::Cell, cell::RefCell, rc::Rc};
 use gpui::*;
 use ropey::{LineType, Rope};
 
-use crate::ActiveTheme;
 #[cfg(not(target_family = "wasm"))]
 use crate::highlighter::SyntaxHighlighter;
+use crate::ActiveTheme;
 
 pub const MINIMAP_WIDTH: Pixels = px(110.0);
 const LINE_PX: f32 = 2.0;

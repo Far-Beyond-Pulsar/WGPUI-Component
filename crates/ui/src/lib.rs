@@ -13,7 +13,10 @@ mod event;
 mod global_state;
 mod icon;
 mod index_path;
-#[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "inspector", debug_assertions),
+    not(target_family = "wasm")
+))]
 mod inspector;
 mod kbd;
 pub mod menu;
@@ -119,7 +122,10 @@ pub use wry;
 pub use crate::Disableable;
 pub use event::InteractiveElementExt;
 pub use index_path::IndexPath;
-#[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
+#[cfg(all(
+    any(feature = "inspector", debug_assertions),
+    not(target_family = "wasm")
+))]
 pub use inspector::*;
 pub use menu::{context_menu, popup_menu, AppMenusCache};
 pub use root::{ContextModal, Root};
@@ -196,13 +202,17 @@ pub fn init(cx: &mut App) {
     global_state::init(cx);
     #[cfg(feature = "pulsar-engine")]
     replication::init(cx);
-    #[cfg(all(any(feature = "inspector", debug_assertions), not(target_family = "wasm")))]
+    #[cfg(all(
+        any(feature = "inspector", debug_assertions),
+        not(target_family = "wasm")
+    ))]
     inspector::init(cx);
     root::init(cx);
     dock::init(cx);
     input::init(cx);
     // All components registered via `register_ui_component!` are initialized here.
-    #[cfg(not(target_family = "wasm"))] registry::init_all_components(cx);
+    #[cfg(not(target_family = "wasm"))]
+    registry::init_all_components(cx);
 }
 
 #[inline]
@@ -279,4 +289,3 @@ impl Measure {
         tracing::trace!("{} in {:?}", self.name, duration);
     }
 }
-

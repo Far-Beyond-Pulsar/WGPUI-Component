@@ -481,10 +481,12 @@ impl Render for SearchPanel {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.replace_mode = !this.replace_mode;
                                 if this.replace_mode {
-                                    let focus_handle = this.replace_input.read(cx).focus_handle.clone();
+                                    let focus_handle =
+                                        this.replace_input.read(cx).focus_handle.clone();
                                     focus_handle.focus(window, cx);
                                 } else {
-                                    let focus_handle = this.search_input.read(cx).focus_handle.clone();
+                                    let focus_handle =
+                                        this.search_input.read(cx).focus_handle.clone();
                                     focus_handle.focus(window, cx);
                                 }
                                 cx.notify();

@@ -52,12 +52,14 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct DropdownInit;
-#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for DropdownInit {
+#[cfg(not(target_family = "wasm"))]
+impl crate::registry::UiComponentInit for DropdownInit {
     fn init(&self, cx: &mut App) {
         init(cx);
     }
 }
-#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(DropdownInit);
+#[cfg(not(target_family = "wasm"))]
+crate::register_ui_component!(DropdownInit);
 
 /// A trait for items that can be displayed in a dropdown.
 pub trait DropdownItem: Clone {

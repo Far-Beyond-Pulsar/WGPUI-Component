@@ -37,12 +37,14 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 struct ListInit;
-#[cfg(not(target_family = "wasm"))] impl crate::registry::UiComponentInit for ListInit {
+#[cfg(not(target_family = "wasm"))]
+impl crate::registry::UiComponentInit for ListInit {
     fn init(&self, cx: &mut gpui::App) {
         init(cx);
     }
 }
-#[cfg(not(target_family = "wasm"))] crate::register_ui_component!(ListInit);
+#[cfg(not(target_family = "wasm"))]
+crate::register_ui_component!(ListInit);
 
 #[derive(Clone)]
 pub enum ListEvent {
@@ -671,5 +673,3 @@ where
             })
     }
 }
-
-

@@ -21,6 +21,8 @@ use resvg::{tiny_skia, usvg};
 use ropey::Rope;
 use std::sync::Mutex;
 
+#[cfg(not(target_family = "wasm"))]
+use crate::highlighter::SyntaxHighlighter;
 use crate::{
     h_flex,
     highlighter::HighlightTheme,
@@ -28,8 +30,6 @@ use crate::{
     tooltip::Tooltip,
     v_flex, ActiveTheme as _, Icon, IconName, StyledExt,
 };
-#[cfg(not(target_family = "wasm"))]
-use crate::highlighter::SyntaxHighlighter;
 
 use super::{utils::list_item_prefix, TextViewStyle};
 
@@ -1301,32 +1301,21 @@ impl Node {
                     .border_color(color.opacity(0.4))
                     .bg(color.opacity(0.08))
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(color)
-                                    .child(kind.label()),
-                            ),
+                        div().flex().flex_row().items_center().gap_2().child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(color)
+                                .child(kind.label()),
+                        ),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .children({
-                                let children_len = children.len();
-                                children.iter_mut().enumerate().map(move |(index, c)| {
-                                    let is_last_child = is_root && index == children_len - 1;
-                                    c.render(None, false, is_last_child, node_cx, window, cx)
-                                })
-                            }),
-                    )
+                    .child(div().flex().flex_col().gap_1().children({
+                        let children_len = children.len();
+                        children.iter_mut().enumerate().map(move |(index, c)| {
+                            let is_last_child = is_root && index == children_len - 1;
+                            c.render(None, false, is_last_child, node_cx, window, cx)
+                        })
+                    }))
                     .into_any_element()
             }
             Node::List { children, ordered } => v_flex()

@@ -19,9 +19,7 @@ use ropey::{ChunkCursor, Rope};
 #[cfg(not(target_family = "wasm"))]
 use streaming_iterator::StreamingIterator;
 #[cfg(not(target_family = "wasm"))]
-use tree_sitter::{
-    InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatch, Tree,
-};
+use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatch, Tree};
 
 /// A syntax highlighter that supports incremental parsing, multiline text,
 /// and caching of highlight results.

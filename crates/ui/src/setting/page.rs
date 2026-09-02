@@ -190,36 +190,31 @@ impl SettingPage {
                     .w_full()
                     .overflow_hidden()
                     .child(
-                        v_virtual_list(
-                            view,
-                            format!("settings-groups-{}", ix),
-                            item_sizes,
-                            {
-                                let groups = groups_arc.clone();
-                                let query = query.clone();
-                                let options = *options;
-                                move |_, range: std::ops::Range<usize>, window, cx| {
-                                    range
-                                        .map(|group_ix| {
-                                            groups[group_ix]
-                                                .clone()
-                                                .py_4()
-                                                .render(
-                                                    &query,
-                                                    &RenderOptions {
-                                                        page_ix: ix,
-                                                        group_ix,
-                                                        ..options
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .into_any_element()
-                                        })
-                                        .collect()
-                                }
-                            },
-                        )
+                        v_virtual_list(view, format!("settings-groups-{}", ix), item_sizes, {
+                            let groups = groups_arc.clone();
+                            let query = query.clone();
+                            let options = *options;
+                            move |_, range: std::ops::Range<usize>, window, cx| {
+                                range
+                                    .map(|group_ix| {
+                                        groups[group_ix]
+                                            .clone()
+                                            .py_4()
+                                            .render(
+                                                &query,
+                                                &RenderOptions {
+                                                    page_ix: ix,
+                                                    group_ix,
+                                                    ..options
+                                                },
+                                                window,
+                                                cx,
+                                            )
+                                            .into_any_element()
+                                    })
+                                    .collect()
+                            }
+                        })
                         .track_scroll(&scroll_handle),
                     )
                     .child(

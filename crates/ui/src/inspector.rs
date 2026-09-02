@@ -5,12 +5,12 @@ use std::{
 
 use anyhow::Result;
 use gpui::{
-    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px, uniform_list,
-    AnyElement, App, AppContext, Context, DivInspectorState, Entity, Inspector, InspectorElementId,
-    InspectorEventListener, InspectorLayoutInfo, InspectorTab, InspectorTreeNode,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _,
-    Refineable as _, Render, SharedString, StatefulInteractiveElement, StyleRefinement, Styled,
-    Subscription, Task, Window,
+    actions, div, inspector_reflection::FunctionReflection, prelude::FluentBuilder, px,
+    uniform_list, AnyElement, App, AppContext, Context, DivInspectorState, Entity, Inspector,
+    InspectorElementId, InspectorEventListener, InspectorLayoutInfo, InspectorTab,
+    InspectorTreeNode, InteractiveElement as _, IntoElement, KeyBinding, MouseButton,
+    ParentElement as _, Refineable as _, Render, SharedString, StatefulInteractiveElement,
+    StyleRefinement, Styled, Subscription, Task, Window,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, Diagnostic,
@@ -509,7 +509,10 @@ fn render_inspector(
 /// intentionally no matching `on_mouse_up`/`on_drag` handler here: the
 /// window-level loop calls `Inspector::stop_resizing()` itself once it sees
 /// the mouse released, so duplicating that here would just race it.
-fn render_inspector_resize_handle(inspector: &mut Inspector, cx: &mut Context<Inspector>) -> AnyElement {
+fn render_inspector_resize_handle(
+    inspector: &mut Inspector,
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
     let indicator_color = if inspector.is_resizing() {
         cx.theme().primary
     } else {
@@ -658,7 +661,11 @@ fn render_tab_content(
     if owns_own_scroll {
         div().flex_1().child(content).into_any_element()
     } else {
-        div().flex_1().overflow_y_scroll().child(content).into_any_element()
+        div()
+            .flex_1()
+            .overflow_y_scroll()
+            .child(content)
+            .into_any_element()
     }
 }
 
@@ -688,77 +695,79 @@ fn render_elements_tab(
         let rows = rows_rc;
         let entity = entity.clone();
         move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
-            range.map(|i| {
-                let row = &rows[i];
-                let indent = row.depth * 14;
-                let entity = entity.clone();
-                let mut el = div()
-                    .id(SharedString::from(format!("tree-{}", i)))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .h(px(22.))
-                    .pl(px(indent as f32))
-                    .cursor_pointer()
-                    .rounded_sm()
-                    .text_xs()
-                    .when(row.is_selected, |s| s.bg(gpui::rgba(0x00000033)));
+            range
+                .map(|i| {
+                    let row = &rows[i];
+                    let indent = row.depth * 14;
+                    let entity = entity.clone();
+                    let mut el = div()
+                        .id(SharedString::from(format!("tree-{}", i)))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(22.))
+                        .pl(px(indent as f32))
+                        .cursor_pointer()
+                        .rounded_sm()
+                        .text_xs()
+                        .when(row.is_selected, |s| s.bg(gpui::rgba(0x00000033)));
 
-                if row.has_children {
-                    let entity_for_toggle = entity.clone();
-                    let nid = row.node_id.clone();
+                    if row.has_children {
+                        let entity_for_toggle = entity.clone();
+                        let nid = row.node_id.clone();
+                        el = el.child(
+                            div()
+                                .w(px(14.))
+                                .text_color(gpui::rgba(0x888888ff))
+                                .child(if row.is_expanded { "▼" } else { "▶" })
+                                .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
+                                    if let Some(ref id) = nid {
+                                        entity_for_toggle.update(cx, |i, cx| {
+                                            i.toggle_collapsed(id.clone());
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        );
+                    } else {
+                        el = el.child(div().w(px(14.)));
+                    }
+
                     el = el.child(
                         div()
-                            .w(px(14.))
-                            .text_color(gpui::rgba(0x888888ff))
-                            .child(if row.is_expanded { "▼" } else { "▶" })
-                            .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
-                                if let Some(ref id) = nid {
-                                    entity_for_toggle.update(cx, |i, cx| {
+                            .text_color(gpui::rgba(0x8888ffff))
+                            .child(row.element_type.clone()),
+                    );
+                    if !row.display_label.is_empty() {
+                        el = el.child(
+                            div()
+                                .text_color(gpui::rgba(0x888888ff))
+                                .ml(px(4.))
+                                .child(row.display_label.clone()),
+                        );
+                    }
+
+                    if row.node_id.is_some() {
+                        let entity_for_click = entity.clone();
+                        let nid = row.node_id.clone();
+                        let has_ch = row.has_children;
+                        el = el.on_click(move |_, window, cx| {
+                            if let Some(ref id) = nid {
+                                entity_for_click.update(cx, |i, cx| {
+                                    if i.active_element_id() == Some(id) && has_ch {
                                         i.toggle_collapsed(id.clone());
-                                        cx.notify();
-                                    });
-                                }
-                            }),
-                    );
-                } else {
-                    el = el.child(div().w(px(14.)));
-                }
+                                    } else {
+                                        i.set_active_element_id(id.clone(), window);
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        });
+                    }
 
-                el = el.child(
-                    div()
-                        .text_color(gpui::rgba(0x8888ffff))
-                        .child(row.element_type.clone()),
-                );
-                if !row.display_label.is_empty() {
-                    el = el.child(
-                        div()
-                            .text_color(gpui::rgba(0x888888ff))
-                            .ml(px(4.))
-                            .child(row.display_label.clone()),
-                    );
-                }
-
-                if row.node_id.is_some() {
-                    let entity_for_click = entity.clone();
-                    let nid = row.node_id.clone();
-                    let has_ch = row.has_children;
-                    el = el.on_click(move |_, window, cx| {
-                        if let Some(ref id) = nid {
-                            entity_for_click.update(cx, |i, cx| {
-                                if i.active_element_id() == Some(id) && has_ch {
-                                    i.toggle_collapsed(id.clone());
-                                } else {
-                                    i.set_active_element_id(id.clone(), window);
-                                }
-                                cx.notify();
-                            });
-                        }
-                    });
-                }
-
-                el.into_any_element()
-            }).collect::<Vec<_>>()
+                    el.into_any_element()
+                })
+                .collect::<Vec<_>>()
         }
     })
     .w_full()
@@ -861,8 +870,16 @@ fn render_styles_tab(
                     .columns(1)
                     .label_width(px(100.))
                     .bordered(false)
-                    .child("Width", format!("{:.1}px", layout.bounds.size.width.value()), 1)
-                    .child("Height", format!("{:.1}px", layout.bounds.size.height.value()), 1)
+                    .child(
+                        "Width",
+                        format!("{:.1}px", layout.bounds.size.width.value()),
+                        1,
+                    )
+                    .child(
+                        "Height",
+                        format!("{:.1}px", layout.bounds.size.height.value()),
+                        1,
+                    )
                     .child("X", format!("{:.1}px", layout.bounds.origin.x.value()), 1)
                     .child("Y", format!("{:.1}px", layout.bounds.origin.y.value()), 1)
                     .child(
@@ -1015,8 +1032,18 @@ fn render_box_model(layout: &InspectorLayoutInfo, cx: &Context<Inspector>) -> An
                 .absolute()
                 .top(margin_w.top * scale)
                 .left(margin_w.left * scale)
-                .w((border_w.left + padding_w.left + content.width + padding_w.right + border_w.right) * scale)
-                .h((border_w.top + padding_w.top + content.height + padding_w.bottom + border_w.bottom) * scale)
+                .w((border_w.left
+                    + padding_w.left
+                    + content.width
+                    + padding_w.right
+                    + border_w.right)
+                    * scale)
+                .h((border_w.top
+                    + padding_w.top
+                    + content.height
+                    + padding_w.bottom
+                    + border_w.bottom)
+                    * scale)
                 .bg(cx.theme().chart_2)
                 .opacity(0.2),
         )
@@ -1088,7 +1115,10 @@ fn render_layout_details(layout: &InspectorLayoutInfo, cx: &Context<Inspector>) 
         ))
         .child(layout_section(
             "Content",
-            &[("width", layout.content_size.width.value()), ("height", layout.content_size.height.value())],
+            &[
+                ("width", layout.content_size.width.value()),
+                ("height", layout.content_size.height.value()),
+            ],
             cx,
         ))
         .into_any_element()

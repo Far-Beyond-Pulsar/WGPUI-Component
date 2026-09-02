@@ -403,14 +403,10 @@ impl TabPanel {
                                     }
 
                                     if source_id == my_id {
-                                        if is_outside
-                                            && !was_outside
-                                            && !this.extraction_in_flight
+                                        if is_outside && !was_outside && !this.extraction_in_flight
                                         {
                                             let drag = event.drag(cx).clone();
-                                            this.begin_live_extraction(
-                                                &drag, mouse, window, cx,
-                                            );
+                                            this.begin_live_extraction(&drag, mouse, window, cx);
                                         } else if is_outside && this.extraction_in_flight {
                                             this.move_extracted_window(mouse, window, cx);
                                         } else if !is_outside && this.extraction_in_flight {
@@ -453,62 +449,61 @@ impl TabPanel {
                     });
 
                     tab = tab.suffix(
-                        h_flex().gap_1().child(
-                            Button::new(("close-tab", orig_ix))
-                                .icon(IconName::Close)
-                                .ghost()
-                                .xsmall()
-                                .on_click({
-                                    let p = panel.clone();
-                                    let v = view_for_dnd.clone();
-                                    move |_, window, cx| {
-                                        v.update(cx, |this, cx| {
-                                            this.remove_panel(p.clone(), window, cx);
-                                        });
-                                    }
-                                }),
-                        )
-                        .into_any_element(),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new(("close-tab", orig_ix))
+                                    .icon(IconName::Close)
+                                    .ghost()
+                                    .xsmall()
+                                    .on_click({
+                                        let p = panel.clone();
+                                        let v = view_for_dnd.clone();
+                                        move |_, window, cx| {
+                                            v.update(cx, |this, cx| {
+                                                this.remove_panel(p.clone(), window, cx);
+                                            });
+                                        }
+                                    }),
+                            )
+                            .into_any_element(),
                     );
 
                     tab
                 }
             })
-            .last_empty_space(
-                div()
-                    .id("tab-bar-empty-space")
-                    .h_full()
-                    .min_w_16()
-                    .when(state.droppable, |this| {
-                        let channel = state.channel;
-                        let view_entity = view.clone();
-                        let view_for_drop = view.clone();
-                        this.drag_over::<DragPanel>(move |this, drag, window, cx| {
-                            if drag.channel == channel {
-                                view_entity.update(cx, |v, cx| {
-                                    v.in_valid_drag = true;
-                                    cx.notify();
-                                });
-                                this.bg(cx.theme().drop_target)
+            .last_empty_space(div().id("tab-bar-empty-space").h_full().min_w_16().when(
+                state.droppable,
+                |this| {
+                    let channel = state.channel;
+                    let view_entity = view.clone();
+                    let view_for_drop = view.clone();
+                    this.drag_over::<DragPanel>(move |this, drag, window, cx| {
+                        if drag.channel == channel {
+                            view_entity.update(cx, |v, cx| {
+                                v.in_valid_drag = true;
+                                cx.notify();
+                            });
+                            this.bg(cx.theme().drop_target)
+                        } else {
+                            this
+                        }
+                    })
+                    .on_drop(cx.listener(
+                        move |this, drag: &DragPanel, window, cx| {
+                            this.will_split_placement = None;
+
+                            let ix = if drag.tab_panel == view_for_drop {
+                                Some(tabs_count - 1)
                             } else {
-                                this
-                            }
-                        })
-                        .on_drop(cx.listener(
-                            move |this, drag: &DragPanel, window, cx| {
-                                this.will_split_placement = None;
+                                None
+                            };
 
-                                let ix = if drag.tab_panel == view_for_drop {
-                                    Some(tabs_count - 1)
-                                } else {
-                                    None
-                                };
-
-                                this.on_drop(drag, ix, false, window, cx)
-                            },
-                        ))
-                    }),
-            )
+                            this.on_drop(drag, ix, false, window, cx)
+                        },
+                    ))
+                },
+            ))
             .when(!self.collapsed, |this| {
                 this.suffix(
                     h_flex()

@@ -401,12 +401,7 @@ impl ReplicationRegistry {
         self.inner.read().elements.get(element_id).cloned()
     }
 
-    pub fn update_element_state(
-        &self,
-        element_id: &str,
-        state: Value,
-        timestamp: u64,
-    ) -> bool {
+    pub fn update_element_state(&self, element_id: &str, state: Value, timestamp: u64) -> bool {
         let mut inner = self.inner.write();
         if let Some(elem_state) = inner.elements.get_mut(element_id) {
             elem_state.last_state = Some(state.clone());
@@ -696,30 +691,60 @@ pub enum ReplicationMessage {
         timestamp: u64,
         peer_id: String,
     },
-    EditorJoined { element_id: String, peer_id: String },
-    EditorLeft { element_id: String, peer_id: String },
-    PanelJoined { panel_id: String, peer_id: String },
-    PanelLeft { panel_id: String, peer_id: String },
+    EditorJoined {
+        element_id: String,
+        peer_id: String,
+    },
+    EditorLeft {
+        element_id: String,
+        peer_id: String,
+    },
+    PanelJoined {
+        panel_id: String,
+        peer_id: String,
+    },
+    PanelLeft {
+        panel_id: String,
+        peer_id: String,
+    },
     PresenceUpdate {
         peer_id: String,
         presence: UserPresence,
     },
-    RequestLock { element_id: String, peer_id: String },
-    ReleaseLock { element_id: String, peer_id: String },
-    LockGranted { element_id: String, peer_id: String },
+    RequestLock {
+        element_id: String,
+        peer_id: String,
+    },
+    ReleaseLock {
+        element_id: String,
+        peer_id: String,
+    },
+    LockGranted {
+        element_id: String,
+        peer_id: String,
+    },
     LockDenied {
         element_id: String,
         peer_id: String,
         reason: String,
     },
-    RequestPermission { element_id: String, peer_id: String },
-    PermissionGranted { element_id: String, peer_id: String },
+    RequestPermission {
+        element_id: String,
+        peer_id: String,
+    },
+    PermissionGranted {
+        element_id: String,
+        peer_id: String,
+    },
     PermissionDenied {
         element_id: String,
         peer_id: String,
         reason: String,
     },
-    RequestSync { element_id: String, peer_id: String },
+    RequestSync {
+        element_id: String,
+        peer_id: String,
+    },
     SyncResponse {
         element_id: String,
         state: Value,
@@ -848,15 +873,26 @@ impl ReplicationMessageHandler {
 
     pub fn handle_message(&mut self, message: ReplicationMessage) -> Option<ReplicationMessage> {
         match message {
-            ReplicationMessage::StateUpdate { element_id, state, timestamp, peer_id } => {
+            ReplicationMessage::StateUpdate {
+                element_id,
+                state,
+                timestamp,
+                peer_id,
+            } => {
                 self.handle_state_update(&element_id, state, timestamp, &peer_id);
                 None
             }
-            ReplicationMessage::EditorJoined { element_id, peer_id } => {
+            ReplicationMessage::EditorJoined {
+                element_id,
+                peer_id,
+            } => {
                 self.handle_editor_joined(&element_id, &peer_id);
                 None
             }
-            ReplicationMessage::EditorLeft { element_id, peer_id } => {
+            ReplicationMessage::EditorLeft {
+                element_id,
+                peer_id,
+            } => {
                 self.handle_editor_left(&element_id, &peer_id);
                 None
             }
@@ -872,20 +908,28 @@ impl ReplicationMessageHandler {
                 self.handle_presence_update(&peer_id, presence);
                 None
             }
-            ReplicationMessage::RequestLock { element_id, peer_id } => {
-                self.handle_lock_request(&element_id, &peer_id)
-            }
-            ReplicationMessage::ReleaseLock { element_id, peer_id } => {
+            ReplicationMessage::RequestLock {
+                element_id,
+                peer_id,
+            } => self.handle_lock_request(&element_id, &peer_id),
+            ReplicationMessage::ReleaseLock {
+                element_id,
+                peer_id,
+            } => {
                 self.handle_lock_release(&element_id, &peer_id);
                 None
             }
-            ReplicationMessage::RequestPermission { element_id, peer_id } => {
+            ReplicationMessage::RequestPermission {
+                element_id,
+                peer_id,
+            } => {
                 self.handle_permission_request(&element_id, &peer_id);
                 None
             }
-            ReplicationMessage::RequestSync { element_id, peer_id } => {
-                self.handle_sync_request(&element_id, &peer_id)
-            }
+            ReplicationMessage::RequestSync {
+                element_id,
+                peer_id,
+            } => self.handle_sync_request(&element_id, &peer_id),
             ReplicationMessage::LockGranted { .. }
             | ReplicationMessage::LockDenied { .. }
             | ReplicationMessage::PermissionGranted { .. }
@@ -894,7 +938,13 @@ impl ReplicationMessageHandler {
         }
     }
 
-    fn handle_state_update(&mut self, element_id: &str, state: Value, timestamp: u64, peer_id: &str) {
+    fn handle_state_update(
+        &mut self,
+        element_id: &str,
+        state: Value,
+        timestamp: u64,
+        peer_id: &str,
+    ) {
         if let Some(elem_state) = self.registry.get_element_state(element_id) {
             if timestamp <= elem_state.last_update {
                 return;
@@ -903,7 +953,8 @@ impl ReplicationMessageHandler {
                 return;
             }
         }
-        self.registry.update_element_state(element_id, state, timestamp);
+        self.registry
+            .update_element_state(element_id, state, timestamp);
     }
 
     fn handle_editor_joined(&mut self, element_id: &str, peer_id: &str) {
@@ -926,7 +977,11 @@ impl ReplicationMessageHandler {
         self.registry.update_user_presence(presence);
     }
 
-    fn handle_lock_request(&mut self, element_id: &str, peer_id: &str) -> Option<ReplicationMessage> {
+    fn handle_lock_request(
+        &mut self,
+        element_id: &str,
+        peer_id: &str,
+    ) -> Option<ReplicationMessage> {
         if let Some(mut elem_state) = self.registry.get_element_state(element_id) {
             if elem_state.acquire_lock(peer_id) {
                 return Some(ReplicationMessage::LockGranted {
@@ -957,7 +1012,11 @@ impl ReplicationMessageHandler {
         }
     }
 
-    fn handle_sync_request(&mut self, element_id: &str, _peer_id: &str) -> Option<ReplicationMessage> {
+    fn handle_sync_request(
+        &mut self,
+        element_id: &str,
+        _peer_id: &str,
+    ) -> Option<ReplicationMessage> {
         if let Some(elem_state) = self.registry.get_element_state(element_id) {
             if let Some(state) = elem_state.last_state {
                 return Some(ReplicationMessage::SyncResponse {
@@ -995,11 +1054,19 @@ pub trait Replicator: Sized {
     ) -> Result<(), String>;
 
     fn on_remote_user_joined(&mut self, peer_id: &str, _window: &mut Window, _cx: &mut App) {
-        tracing::debug!("User {} started editing element {}", peer_id, self.replication_id());
+        tracing::debug!(
+            "User {} started editing element {}",
+            peer_id,
+            self.replication_id()
+        );
     }
 
     fn on_remote_user_left(&mut self, peer_id: &str, _window: &mut Window, _cx: &mut App) {
-        tracing::debug!("User {} stopped editing element {}", peer_id, self.replication_id());
+        tracing::debug!(
+            "User {} stopped editing element {}",
+            peer_id,
+            self.replication_id()
+        );
     }
 
     fn on_remote_state_update(
@@ -1227,7 +1294,10 @@ impl MultiuserIntegration {
         let session = SessionContext::global(cx);
         session.start_session(our_peer_id.clone(), host_peer_id);
         session.set_message_sender(send_callback);
-        tracing::info!("Multiuser replication session started (peer: {})", our_peer_id);
+        tracing::info!(
+            "Multiuser replication session started (peer: {})",
+            our_peer_id
+        );
     }
 
     pub fn end_session(&self, cx: &App) {
@@ -1432,7 +1502,9 @@ impl InputStateReplicationExt for Entity<InputState> {
 // These render components depend on GPUI UI primitives.
 
 use crate::{h_flex, ActiveTheme, Icon, IconName, Sizable, StyledExt};
-use gpui::{div, prelude::FluentBuilder, px, AnyElement, IntoElement, ParentElement, RenderOnce, Styled};
+use gpui::{
+    div, prelude::FluentBuilder, px, AnyElement, IntoElement, ParentElement, RenderOnce, Styled,
+};
 
 /// Size variant for presence pill display
 #[derive(Debug, Clone, Copy, PartialEq)]

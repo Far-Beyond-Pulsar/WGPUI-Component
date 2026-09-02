@@ -46,22 +46,16 @@
 //!   pipeline wired up yet" rather than erroring. This tab surfaces exactly
 //!   that distinction rather than working around it.
 
-use std::{
-    collections::HashSet,
-    ops::Range,
-    rc::Rc,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, ops::Range, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
-    canvas, div, img, point, prelude::FluentBuilder as _, px, uniform_list, AnyElement, App,
-    AppContext as _, Bounds, ClickEvent, Context, DeepCaptureDrawCall, DeepCaptureReplay,
-    DragMoveEvent, DrawCallResourceStatus, Empty, Entity, FontWeight, Global, ImageSource,
-    Inspector, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, Point, Render, RenderImage, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement as _, Styled, Subscription, Task, Timer,
-    UiElementNode, UiTreeReplay, Window, wgpu_surface,
+    canvas, div, img, point, prelude::FluentBuilder as _, px, uniform_list, wgpu_surface,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, DeepCaptureDrawCall,
+    DeepCaptureReplay, DragMoveEvent, DrawCallResourceStatus, Empty, Entity, FontWeight, Global,
+    ImageSource, Inspector, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, RenderImage,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    Timer, UiElementNode, UiTreeReplay, Window,
 };
 // `wgpu` and `bytemuck` are used fully-qualified below (both are direct,
 // `flamegraph`-gated dependencies of this crate; see `Cargo.toml`), matching
@@ -122,7 +116,12 @@ impl RangeZoom {
 
     fn full(domain_start: f64, domain_end: f64) -> Self {
         let domain_end = domain_end.max(domain_start + 1.0);
-        Self { domain_start, domain_end, visible_start: domain_start, visible_end: domain_end }
+        Self {
+            domain_start,
+            domain_end,
+            visible_start: domain_start,
+            visible_end: domain_end,
+        }
     }
 
     /// Updates the underlying domain (e.g. a newly selected capture frame's
@@ -250,7 +249,10 @@ struct ImageViewport {
 
 impl ImageViewport {
     fn new() -> Self {
-        Self { x: RangeZoom::full(0.0, 1.0), y: RangeZoom::full(0.0, 1.0) }
+        Self {
+            x: RangeZoom::full(0.0, 1.0),
+            y: RangeZoom::full(0.0, 1.0),
+        }
     }
 
     fn is_zoomed(&self) -> bool {
@@ -575,13 +577,17 @@ impl ProfilerPanel {
                     .id("profiler-section-body")
                     .flex_1()
                     .min_h(px(0.))
-                    .when(self.section != ProfilerSection::FlameChart, |d| d.overflow_y_scroll())
+                    .when(self.section != ProfilerSection::FlameChart, |d| {
+                        d.overflow_y_scroll()
+                    })
                     .child(match self.section {
                         ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
                         ProfilerSection::Counters => self.render_counters_section(cx),
                         ProfilerSection::Memory => self.render_memory_section(window, cx),
                         ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
-                        ProfilerSection::DeepCapture => self.render_deep_capture_section(window, cx),
+                        ProfilerSection::DeepCapture => {
+                            self.render_deep_capture_section(window, cx)
+                        }
                     }),
             )
             .into_any_element()
@@ -589,7 +595,10 @@ impl ProfilerPanel {
 
     fn render_section_tabs(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let sections = ProfilerSection::ALL;
-        let active_idx = sections.iter().position(|s| *s == self.section).unwrap_or(0);
+        let active_idx = sections
+            .iter()
+            .position(|s| *s == self.section)
+            .unwrap_or(0);
         let tab_labels: Vec<(Option<SharedString>, bool)> = sections
             .iter()
             .map(|s| (Some(SharedString::from(s.label())), false))
@@ -634,7 +643,13 @@ impl ProfilerPanel {
             let span_count = |frame: &&gpui::FrameCapture| {
                 frame.cpu_spans.len() + frame.background_spans.len() + frame.gpu_spans.len()
             };
-            let recent_max = frames.iter().rev().take(10).map(span_count).max().unwrap_or(0);
+            let recent_max = frames
+                .iter()
+                .rev()
+                .take(10)
+                .map(span_count)
+                .max()
+                .unwrap_or(0);
             let threshold = (recent_max / 5).max(1);
             let healthy_last = frames
                 .iter()
@@ -651,10 +666,15 @@ impl ProfilerPanel {
                 .iter()
                 .map(|f| (f.frame_end_ns.saturating_sub(f.frame_start_ns)) as f32 / 1.0e6)
                 .collect();
-            let frame_durations_max_ms = frame_durations_ms.iter().copied().fold(0.0f32, f32::max).max(1.0);
+            let frame_durations_max_ms = frame_durations_ms
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max)
+                .max(1.0);
             let counter_summary = capture.counter_summary();
 
-            self.selected_frame = healthy_last.unwrap_or_else(|| capture.frame_count().saturating_sub(1));
+            self.selected_frame =
+                healthy_last.unwrap_or_else(|| capture.frame_count().saturating_sub(1));
             self.capture = Some(capture);
             self.counter_summary = Some(counter_summary);
             self.frame_durations_ms = frame_durations_ms;
@@ -679,8 +699,7 @@ impl ProfilerPanel {
                 }
                 Err(_already_capturing) => {
                     self.capture_error = Some(
-                        "A flamegraph capture is already running elsewhere in this process."
-                            .into(),
+                        "A flamegraph capture is already running elsewhere in this process.".into(),
                     );
                 }
             }
@@ -688,7 +707,11 @@ impl ProfilerPanel {
         cx.notify();
     }
 
-    fn render_flame_chart_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_flame_chart_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let is_recording = self.capture_handle.is_some();
         let frame_count = self.capture.as_ref().map(|c| c.frame_count()).unwrap_or(0);
 
@@ -701,7 +724,11 @@ impl ProfilerPanel {
         // frame (e.g. selecting a span).
         if frame_count > 0 {
             let frame_index = self.selected_frame.min(frame_count - 1);
-            if let Some(frame) = self.capture.as_ref().and_then(|c| c.frames().nth(frame_index)) {
+            if let Some(frame) = self
+                .capture
+                .as_ref()
+                .and_then(|c| c.frames().nth(frame_index))
+            {
                 let domain_start = frame.frame_start_ns as f64;
                 let domain_end = frame.frame_end_ns.max(frame.frame_start_ns + 1) as f64;
                 self.flame_zoom.set_domain(domain_start, domain_end);
@@ -714,8 +741,16 @@ impl ProfilerPanel {
                 .small()
                 .when(is_recording, |b| b.danger())
                 .when(!is_recording, |b| b.primary())
-                .icon(if is_recording { IconName::Pause } else { IconName::Play })
-                .label(if is_recording { "Stop Capture" } else { "Start Capture" })
+                .icon(if is_recording {
+                    IconName::Pause
+                } else {
+                    IconName::Play
+                })
+                .label(if is_recording {
+                    "Stop Capture"
+                } else {
+                    "Start Capture"
+                })
                 .on_click(cx.listener(|state, _, _window, cx| state.toggle_capture(cx))),
         );
 
@@ -738,12 +773,11 @@ impl ProfilerPanel {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .min_w(px(90.))
-                            .child(format!("Frame {}/{}", self.selected_frame + 1, frame_count)),
-                    )
+                    .child(div().text_xs().min_w(px(90.)).child(format!(
+                        "Frame {}/{}",
+                        self.selected_frame + 1,
+                        frame_count
+                    )))
                     .child(
                         Button::new("flame-next")
                             .xsmall()
@@ -807,7 +841,11 @@ impl ProfilerPanel {
         body.into_any_element()
     }
 
-    fn render_flame_chart_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_flame_chart_body(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(capture) = self.capture.as_ref() else {
             return profiler_empty_state(
                 "Start a capture, interact with the app, then stop it to inspect recorded frames.",
@@ -831,10 +869,9 @@ impl ProfilerPanel {
         // field doc. Only a genuinely different frame or capture pays for
         // `build_flame_lanes`; re-renders for hover/zoom/pan/search on the
         // *same* frame just clone the `Rc`.
-        let cache_hit = self
-            .flame_lane_cache
-            .as_ref()
-            .is_some_and(|c| c.capture_generation == self.capture_generation && c.frame_index == frame_index);
+        let cache_hit = self.flame_lane_cache.as_ref().is_some_and(|c| {
+            c.capture_generation == self.capture_generation && c.frame_index == frame_index
+        });
         let lanes = if cache_hit {
             self.flame_lane_cache.as_ref().unwrap().lanes.clone()
         } else {
@@ -904,7 +941,11 @@ impl ProfilerPanel {
         // `canvas()` overlay below) — one frame of lag that's imperceptible
         // in practice and stabilizes immediately after the first paint.
         let measured_width = f32::from(self.flame_chart_bounds.size.width);
-        let chart_width = if measured_width > 1.0 { measured_width } else { DEFAULT_CHART_WIDTH };
+        let chart_width = if measured_width > 1.0 {
+            measured_width
+        } else {
+            DEFAULT_CHART_WIDTH
+        };
 
         let search = self.flame_search.to_lowercase();
         let selected_key = self
@@ -916,7 +957,8 @@ impl ProfilerPanel {
         // current lane count so a frame with fewer lanes than the last one
         // doesn't leave stale surfaces/bounds hanging around.
         self.flame_lane_gpu.truncate(lanes.len());
-        self.flame_lane_bounds.resize(lanes.len(), Bounds::default());
+        self.flame_lane_bounds
+            .resize(lanes.len(), Bounds::default());
 
         let mut lane_elements: Vec<AnyElement> = Vec::new();
         let mut total_content_height: f32 = 0.0;
@@ -949,8 +991,11 @@ impl ProfilerPanel {
             // bails out before ever reading it in that case. Hit-testing
             // still needs `hit_bars` regardless, so that half always runs.
             let gpu_available = !self.flame_gpu_unavailable;
-            let mut instances: Vec<BarInstance> =
-                if gpu_available { Vec::with_capacity(lane.bars.len()) } else { Vec::new() };
+            let mut instances: Vec<BarInstance> = if gpu_available {
+                Vec::with_capacity(lane.bars.len())
+            } else {
+                Vec::new()
+            };
             let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
 
             // `BarInstance` coordinates feed a shader whose `viewport` uniform
@@ -972,7 +1017,8 @@ impl ProfilerPanel {
                 if bar_end_ns < visible_start_ns || bar_start_ns > visible_end_ns {
                     continue;
                 }
-                let (x, width) = bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
+                let (x, width) =
+                    bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
                 let top = bar.depth as f32 * FLAME_ROW_HEIGHT;
 
                 if gpu_available {
@@ -987,7 +1033,9 @@ impl ProfilerPanel {
                         *name == bar.label && *depth == bar.depth && *dur == bar.duration_ns
                     });
                     let is_hovered = self.hovered_bar.as_ref().is_some_and(|h| {
-                        h.lane_index == lane_index && h.start_ns == bar.start_ns && h.depth == bar.depth
+                        h.lane_index == lane_index
+                            && h.start_ns == bar.start_ns
+                            && h.depth == bar.depth
                     });
 
                     let mut rgba = color.to_rgb();
@@ -997,14 +1045,22 @@ impl ProfilerPanel {
 
                     instances.push(BarInstance {
                         rect_min: [x * scale, top * scale],
-                        rect_max: [(x + width) * scale, (top + (FLAME_ROW_HEIGHT - 2.0)) * scale],
+                        rect_max: [
+                            (x + width) * scale,
+                            (top + (FLAME_ROW_HEIGHT - 2.0)) * scale,
+                        ],
                         color: [rgba.r, rgba.g, rgba.b, rgba.a],
                         corner_radius: 3.0 * scale,
                         highlight: if is_selected || is_hovered { 1.0 } else { 0.0 },
                         _pad: [0.0, 0.0],
                     });
                 }
-                hit_bars.push(HitBar { bar: bar.clone(), x, width, top });
+                hit_bars.push(HitBar {
+                    bar: bar.clone(),
+                    x,
+                    width,
+                    top,
+                });
             }
 
             // Lazily create (and lazily paint into) this lane's own GPU
@@ -1032,7 +1088,12 @@ impl ProfilerPanel {
                 // meantime, same as every other interactive-resize surface
                 // in this codebase) is what `WgpuSurface` exists to let us
                 // opt into.
-                row = row.child(wgpu_surface(handle).absolute().inset_0().defer_resize_until_mouse_up(true));
+                row = row.child(
+                    wgpu_surface(handle)
+                        .absolute()
+                        .inset_0()
+                        .defer_resize_until_mouse_up(true),
+                );
             }
 
             let entity = cx.entity().clone();
@@ -1065,28 +1126,38 @@ impl ProfilerPanel {
             let hit_bars_for_move = Rc::new(hit_bars);
             let hit_bars_for_click = hit_bars_for_move.clone();
             let lane_label_for_click = lane.label.clone();
-            row = row
-                .child(
-                    div()
-                        .id(SharedString::from(format!("flame-lane-hit-{lane_index}")))
-                        .absolute()
-                        .inset_0()
-                        .cursor_pointer()
-                        .on_mouse_move(cx.listener(move |state, event: &MouseMoveEvent, _window, cx| {
-                            state.update_flame_hover(lane_index, &hit_bars_for_move, event.position, cx);
-                        }))
-                        .on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
-                            state.select_flame_bar_at(
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("flame-lane-hit-{lane_index}")))
+                    .absolute()
+                    .inset_0()
+                    .cursor_pointer()
+                    .on_mouse_move(cx.listener(
+                        move |state, event: &MouseMoveEvent, _window, cx| {
+                            state.update_flame_hover(
                                 lane_index,
-                                &hit_bars_for_click,
-                                lane_label_for_click.clone(),
-                                event.position(),
+                                &hit_bars_for_move,
+                                event.position,
                                 cx,
                             );
-                        })),
-                );
+                        },
+                    ))
+                    .on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
+                        state.select_flame_bar_at(
+                            lane_index,
+                            &hit_bars_for_click,
+                            lane_label_for_click.clone(),
+                            event.position(),
+                            cx,
+                        );
+                    })),
+            );
 
-            if let Some(hover) = self.hovered_bar.as_ref().filter(|h| h.lane_index == lane_index) {
+            if let Some(hover) = self
+                .hovered_bar
+                .as_ref()
+                .filter(|h| h.lane_index == lane_index)
+            {
                 row = row.child(flame_bar_tooltip(hover, cx));
             }
 
@@ -1116,7 +1187,12 @@ impl ProfilerPanel {
         let mut marker_elements: Vec<AnyElement> = Vec::new();
         if let (Some(submit_ns), Some(fence_ns)) = (cpu_gpu_submit_ns, cpu_gpu_fence_observed_ns) {
             if let Some(x) = ns_to_x(submit_ns, visible_start_ns, visible_span_ns, chart_width) {
-                marker_elements.push(timeline_marker(x, total_content_height, cx.theme().warning, "CPU submit"));
+                marker_elements.push(timeline_marker(
+                    x,
+                    total_content_height,
+                    cx.theme().warning,
+                    "CPU submit",
+                ));
             }
             if let Some(x) = ns_to_x(fence_ns, visible_start_ns, visible_span_ns, chart_width) {
                 marker_elements.push(timeline_marker(
@@ -1171,7 +1247,9 @@ impl ProfilerPanel {
                     / width)
                     .clamp(0.0, 1.0);
                 let delta_y = f32::from(event.delta.pixel_delta(window.line_height()).y);
-                state.flame_zoom.zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
+                state
+                    .flame_zoom
+                    .zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
                 cx.notify();
             }))
             .on_click(cx.listener(|state, event: &ClickEvent, _window, cx| {
@@ -1187,15 +1265,17 @@ impl ProfilerPanel {
                     cx.new(|_| ProfilerPanDrag)
                 }
             })
-            .on_drag_move(cx.listener(|state, event: &DragMoveEvent<ProfilerPanDrag>, _window, cx| {
-                let width = f32::from(event.bounds.size.width).max(1.0);
-                let x = f32::from(event.event.position.x);
-                if let Some(last_x) = state.flame_pan_last_x {
-                    state.flame_zoom.pan_by_fraction(-(x - last_x) / width);
-                }
-                state.flame_pan_last_x = Some(x);
-                cx.notify();
-            }))
+            .on_drag_move(cx.listener(
+                |state, event: &DragMoveEvent<ProfilerPanDrag>, _window, cx| {
+                    let width = f32::from(event.bounds.size.width).max(1.0);
+                    let x = f32::from(event.event.position.x);
+                    if let Some(last_x) = state.flame_pan_last_x {
+                        state.flame_zoom.pan_by_fraction(-(x - last_x) / width);
+                    }
+                    state.flame_pan_last_x = Some(x);
+                    cx.notify();
+                },
+            ))
             // Right-click+drag pans the time axis too, alongside the
             // left-button `on_drag`/`on_drag_move` above -- the flame
             // chart's per-lane hit-test overlays use left-click for
@@ -1230,7 +1310,12 @@ impl ProfilerPanel {
                     state.flame_pan_last_x = None;
                 }),
             )
-            .child(v_flex().id("flame-chart-lanes").gap_1().children(lane_elements))
+            .child(
+                v_flex()
+                    .id("flame-chart-lanes")
+                    .gap_1()
+                    .children(lane_elements),
+            )
             .children(marker_elements)
             .into_any_element()
     }
@@ -1267,7 +1352,8 @@ impl ProfilerPanel {
             };
             let device = surface.device().clone();
             if self.flame_bar_pipeline.is_none() {
-                self.flame_bar_pipeline = Some(Rc::new(FlameBarPipeline::new(&device, surface.format())));
+                self.flame_bar_pipeline =
+                    Some(Rc::new(FlameBarPipeline::new(&device, surface.format())));
             }
             let pipeline = self.flame_bar_pipeline.clone().unwrap();
             self.flame_lane_gpu[lane_index] = Some(FlameLaneGpu::new(&device, surface, &pipeline));
@@ -1300,7 +1386,11 @@ impl ProfilerPanel {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let bounds = self.flame_lane_bounds.get(lane_index).copied().unwrap_or_default();
+        let bounds = self
+            .flame_lane_bounds
+            .get(lane_index)
+            .copied()
+            .unwrap_or_default();
         let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
         let found = hit_test_lane_bar(hit_bars, local);
 
@@ -1316,7 +1406,9 @@ impl ProfilerPanel {
 
         let changed = match (&self.hovered_bar, &new_hover) {
             (None, None) => false,
-            (Some(a), Some(b)) => a.lane_index != b.lane_index || a.start_ns != b.start_ns || a.depth != b.depth,
+            (Some(a), Some(b)) => {
+                a.lane_index != b.lane_index || a.start_ns != b.start_ns || a.depth != b.depth
+            }
             _ => true,
         };
         self.hovered_bar = new_hover;
@@ -1336,7 +1428,11 @@ impl ProfilerPanel {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let bounds = self.flame_lane_bounds.get(lane_index).copied().unwrap_or_default();
+        let bounds = self
+            .flame_lane_bounds
+            .get(lane_index)
+            .copied()
+            .unwrap_or_default();
         let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
         let Some(hit) = hit_test_lane_bar(hit_bars, local) else {
             return;
@@ -1358,7 +1454,11 @@ impl ProfilerPanel {
             .columns(2)
             .label_width(px(90.))
             .bordered(true)
-            .child("Duration", format!("{:.3}ms", span.duration_ns as f64 / 1.0e6), 1)
+            .child(
+                "Duration",
+                format!("{:.3}ms", span.duration_ns as f64 / 1.0e6),
+                1,
+            )
             .child("Depth", span.depth.to_string(), 1)
             .child("Lane", span.lane.clone(), 1)
             .child("Category", span.category_label.clone(), 1);
@@ -1440,7 +1540,11 @@ impl ProfilerPanel {
         let zoomed = self.counters_zoom.is_zoomed();
 
         let measured_width = f32::from(self.counters_chart_bounds.size.width);
-        let chart_width = if measured_width > 1.0 { measured_width } else { DEFAULT_CHART_WIDTH };
+        let chart_width = if measured_width > 1.0 {
+            measured_width
+        } else {
+            DEFAULT_CHART_WIDTH
+        };
         let bar_width = ((chart_width as f64 / visible_span) as f32).max(1.0);
 
         let start_index = visible_start.floor().max(0.0) as usize;
@@ -1450,7 +1554,11 @@ impl ProfilerPanel {
         for index in start_index..end_index {
             let ms = self.frame_durations_ms[index];
             let height = ((ms / max_ms) * SPARKLINE_HEIGHT).max(1.0);
-            let color = if ms > 16.7 { cx.theme().danger } else { cx.theme().chart_1 };
+            let color = if ms > 16.7 {
+                cx.theme().danger
+            } else {
+                cx.theme().chart_1
+            };
             let x = ((index as f64 - visible_start) / visible_span) as f32 * chart_width;
             bar_elements.push(
                 div()
@@ -1474,7 +1582,10 @@ impl ProfilerPanel {
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(cx.theme().foreground)
-                    .child(format!("Frame Duration Over Capture Window (max {:.2}ms)", max_ms)),
+                    .child(format!(
+                        "Frame Duration Over Capture Window (max {:.2}ms)",
+                        max_ms
+                    )),
             )
             .child(div().flex_1())
             .child(render_zoom_controls(
@@ -1513,7 +1624,9 @@ impl ProfilerPanel {
                             {
                                 let entity = entity.clone();
                                 move |bounds, _window, cx| {
-                                    entity.update(cx, |state, _cx| state.counters_chart_bounds = bounds);
+                                    entity.update(cx, |state, _cx| {
+                                        state.counters_chart_bounds = bounds
+                                    });
                                 }
                             },
                             |_, _, _, _| {},
@@ -1535,7 +1648,9 @@ impl ProfilerPanel {
                             / width)
                             .clamp(0.0, 1.0);
                         let delta_y = f32::from(event.delta.pixel_delta(window.line_height()).y);
-                        state.counters_zoom.zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
+                        state
+                            .counters_zoom
+                            .zoom_at(cursor_fraction, zoom_factor_for_wheel_delta(delta_y));
                         cx.notify();
                     }))
                     .on_click(cx.listener(|state, event: &ClickEvent, _window, cx| {
@@ -1628,10 +1743,13 @@ impl ProfilerPanel {
 
         if self.memory_cpu.is_none() && self.memory_gpu.is_none() {
             root = root.child(
-                div().text_sm().text_color(cx.theme().muted_foreground).child(
-                    "Click Refresh to snapshot WGPUI's current CPU/GPU memory footprint. \
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Click Refresh to snapshot WGPUI's current CPU/GPU memory footprint. \
                      This is a live, on-demand query — not tracked per frame.",
-                ),
+                    ),
             );
         } else {
             if let Some(cpu) = self.memory_cpu.clone() {
@@ -1683,20 +1801,29 @@ impl ProfilerPanel {
         if attempt >= CAPTURE_POLL_TIMEOUT_ATTEMPTS {
             self.ui_tree_pending = false;
             self.ui_tree_poll_task = None;
-            self.ui_tree_error =
-                Some("Timed out waiting for a frame to draw and complete the UI tree capture.".into());
+            self.ui_tree_error = Some(
+                "Timed out waiting for a frame to draw and complete the UI tree capture.".into(),
+            );
             cx.notify();
             return;
         }
         self.schedule_ui_tree_poll(attempt + 1, window, cx);
     }
 
-    fn render_ui_tree_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_ui_tree_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let capture_button = Button::new("ui-tree-capture")
             .small()
             .primary()
             .icon(IconName::Camera)
-            .label(if self.ui_tree_pending { "Capturing..." } else { "Capture UI Tree" })
+            .label(if self.ui_tree_pending {
+                "Capturing..."
+            } else {
+                "Capture UI Tree"
+            })
             .loading(self.ui_tree_pending)
             .disabled(self.ui_tree_pending)
             .on_click(cx.listener(|state, _, window, cx| state.start_ui_tree_capture(window, cx)));
@@ -1707,11 +1834,14 @@ impl ProfilerPanel {
         }
         if let Some(replay) = self.ui_tree_replay.as_ref() {
             header = header.child(
-                div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
-                    "{} nodes · {} scene primitives",
-                    replay.node_count(),
-                    replay.scene().primitive_count()
-                )),
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{} nodes · {} scene primitives",
+                        replay.node_count(),
+                        replay.scene().primitive_count()
+                    )),
             );
         }
 
@@ -1735,9 +1865,12 @@ impl ProfilerPanel {
 
         root = root.child(self.render_ui_tree_list(cx));
 
-        let selected_node = self
-            .ui_tree_selected
-            .and_then(|ix| self.ui_tree_replay.as_ref().and_then(|r| r.node(ix)).cloned());
+        let selected_node = self.ui_tree_selected.and_then(|ix| {
+            self.ui_tree_replay
+                .as_ref()
+                .and_then(|r| r.node(ix))
+                .cloned()
+        });
         if let Some(node) = selected_node {
             root = root.child(render_ui_tree_node_details(&node, cx));
         }
@@ -1807,8 +1940,17 @@ impl ProfilerPanel {
                         }
 
                         el = el
-                            .child(div().text_color(type_name_color).child(row.type_name.clone()))
-                            .child(div().ml(px(6.)).text_color(muted).child(row.bounds_label.clone()));
+                            .child(
+                                div()
+                                    .text_color(type_name_color)
+                                    .child(row.type_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .ml(px(6.))
+                                    .text_color(muted)
+                                    .child(row.bounds_label.clone()),
+                            );
 
                         let entity_for_click = entity.clone();
                         el.on_click(move |_, _window, cx| {
@@ -1842,7 +1984,12 @@ impl ProfilerPanel {
         self.schedule_deep_capture_poll(0, window, cx);
     }
 
-    fn schedule_deep_capture_poll(&mut self, attempt: u32, window: &mut Window, cx: &mut Context<Self>) {
+    fn schedule_deep_capture_poll(
+        &mut self,
+        attempt: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.deep_capture_poll_task = Some(cx.spawn_in(window, async move |this, cx| {
             Timer::after(CAPTURE_POLL_INTERVAL).await;
             let _ = this.update_in(cx, |state, window, cx| {
@@ -1851,7 +1998,12 @@ impl ProfilerPanel {
         }));
     }
 
-    fn deep_capture_poll_tick(&mut self, attempt: u32, window: &mut Window, cx: &mut Context<Self>) {
+    fn deep_capture_poll_tick(
+        &mut self,
+        attempt: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(capture) = gpui::take_completed_deep_capture() {
             self.deep_capture_replay = Some(DeepCaptureReplay::new(capture));
             self.deep_capture_pending = false;
@@ -1873,7 +2025,9 @@ impl ProfilerPanel {
 
     fn step_deep_capture(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
         {
-            let Some(replay) = self.deep_capture_replay.as_mut() else { return };
+            let Some(replay) = self.deep_capture_replay.as_mut() else {
+                return;
+            };
             if delta > 0 {
                 replay.step_to_next_draw_call();
             } else {
@@ -1938,41 +2092,55 @@ impl ProfilerPanel {
             (fallback_h * scale) as u32
         };
 
-        self.deep_capture_preview =
-            Some(match gpui::render_deep_capture_step(&device, &queue, replay, step, width, height) {
-                Ok(output) => match image::RgbaImage::from_raw(output.width, output.height, output.rgba8) {
-                    Some(rgba) => {
-                        let frame = image::Frame::new(rgba);
-                        let render_image = Arc::new(RenderImage::new(smallvec::smallvec![frame]));
-                        DeepCapturePreview::Image {
-                            image: render_image,
-                            width: output.width,
-                            height: output.height,
-                            texture_unavailable: output.texture_unavailable,
+        self.deep_capture_preview = Some(
+            match gpui::render_deep_capture_step(&device, &queue, replay, step, width, height) {
+                Ok(output) => {
+                    match image::RgbaImage::from_raw(output.width, output.height, output.rgba8) {
+                        Some(rgba) => {
+                            let frame = image::Frame::new(rgba);
+                            let render_image =
+                                Arc::new(RenderImage::new(smallvec::smallvec![frame]));
+                            DeepCapturePreview::Image {
+                                image: render_image,
+                                width: output.width,
+                                height: output.height,
+                                texture_unavailable: output.texture_unavailable,
+                            }
                         }
+                        None => DeepCapturePreview::Unavailable(
+                            "Replay produced an image buffer of an unexpected size.".into(),
+                        ),
                     }
-                    None => DeepCapturePreview::Unavailable(
-                        "Replay produced an image buffer of an unexpected size.".into(),
-                    ),
-                },
-                Err(gpui::ReplayError::UnsupportedDrawCallKind(kind)) => DeepCapturePreview::Unavailable(
-                    format!(
-                        "No live preview pipeline is wired up yet for {:?} draw calls \
+                }
+                Err(gpui::ReplayError::UnsupportedDrawCallKind(kind)) => {
+                    DeepCapturePreview::Unavailable(
+                        format!(
+                            "No live preview pipeline is wired up yet for {:?} draw calls \
                          (only Quads render a real preview this round).",
-                        kind
+                            kind
+                        )
+                        .into(),
                     )
-                    .into(),
-                ),
+                }
                 Err(err) => DeepCapturePreview::Unavailable(format!("Replay failed: {err}").into()),
-            });
+            },
+        );
     }
 
-    fn render_deep_capture_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_deep_capture_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let trigger = Button::new("deep-capture-trigger")
             .small()
             .primary()
             .icon(IconName::Camera)
-            .label(if self.deep_capture_pending { "Capturing..." } else { "Capture Frame" })
+            .label(if self.deep_capture_pending {
+                "Capturing..."
+            } else {
+                "Capture Frame"
+            })
             .loading(self.deep_capture_pending)
             .disabled(self.deep_capture_pending)
             .on_click(cx.listener(|state, _, window, cx| state.start_deep_capture(window, cx)));
@@ -1990,7 +2158,12 @@ impl ProfilerPanel {
             );
         }
 
-        let mut root = v_flex().id("deep-capture-section").gap_3().p_2().size_full().child(header);
+        let mut root = v_flex()
+            .id("deep-capture-section")
+            .gap_3()
+            .p_2()
+            .size_full()
+            .child(header);
 
         if let Some(err) = self.deep_capture_error.clone() {
             root = root.child(Alert::error("deep-capture-error", err));
@@ -2033,21 +2206,24 @@ impl ProfilerPanel {
                         .ghost()
                         .icon(IconName::ChevronLeft)
                         .disabled(current_step == 0)
-                        .on_click(cx.listener(|state, _, window, cx| state.step_deep_capture(-1, window, cx))),
+                        .on_click(cx.listener(|state, _, window, cx| {
+                            state.step_deep_capture(-1, window, cx)
+                        })),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .min_w(px(110.))
-                        .child(format!("Draw call {} / {}", current_step + 1, draw_call_count.max(1))),
-                )
+                .child(div().text_xs().min_w(px(110.)).child(format!(
+                    "Draw call {} / {}",
+                    current_step + 1,
+                    draw_call_count.max(1)
+                )))
                 .child(
                     Button::new("deep-next")
                         .xsmall()
                         .ghost()
                         .icon(IconName::ChevronRight)
                         .disabled(current_step + 1 >= draw_call_count)
-                        .on_click(cx.listener(|state, _, window, cx| state.step_deep_capture(1, window, cx))),
+                        .on_click(cx.listener(|state, _, window, cx| {
+                            state.step_deep_capture(1, window, cx)
+                        })),
                 ),
         );
 
@@ -2103,7 +2279,9 @@ impl ProfilerPanel {
             .cursor_pointer()
             .when(is_current, |d| d.bg(cx.theme().list_active))
             .hover(|s| s.bg(cx.theme().list_hover))
-            .on_click(cx.listener(move |state, _, window, cx| state.seek_deep_capture(index, window, cx)))
+            .on_click(
+                cx.listener(move |state, _, window, cx| state.seek_deep_capture(index, window, cx)),
+            )
             .child(
                 div()
                     .w(px(32.))
@@ -2112,8 +2290,17 @@ impl ProfilerPanel {
             )
             .child(div().w(px(7.)).h(px(7.)).rounded_full().bg(status_color))
             .child(div().w(px(90.)).child(kind_label))
-            .child(div().flex_1().text_color(cx.theme().muted_foreground).child(pipeline_label))
-            .child(div().text_color(cx.theme().muted_foreground).child(pass_label))
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(pipeline_label),
+            )
+            .child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(pass_label),
+            )
             .into_any_element()
     }
 
@@ -2157,10 +2344,22 @@ impl ProfilerPanel {
             Some(DeepCapturePreview::Unavailable(message)) => v_flex()
                 .gap_1()
                 .child(title_row)
-                .child(Alert::warning("deep-capture-preview-unavailable", message.clone()))
+                .child(Alert::warning(
+                    "deep-capture-preview-unavailable",
+                    message.clone(),
+                ))
                 .into_any_element(),
-            Some(DeepCapturePreview::Image { image, width, height, texture_unavailable }) => {
-                let display_width = if measured_width > 40.0 { measured_width } else { 280.0 };
+            Some(DeepCapturePreview::Image {
+                image,
+                width,
+                height,
+                texture_unavailable,
+            }) => {
+                let display_width = if measured_width > 40.0 {
+                    measured_width
+                } else {
+                    280.0
+                };
                 let scale = display_width / (*width as f32).max(1.0);
                 let display_height = ((*height as f32) * scale).max(1.0);
 
@@ -2255,9 +2454,11 @@ impl ProfilerPanel {
                                         .clamp(0.0, 1.0);
                                     let delta_y =
                                         f32::from(event.delta.pixel_delta(window.line_height()).y);
-                                    state
-                                        .deep_capture_view
-                                        .zoom_at(fx, fy, zoom_factor_for_wheel_delta(delta_y));
+                                    state.deep_capture_view.zoom_at(
+                                        fx,
+                                        fy,
+                                        zoom_factor_for_wheel_delta(delta_y),
+                                    );
                                     cx.notify();
                                 },
                             ))
@@ -2270,7 +2471,9 @@ impl ProfilerPanel {
                             .on_drag(ProfilerPanDrag, {
                                 let entity = entity.clone();
                                 move |_, _start_position, _window, cx| {
-                                    entity.update(cx, |state, _cx| state.deep_capture_pan_last = None);
+                                    entity.update(cx, |state, _cx| {
+                                        state.deep_capture_pan_last = None
+                                    });
                                     cx.new(|_| ProfilerPanDrag)
                                 }
                             })
@@ -2300,23 +2503,29 @@ impl ProfilerPanel {
                                     state.deep_capture_pan_last = None;
                                 }),
                             )
-                            .on_mouse_move(cx.listener(|state, event: &MouseMoveEvent, _window, cx| {
-                                if event.pressed_button != Some(MouseButton::Right) {
-                                    return;
-                                }
-                                let width = f32::from(state.deep_capture_preview_bounds.size.width).max(1.0);
-                                let height = f32::from(state.deep_capture_preview_bounds.size.height).max(1.0);
-                                let x = f32::from(event.position.x);
-                                let y = f32::from(event.position.y);
-                                if let Some((last_x, last_y)) = state.deep_capture_pan_last {
-                                    state.deep_capture_view.pan_by_fraction(
-                                        -(x - last_x) / width,
-                                        -(y - last_y) / height,
-                                    );
-                                    cx.notify();
-                                }
-                                state.deep_capture_pan_last = Some((x, y));
-                            }))
+                            .on_mouse_move(cx.listener(
+                                |state, event: &MouseMoveEvent, _window, cx| {
+                                    if event.pressed_button != Some(MouseButton::Right) {
+                                        return;
+                                    }
+                                    let width =
+                                        f32::from(state.deep_capture_preview_bounds.size.width)
+                                            .max(1.0);
+                                    let height =
+                                        f32::from(state.deep_capture_preview_bounds.size.height)
+                                            .max(1.0);
+                                    let x = f32::from(event.position.x);
+                                    let y = f32::from(event.position.y);
+                                    if let Some((last_x, last_y)) = state.deep_capture_pan_last {
+                                        state.deep_capture_view.pan_by_fraction(
+                                            -(x - last_x) / width,
+                                            -(y - last_y) / height,
+                                        );
+                                        cx.notify();
+                                    }
+                                    state.deep_capture_pan_last = Some((x, y));
+                                },
+                            ))
                             .on_mouse_up(
                                 MouseButton::Right,
                                 cx.listener(|state, _event: &MouseUpEvent, _window, cx| {
@@ -2333,12 +2542,10 @@ impl ProfilerPanel {
                             ),
                     )
                     .when(*texture_unavailable, |this| {
-                        this.child(
-                            div().text_xs().text_color(cx.theme().warning).child(
-                                "Placeholder checkerboard: texture content for this draw-call \
+                        this.child(div().text_xs().text_color(cx.theme().warning).child(
+                            "Placeholder checkerboard: texture content for this draw-call \
                                  kind is not captured yet (atlas/surface readback, issue #72).",
-                            ),
-                        )
+                        ))
                     })
                     .into_any_element()
             }
@@ -2354,7 +2561,10 @@ impl ProfilerPanel {
     }
 }
 
-fn profiler_empty_state(message: impl Into<SharedString>, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn profiler_empty_state(
+    message: impl Into<SharedString>,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     // `px(8.)`, matching the empty/placeholder-state padding `inspector.rs`
     // uses for its own tabs (Styles/Layout/Event Listeners), so the Profiler
     // tab's empty states read as part of the same panel rather than using
@@ -2496,7 +2706,12 @@ struct HoveredBar {
 /// Computes a bar's `(x, width)` in chart pixels for the current zoom
 /// window. Shared by the GPU-instance builder and `hit_test_lane_bar` so the
 /// two can never disagree about where a bar is drawn.
-fn bar_screen_rect(bar: &FlameBar, visible_start_ns: f64, visible_span_ns: f64, chart_width: f32) -> (f32, f32) {
+fn bar_screen_rect(
+    bar: &FlameBar,
+    visible_start_ns: f64,
+    visible_span_ns: f64,
+    chart_width: f32,
+) -> (f32, f32) {
     let bar_start_ns = bar.start_ns as f64;
     let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
     let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
@@ -2520,9 +2735,12 @@ fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
     if needle.len() > haystack.len() {
         return false;
     }
-    haystack
-        .windows(needle.len())
-        .any(|window| window.iter().zip(needle).all(|(&h, &n)| h.to_ascii_lowercase() == n))
+    haystack.windows(needle.len()).any(|window| {
+        window
+            .iter()
+            .zip(needle)
+            .all(|(&h, &n)| h.to_ascii_lowercase() == n)
+    })
 }
 
 /// Maps a nanosecond instant to an x pixel coordinate in the current zoom
@@ -2547,9 +2765,9 @@ fn hit_test_lane_bar(hit_bars: &[HitBar], local: gpui::Point<Pixels>) -> Option<
     if y < 0.0 {
         return None;
     }
-    hit_bars
-        .iter()
-        .find(|hb| y >= hb.top && y <= hb.top + FLAME_ROW_HEIGHT && x >= hb.x && x <= hb.x + hb.width)
+    hit_bars.iter().find(|hb| {
+        y >= hb.top && y <= hb.top + FLAME_ROW_HEIGHT && x >= hb.x && x <= hb.x + hb.width
+    })
 }
 
 fn flame_bar_tooltip(hover: &HoveredBar, cx: &Context<ProfilerPanel>) -> AnyElement {
@@ -2667,7 +2885,10 @@ impl FlameBarPipeline {
             cache: None,
         });
 
-        Self { pipeline, bind_group_layout }
+        Self {
+            pipeline,
+            bind_group_layout,
+        }
     }
 }
 
@@ -2686,7 +2907,11 @@ struct FlameLaneGpu {
 impl FlameLaneGpu {
     const INITIAL_CAPACITY: usize = 64;
 
-    fn new(device: &wgpu::Device, surface: gpui::WgpuSurfaceHandle, pipeline: &FlameBarPipeline) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        surface: gpui::WgpuSurfaceHandle,
+        pipeline: &FlameBarPipeline,
+    ) -> Self {
         let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("flame_bar_viewport"),
             size: 16,
@@ -2694,7 +2919,8 @@ impl FlameLaneGpu {
             mapped_at_creation: false,
         });
         let instance_buffer = Self::make_instance_buffer(device, Self::INITIAL_CAPACITY);
-        let bind_group = Self::make_bind_group(device, pipeline, &viewport_buffer, &instance_buffer);
+        let bind_group =
+            Self::make_bind_group(device, pipeline, &viewport_buffer, &instance_buffer);
         Self {
             surface,
             viewport_buffer,
@@ -2723,20 +2949,36 @@ impl FlameLaneGpu {
             label: Some("flame_bar_bind_group"),
             layout: &pipeline.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: viewport_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: instance_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: viewport_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: instance_buffer.as_entire_binding(),
+                },
             ],
         })
     }
 
-    fn ensure_capacity(&mut self, device: &wgpu::Device, pipeline: &FlameBarPipeline, needed: usize) {
+    fn ensure_capacity(
+        &mut self,
+        device: &wgpu::Device,
+        pipeline: &FlameBarPipeline,
+        needed: usize,
+    ) {
         if needed <= self.instance_capacity {
             return;
         }
         let new_capacity = needed.next_power_of_two().max(Self::INITIAL_CAPACITY);
         self.instance_buffer = Self::make_instance_buffer(device, new_capacity);
         self.instance_capacity = new_capacity;
-        self.bind_group = Self::make_bind_group(device, pipeline, &self.viewport_buffer, &self.instance_buffer);
+        self.bind_group = Self::make_bind_group(
+            device,
+            pipeline,
+            &self.viewport_buffer,
+            &self.instance_buffer,
+        );
     }
 
     fn render(
@@ -2752,13 +2994,18 @@ impl FlameLaneGpu {
         self.ensure_capacity(&device, pipeline, instances.len());
 
         let viewport_data = [width as f32, height as f32, 0.0f32, 0.0f32];
-        queue.write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&viewport_data));
+        queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&viewport_data),
+        );
         if !instances.is_empty() {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
         }
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("flame_bar_encoder") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("flame_bar_encoder"),
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("flame_bar_pass"),
@@ -2866,7 +3113,10 @@ fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
 
     let mut background_by_thread: Vec<(gpui::ThreadKey, Vec<gpui::CpuSpan>)> = Vec::new();
     for span in &frame.background_spans {
-        if let Some(entry) = background_by_thread.iter_mut().find(|(key, _)| *key == span.thread_id) {
+        if let Some(entry) = background_by_thread
+            .iter_mut()
+            .find(|(key, _)| *key == span.thread_id)
+        {
             entry.1.push(*span);
         } else {
             background_by_thread.push((span.thread_id, vec![*span]));
@@ -2920,19 +3170,38 @@ fn gpu_pass_color(kind: gpui::GpuPassKind, cx: &Context<ProfilerPanel>) -> gpui:
 fn render_counter_tiles(summary: &gpui::CounterSummary, cx: &Context<ProfilerPanel>) -> AnyElement {
     let tiles = [
         ("FPS", format!("{:.1}", summary.fps)),
-        ("Mean Frame", format!("{:.2}ms", summary.mean_frame_duration_ms)),
-        ("Max Frame", format!("{:.2}ms", summary.max_frame_duration_ms)),
+        (
+            "Mean Frame",
+            format!("{:.2}ms", summary.mean_frame_duration_ms),
+        ),
+        (
+            "Max Frame",
+            format!("{:.2}ms", summary.max_frame_duration_ms),
+        ),
         ("Present Mode", format!("{}", summary.present_mode)),
         ("Frames Captured", summary.frame_count.to_string()),
-        ("Full-draw Frames", summary.full_draw_frame_count.to_string()),
-        ("Fast-path Frames", summary.fast_path_frame_count.to_string()),
-        ("Atlas Hit Rate", format!("{:.1}%", summary.atlas.cache_hit_rate * 100.0)),
+        (
+            "Full-draw Frames",
+            summary.full_draw_frame_count.to_string(),
+        ),
+        (
+            "Fast-path Frames",
+            summary.fast_path_frame_count.to_string(),
+        ),
+        (
+            "Atlas Hit Rate",
+            format!("{:.1}%", summary.atlas.cache_hit_rate * 100.0),
+        ),
     ];
 
     h_flex()
         .flex_wrap()
         .gap_2()
-        .children(tiles.into_iter().map(|(label, value)| profiler_stat_tile(label, value, cx)))
+        .children(
+            tiles
+                .into_iter()
+                .map(|(label, value)| profiler_stat_tile(label, value, cx)),
+        )
         .into_any_element()
 }
 
@@ -2943,7 +3212,12 @@ fn profiler_stat_tile(label: &str, value: String, cx: &Context<ProfilerPanel>) -
         .gap_1()
         .rounded_md()
         .bg(cx.theme().muted)
-        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(label.to_string()))
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label.to_string()),
+        )
         .child(
             div()
                 .text_base()
@@ -2954,7 +3228,10 @@ fn profiler_stat_tile(label: &str, value: String, cx: &Context<ProfilerPanel>) -
         .into_any_element()
 }
 
-fn render_draw_call_table(summary: &gpui::CounterSummary, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_draw_call_table(
+    summary: &gpui::CounterSummary,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     let rows: [(&str, gpui::PassCounterSummary); 8] = [
         ("Quads", summary.draw_calls.quads),
         ("Shadows", summary.draw_calls.shadows),
@@ -2976,8 +3253,11 @@ fn render_draw_call_table(summary: &gpui::CounterSummary, cx: &Context<ProfilerP
                 .child("Draw Calls & Primitives (mean / max, per frame)"),
         )
         .child(
-            v_flex().border_1().border_color(cx.theme().border).rounded_md().children(
-                rows.into_iter().map(|(name, pass)| {
+            v_flex()
+                .border_1()
+                .border_color(cx.theme().border)
+                .rounded_md()
+                .children(rows.into_iter().map(|(name, pass)| {
                     h_flex()
                         .justify_between()
                         .px_2()
@@ -2985,27 +3265,40 @@ fn render_draw_call_table(summary: &gpui::CounterSummary, cx: &Context<ProfilerP
                         .text_xs()
                         .border_b_1()
                         .border_color(cx.theme().border)
-                        .child(div().w(px(120.)).text_color(cx.theme().foreground).child(name))
+                        .child(
+                            div()
+                                .w(px(120.))
+                                .text_color(cx.theme().foreground)
+                                .child(name),
+                        )
                         .child(
                             div()
                                 .w(px(140.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child(format!("calls {:.1}/{}", pass.draw_calls.mean, pass.draw_calls.max)),
+                                .child(format!(
+                                    "calls {:.1}/{}",
+                                    pass.draw_calls.mean, pass.draw_calls.max
+                                )),
                         )
                         .child(
                             div()
                                 .w(px(160.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child(format!("prims {:.1}/{}", pass.primitives.mean, pass.primitives.max)),
+                                .child(format!(
+                                    "prims {:.1}/{}",
+                                    pass.primitives.mean, pass.primitives.max
+                                )),
                         )
                         .into_any_element()
-                }),
-            ),
+                })),
         )
         .into_any_element()
 }
 
-fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_atlas_and_events(
+    summary: &gpui::CounterSummary,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     h_flex()
         .gap_3()
         .flex_wrap()
@@ -3016,22 +3309,34 @@ fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<Profiler
                 .bordered(true)
                 .child(
                     "Tiles Allocated",
-                    format!("{:.1}/{}", summary.atlas.tiles_allocated.mean, summary.atlas.tiles_allocated.max),
+                    format!(
+                        "{:.1}/{}",
+                        summary.atlas.tiles_allocated.mean, summary.atlas.tiles_allocated.max
+                    ),
                     1,
                 )
                 .child(
                     "Tiles Evicted",
-                    format!("{:.1}/{}", summary.atlas.tiles_evicted.mean, summary.atlas.tiles_evicted.max),
+                    format!(
+                        "{:.1}/{}",
+                        summary.atlas.tiles_evicted.mean, summary.atlas.tiles_evicted.max
+                    ),
                     1,
                 )
                 .child(
                     "Cache Hits",
-                    format!("{:.1}/{}", summary.atlas.cache_hits.mean, summary.atlas.cache_hits.max),
+                    format!(
+                        "{:.1}/{}",
+                        summary.atlas.cache_hits.mean, summary.atlas.cache_hits.max
+                    ),
                     1,
                 )
                 .child(
                     "Cache Misses",
-                    format!("{:.1}/{}", summary.atlas.cache_misses.mean, summary.atlas.cache_misses.max),
+                    format!(
+                        "{:.1}/{}",
+                        summary.atlas.cache_misses.mean, summary.atlas.cache_misses.max
+                    ),
                     1,
                 ),
         )
@@ -3044,20 +3349,25 @@ fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<Profiler
                     "Input Events",
                     format!(
                         "{:.1}/{}",
-                        summary.events.input_events_dispatched.mean, summary.events.input_events_dispatched.max
+                        summary.events.input_events_dispatched.mean,
+                        summary.events.input_events_dispatched.max
                     ),
                     1,
                 )
                 .child(
                     "Notify Calls",
-                    format!("{:.1}/{}", summary.events.notify_calls.mean, summary.events.notify_calls.max),
+                    format!(
+                        "{:.1}/{}",
+                        summary.events.notify_calls.mean, summary.events.notify_calls.max
+                    ),
                     1,
                 )
                 .child(
                     "Invalidated",
                     format!(
                         "{:.1}/{}",
-                        summary.events.entities_invalidated.mean, summary.events.entities_invalidated.max
+                        summary.events.entities_invalidated.mean,
+                        summary.events.entities_invalidated.max
                     ),
                     1,
                 ),
@@ -3073,7 +3383,10 @@ fn render_atlas_and_events(summary: &gpui::CounterSummary, cx: &Context<Profiler
 /// finalized, non-empty GPU span set are needed for a frame to count, and
 /// GPU capture/readback lags CPU capture by design -- so `samples` (out of
 /// `summary.frame_count`) is surfaced alongside the mean/max, not hidden.
-fn render_gpu_timeline_stats(summary: &gpui::CounterSummary, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_gpu_timeline_stats(
+    summary: &gpui::CounterSummary,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     let timeline = &summary.gpu_timeline;
 
     v_flex()
@@ -3117,7 +3430,10 @@ fn render_gpu_timeline_stats(summary: &gpui::CounterSummary, cx: &Context<Profil
 
 // ── Memory rendering ─────────────────────────────────────────────────────
 
-fn render_cpu_memory_breakdown(snapshot: &gpui::MemorySnapshot, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_cpu_memory_breakdown(
+    snapshot: &gpui::MemorySnapshot,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     v_flex()
         .gap_1()
         .child(
@@ -3125,23 +3441,45 @@ fn render_cpu_memory_breakdown(snapshot: &gpui::MemorySnapshot, cx: &Context<Pro
                 .text_xs()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().foreground)
-                .child(format!("CPU Memory — {}", format_bytes(snapshot.total_bytes()))),
+                .child(format!(
+                    "CPU Memory — {}",
+                    format_bytes(snapshot.total_bytes())
+                )),
         )
         .child(
             DescriptionList::new()
                 .columns(1)
                 .label_width(px(160.))
                 .bordered(true)
-                .child("Element Arena", format_bytes(snapshot.element_arena_bytes), 1)
-                .child("Glyph Cache", format_bytes(snapshot.text_system.glyph_cache_bytes), 1)
-                .child("Shaped Line Cache", format_bytes(snapshot.text_system.shaped_line_cache_bytes), 1)
+                .child(
+                    "Element Arena",
+                    format_bytes(snapshot.element_arena_bytes),
+                    1,
+                )
+                .child(
+                    "Glyph Cache",
+                    format_bytes(snapshot.text_system.glyph_cache_bytes),
+                    1,
+                )
+                .child(
+                    "Shaped Line Cache",
+                    format_bytes(snapshot.text_system.shaped_line_cache_bytes),
+                    1,
+                )
                 .child("Image Cache", format_bytes(snapshot.image_cache_bytes), 1)
-                .child("Capture Engine", format_bytes(snapshot.capture_engine_bytes), 1),
+                .child(
+                    "Capture Engine",
+                    format_bytes(snapshot.capture_engine_bytes),
+                    1,
+                ),
         )
         .into_any_element()
 }
 
-fn render_gpu_memory_breakdown(snapshot: &gpui::GpuMemorySnapshot, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_gpu_memory_breakdown(
+    snapshot: &gpui::GpuMemorySnapshot,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     v_flex()
         .gap_1()
         .child(
@@ -3149,16 +3487,27 @@ fn render_gpu_memory_breakdown(snapshot: &gpui::GpuMemorySnapshot, cx: &Context<
                 .text_xs()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().foreground)
-                .child(format!("GPU Memory — {}", format_bytes(snapshot.total_bytes()))),
+                .child(format!(
+                    "GPU Memory — {}",
+                    format_bytes(snapshot.total_bytes())
+                )),
         )
         .child(
             DescriptionList::new()
                 .columns(1)
                 .label_width(px(160.))
                 .bordered(true)
-                .child("Fixed Buffers", format_bytes(snapshot.fixed_buffer_bytes), 1)
+                .child(
+                    "Fixed Buffers",
+                    format_bytes(snapshot.fixed_buffer_bytes),
+                    1,
+                )
                 .child("Atlas Textures", format_bytes(snapshot.atlas_bytes), 1)
-                .child("Surface Registry", format_bytes(snapshot.surface_registry_bytes), 1)
+                .child(
+                    "Surface Registry",
+                    format_bytes(snapshot.surface_registry_bytes),
+                    1,
+                )
                 .child("Swapchain", format_bytes(snapshot.swapchain_bytes), 1),
         )
         .into_any_element()
@@ -3188,7 +3537,9 @@ fn flatten_ui_tree_rows(
         selected: Option<usize>,
         rows: &mut Vec<UiTreeRow>,
     ) {
-        let Some(node) = replay.node(index) else { return };
+        let Some(node) = replay.node(index) else {
+            return;
+        };
         let has_children = !replay.children(index).is_empty();
         let is_expanded = !collapsed.contains(&index);
         rows.push(UiTreeRow {
@@ -3238,20 +3589,37 @@ fn render_ui_tree_node_details(node: &UiElementNode, cx: &Context<ProfilerPanel>
             .child("Display", format!("{:?}", style.display), 1)
             .child("Visibility", format!("{:?}", style.visibility), 1)
             .child("Position", format!("{:?}", style.position), 1)
-            .child("Opacity", style.opacity.map(|o| format!("{o:.2}")).unwrap_or_else(|| "—".into()), 1)
+            .child(
+                "Opacity",
+                style
+                    .opacity
+                    .map(|o| format!("{o:.2}"))
+                    .unwrap_or_else(|| "—".into()),
+                1,
+            )
             .child(
                 "Background",
-                style.background.as_ref().map(|b| format!("{:?}", b)).unwrap_or_else(|| "—".into()),
+                style
+                    .background
+                    .as_ref()
+                    .map(|b| format!("{:?}", b))
+                    .unwrap_or_else(|| "—".into()),
                 1,
             )
             .child(
                 "Border Color",
-                style.border_color.map(|c| format!("{:?}", c)).unwrap_or_else(|| "—".into()),
+                style
+                    .border_color
+                    .map(|c| format!("{:?}", c))
+                    .unwrap_or_else(|| "—".into()),
                 1,
             )
             .child(
                 "Text Color",
-                style.text_color.map(|c| format!("{:?}", c)).unwrap_or_else(|| "—".into()),
+                style
+                    .text_color
+                    .map(|c| format!("{:?}", c))
+                    .unwrap_or_else(|| "—".into()),
                 1,
             );
     }
@@ -3274,7 +3642,10 @@ fn render_ui_tree_node_details(node: &UiElementNode, cx: &Context<ProfilerPanel>
 
 // ── GPU deep capture rendering ────────────────────────────────────────────
 
-fn render_deep_capture_call_details(call: &DeepCaptureDrawCall, cx: &Context<ProfilerPanel>) -> AnyElement {
+fn render_deep_capture_call_details(
+    call: &DeepCaptureDrawCall,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
     DescriptionList::new()
         .columns(2)
         .label_width(px(110.))
@@ -3283,16 +3654,28 @@ fn render_deep_capture_call_details(call: &DeepCaptureDrawCall, cx: &Context<Pro
         .child("Pipeline", call.pipeline_label.to_string(), 1)
         .child("Pass", call.pass_label.to_string(), 1)
         .child("Bind groups", call.bind_group_count.to_string(), 1)
-        .child("Vertex range", format!("{}..{}", call.vertex_range.0, call.vertex_range.1), 1)
-        .child("Instance range", format!("{}..{}", call.instance_range.0, call.instance_range.1), 1)
+        .child(
+            "Vertex range",
+            format!("{}..{}", call.vertex_range.0, call.vertex_range.1),
+            1,
+        )
+        .child(
+            "Instance range",
+            format!("{}..{}", call.instance_range.0, call.instance_range.1),
+            1,
+        )
         .child(
             "Buffer",
-            call.buffer_kind.map(|k| format!("{:?}", k)).unwrap_or_else(|| "—".into()),
+            call.buffer_kind
+                .map(|k| format!("{:?}", k))
+                .unwrap_or_else(|| "—".into()),
             1,
         )
         .child(
             "Atlas texture",
-            call.atlas_texture_id.map(|id| format!("{id:#x}")).unwrap_or_else(|| "—".into()),
+            call.atlas_texture_id
+                .map(|id| format!("{id:#x}"))
+                .unwrap_or_else(|| "—".into()),
             1,
         )
         .into_any_element()
@@ -3448,8 +3831,14 @@ mod tests {
         // No motion is a no-op factor.
         assert_eq!(zoom_factor_for_wheel_delta(0.0), 1.0);
         // Extreme deltas clamp rather than producing an unbounded factor.
-        assert_eq!(zoom_factor_for_wheel_delta(100_000.0), zoom_factor_for_wheel_delta(160.0));
-        assert_eq!(zoom_factor_for_wheel_delta(-100_000.0), zoom_factor_for_wheel_delta(-160.0));
+        assert_eq!(
+            zoom_factor_for_wheel_delta(100_000.0),
+            zoom_factor_for_wheel_delta(160.0)
+        );
+        assert_eq!(
+            zoom_factor_for_wheel_delta(-100_000.0),
+            zoom_factor_for_wheel_delta(-160.0)
+        );
     }
 
     #[test]
@@ -3504,8 +3893,14 @@ mod tests {
 
     #[test]
     fn span_name_label_formats_static_and_interned() {
-        assert_eq!(span_name_label(gpui::SpanName::Static("paint")).to_string(), "paint");
-        assert_eq!(span_name_label(gpui::SpanName::Interned(7)).to_string(), "<interned #7>");
+        assert_eq!(
+            span_name_label(gpui::SpanName::Static("paint")).to_string(),
+            "paint"
+        );
+        assert_eq!(
+            span_name_label(gpui::SpanName::Interned(7)).to_string(),
+            "<interned #7>"
+        );
     }
 
     #[test]
@@ -3609,8 +4004,16 @@ mod tests {
         }
 
         vec![
-            FlameLane { label: "Main Thread (CPU)".into(), bars: cpu_bars, max_depth },
-            FlameLane { label: "GPU".into(), bars: gpu_bars, max_depth: 0 },
+            FlameLane {
+                label: "Main Thread (CPU)".into(),
+                bars: cpu_bars,
+                max_depth,
+            },
+            FlameLane {
+                label: "GPU".into(),
+                bars: gpu_bars,
+                max_depth: 0,
+            },
         ]
     }
 
@@ -3630,7 +4033,10 @@ mod tests {
         const TARGET_BARS: usize = 3200;
         let lanes = synthetic_flame_lanes(TARGET_BARS);
         let total_bars: usize = lanes.iter().map(|lane| lane.bars.len()).sum();
-        assert!(total_bars >= 3000, "expected at least 3000 synthetic bars, got {total_bars}");
+        assert!(
+            total_bars >= 3000,
+            "expected at least 3000 synthetic bars, got {total_bars}"
+        );
 
         let total_span_ns = lanes
             .iter()
@@ -3673,8 +4079,9 @@ mod tests {
         impl Render for FlameBenchView {
             fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
                 let lanes = self.lanes.clone();
-                self.panel
-                    .update(cx, |state, cx| state.render_flame_lanes_body(&lanes, None, None, window, cx))
+                self.panel.update(cx, |state, cx| {
+                    state.render_flame_lanes_body(&lanes, None, None, window, cx)
+                })
             }
         }
 
@@ -3686,9 +4093,11 @@ mod tests {
             let panel = view.clone();
             let lanes = lanes.clone();
             let start = std::time::Instant::now();
-            cx.draw(point(px(0.), px(0.)), size(px(1400.), px(20_000.)), move |_, cx| {
-                cx.new(|_| FlameBenchView { panel, lanes })
-            });
+            cx.draw(
+                point(px(0.), px(0.)),
+                size(px(1400.), px(20_000.)),
+                move |_, cx| cx.new(|_| FlameBenchView { panel, lanes }),
+            );
             durations.push(start.elapsed());
         }
 
@@ -3762,13 +4171,22 @@ mod tests {
 
     #[test]
     fn hit_test_lane_bar_finds_the_bar_under_the_cursor() {
-        let hit_bars = vec![sample_hit_bar("a", 0, 0.0, 100.0), sample_hit_bar("b", 1, 50.0, 100.0)];
+        let hit_bars = vec![
+            sample_hit_bar("a", 0, 0.0, 100.0),
+            sample_hit_bar("b", 1, 50.0, 100.0),
+        ];
 
         let hit = hit_test_lane_bar(&hit_bars, gpui::point(px(60.0), px(5.0)));
-        assert_eq!(hit.map(|hb| hb.bar.label.to_string()), Some("a".to_string()));
+        assert_eq!(
+            hit.map(|hb| hb.bar.label.to_string()),
+            Some("a".to_string())
+        );
 
         let hit = hit_test_lane_bar(&hit_bars, gpui::point(px(60.0), px(25.0)));
-        assert_eq!(hit.map(|hb| hb.bar.label.to_string()), Some("b".to_string()));
+        assert_eq!(
+            hit.map(|hb| hb.bar.label.to_string()),
+            Some("b".to_string())
+        );
     }
 
     #[test]
@@ -3853,7 +4271,11 @@ mod tests {
         // └── child_b
         let capture = gpui::UiTreeCapture {
             window_id: 0,
-            nodes: vec![sample_ui_node("root", 0), sample_ui_node("child_a", 1), sample_ui_node("child_b", 1)],
+            nodes: vec![
+                sample_ui_node("root", 0),
+                sample_ui_node("child_a", 1),
+                sample_ui_node("child_b", 1),
+            ],
             scene: Default::default(),
         };
         let replay = UiTreeReplay::new(capture);

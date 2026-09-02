@@ -1174,8 +1174,7 @@ impl DockArea {
         let _ = cx.open_window(window_options, move |window, cx| {
             tracing::trace!("[DOCK_AREA] Inside window creation callback");
 
-            let new_dock_area =
-                cx.new(|cx| DockArea::new("detached-dock", Some(1), window, cx));
+            let new_dock_area = cx.new(|cx| DockArea::new("detached-dock", Some(1), window, cx));
             let weak_new_dock = new_dock_area.downgrade();
 
             let new_tab_panel = cx.new(|cx| {
@@ -1183,8 +1182,7 @@ impl DockArea {
                     .upgrade()
                     .map(|d| d.read(cx).channel)
                     .unwrap_or_default();
-                let mut tab_panel =
-                    TabPanel::new(None, weak_new_dock.clone(), channel, window, cx);
+                let mut tab_panel = TabPanel::new(None, weak_new_dock.clone(), channel, window, cx);
                 tab_panel.closable = true;
                 tab_panel
             });
@@ -1203,9 +1201,8 @@ impl DockArea {
             });
 
             tracing::trace!("[DOCK_AREA] Popout window created successfully");
-            let popout_window = cx.new(|cx| {
-                PopoutDockWindow::new(new_dock_area, panel.clone(), source, window, cx)
-            });
+            let popout_window = cx
+                .new(|cx| PopoutDockWindow::new(new_dock_area, panel.clone(), source, window, cx));
             cx.new(|cx| crate::Root::new(popout_window.into(), window, cx))
         });
     }

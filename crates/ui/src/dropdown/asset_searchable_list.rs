@@ -102,7 +102,10 @@ impl<T: Clone + 'static> AssetSearchableList<T> {
     }
 
     /// Provide an image source for each item. If not set, a placeholder icon is shown.
-    pub fn with_image_getter(mut self, image_for: impl Fn(&T) -> Option<ImageSource> + 'static) -> Self {
+    pub fn with_image_getter(
+        mut self,
+        image_for: impl Fn(&T) -> Option<ImageSource> + 'static,
+    ) -> Self {
         self.image_for = Some(Rc::new(image_for));
         self
     }
