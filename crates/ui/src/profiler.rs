@@ -3304,6 +3304,18 @@ fn diagnostic_details(event: &gpui::DiagnosticEvent) -> String {
             format!("{} CPU spans · {} diagnostics", event.a, event.b)
         }
         gpui::DiagnosticKind::FastFramePresented => "framebuffer-only present".to_string(),
+        gpui::DiagnosticKind::EngineFrame => format!(
+            "engine frame {} · {}×{} physical",
+            event.a, event.b, event.c
+        ),
+        gpui::DiagnosticKind::EngineResize => format!(
+            "engine frame {} · {}×{} physical · SceneDB revision {}",
+            event.d, event.a, event.b, event.c
+        ),
+        gpui::DiagnosticKind::EngineSceneSync => format!(
+            "engine frame {} · SceneDB revision {}",
+            event.b, event.a
+        ),
         gpui::DiagnosticKind::User => format!("{}, {}, {}, {}", event.a, event.b, event.c, event.d),
     }
 }
