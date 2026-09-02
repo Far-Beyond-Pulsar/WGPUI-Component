@@ -329,15 +329,17 @@ fn profiler_panel(window: &mut Window, cx: &mut App) -> Entity<ProfilerPanel> {
 enum ProfilerSection {
     FlameChart,
     Counters,
+    Diagnostics,
     Memory,
     UiTree,
     DeepCapture,
 }
 
 impl ProfilerSection {
-    const ALL: [ProfilerSection; 5] = [
+    const ALL: [ProfilerSection; 6] = [
         ProfilerSection::FlameChart,
         ProfilerSection::Counters,
+        ProfilerSection::Diagnostics,
         ProfilerSection::Memory,
         ProfilerSection::UiTree,
         ProfilerSection::DeepCapture,
@@ -347,6 +349,7 @@ impl ProfilerSection {
         match self {
             ProfilerSection::FlameChart => "Flame Chart",
             ProfilerSection::Counters => "Counters",
+            ProfilerSection::Diagnostics => "Diagnostics",
             ProfilerSection::Memory => "Memory",
             ProfilerSection::UiTree => "UI Tree",
             ProfilerSection::DeepCapture => "GPU Deep Capture",
@@ -583,6 +586,7 @@ impl ProfilerPanel {
                     .child(match self.section {
                         ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
                         ProfilerSection::Counters => self.render_counters_section(cx),
+                        ProfilerSection::Diagnostics => self.render_diagnostics_section(cx),
                         ProfilerSection::Memory => self.render_memory_section(window, cx),
                         ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
                         ProfilerSection::DeepCapture => {
@@ -1706,6 +1710,132 @@ impl ProfilerPanel {
                         }),
                     )
                     .children(bar_elements),
+            )
+            .into_any_element()
+    }
+
+    // ── Diagnostics ─────────────────────────────────────────────────
+
+    /// Show structured lifecycle observations for the selected frame. This
+    /// view deliberately renders a bounded tail of the event stream: a noisy
+    /// resize/invalidation storm must not make the profiler itself unusable.
+    fn render_diagnostics_section(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(capture) = self.capture.as_ref() else {
+            return profiler_empty_state(
+                "Start and stop a capture (Flame Chart tab) to inspect UI lifecycle diagnostics.",
+                cx,
+            );
+        };
+        let Some(frame) = capture.frames().nth(self.selected_frame) else {
+            return profiler_empty_state("Select a frame with the frame navigator first.", cx);
+        };
+
+        const MAX_VISIBLE_DIAGNOSTICS: usize = 500;
+        let total = frame.diagnostics.len();
+        let mut rows = Vec::with_capacity(total.min(MAX_VISIBLE_DIAGNOSTICS));
+        for event in frame
+            .diagnostics
+            .iter()
+            .rev()
+            .take(MAX_VISIBLE_DIAGNOSTICS)
+        {
+            let duration = if event.duration_ns == 0 {
+                "instant".to_string()
+            } else {
+                format!("{:.3} ms", event.duration_ns as f64 / 1.0e6)
+            };
+            rows.push(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(cx.theme().border.opacity(0.35))
+                    .child(
+                        div()
+                            .w(px(150.))
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().foreground)
+                            .child(event.kind.label()),
+                    )
+                    .child(
+                        div()
+                            .w(px(72.))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{:.3} ms",
+                                event.timestamp_ns as f64 / 1.0e6
+                            )),
+                    )
+                    .child(
+                        div()
+                            .w(px(72.))
+                            .text_xs()
+                            .text_color(if event.duration_ns > 16_700_000 {
+                                cx.theme().danger
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(duration),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(diagnostic_details(event)),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        let shown = rows.len();
+        v_flex()
+            .gap_2()
+            .p_2()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(cx.theme().foreground)
+                                    .child(format!("Frame {} diagnostics", frame.frame_index)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(if total > shown {
+                                        format!("Showing latest {} of {}", shown, total)
+                                    } else {
+                                        format!("{} events", total)
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Resize events include physical dimensions and scale; timed rows show the blocking cost."),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .children(rows),
             )
             .into_any_element()
     }
@@ -3142,6 +3272,37 @@ fn build_flame_lanes(frame: &gpui::FrameCapture) -> Vec<FlameLane> {
     lanes
 }
 
+fn diagnostic_details(event: &gpui::DiagnosticEvent) -> String {
+    let bits_to_f32 = |bits: u64| f32::from_bits(bits as u32);
+    match event.kind {
+        gpui::DiagnosticKind::ResizeEvent | gpui::DiagnosticKind::ResizeHandling => format!(
+            "window {} · {}×{} physical · scale {:.2}",
+            event.window_id,
+            event.a,
+            event.b,
+            bits_to_f32(event.c),
+        ),
+        gpui::DiagnosticKind::BoundsChanged => format!(
+            "window {} · {:.0}×{:.0} logical · scale {:.2}",
+            event.window_id,
+            bits_to_f32(event.a),
+            bits_to_f32(event.b),
+            bits_to_f32(event.c),
+        ),
+        gpui::DiagnosticKind::SurfaceReconfigured | gpui::DiagnosticKind::DrawableResized => {
+            format!("{}×{} physical", event.a, event.b)
+        }
+        gpui::DiagnosticKind::RefreshRequested => {
+            format!("window {} · invalidation state {}", event.window_id, event.a)
+        }
+        gpui::DiagnosticKind::FramePresented => {
+            format!("{} CPU spans · {} diagnostics", event.a, event.b)
+        }
+        gpui::DiagnosticKind::FastFramePresented => "framebuffer-only present".to_string(),
+        gpui::DiagnosticKind::User => format!("{}, {}, {}, {}", event.a, event.b, event.c, event.d),
+    }
+}
+
 fn category_color(category: gpui::SpanCategory, cx: &Context<ProfilerPanel>) -> gpui::Hsla {
     let theme = cx.theme();
     match category {
@@ -4213,6 +4374,7 @@ mod tests {
             window_id: 0,
             cpu_spans: Vec::new(),
             background_spans: Vec::new(),
+            diagnostics: Vec::new(),
             gpu_spans: vec![
                 sample_gpu_span("main_pass", 0, 5_000_000),
                 sample_gpu_span("submit", 5_000_000, 1_000_000),
@@ -4242,6 +4404,7 @@ mod tests {
             window_id: 0,
             cpu_spans: Vec::new(),
             background_spans: Vec::new(),
+            diagnostics: Vec::new(),
             gpu_spans: Vec::new(),
             gpu_spans_finalized: true,
             gpu_spans_truncated: false,
