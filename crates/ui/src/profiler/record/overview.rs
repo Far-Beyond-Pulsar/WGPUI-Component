@@ -39,8 +39,8 @@ use std::rc::Rc;
 
 use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds, ClickEvent,
-    Context, DragMoveEvent, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Render, StatefulInteractiveElement as _, Styled, Window,
+    Context, DragMoveEvent, Entity, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, Render, StatefulInteractiveElement as _, Styled, Window,
 };
 
 use crate::{v_flex, ActiveTheme};
@@ -52,14 +52,37 @@ use super::{
     ProfilerPanel,
 };
 
-/// Drag marker for the overview's range-select gesture. GPUI's `on_drag`
-/// mechanism only cares about matching `TypeId`s, and the Record tab has no
-/// other draggable view mounted at the same time, so a single marker type
-/// is safe.
+/// Drag marker for the overview's range-select gesture (drawing a brand
+/// new selection from scratch). GPUI's `on_drag` mechanism only cares about
+/// matching `TypeId`s, and the Record tab has no other draggable view
+/// mounted at the same time, so a single marker type is safe.
 #[derive(Clone)]
 struct RangeSelectDrag;
 
 impl Render for RangeSelectDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+/// Drag marker for resizing an *existing* selection's left edge only — a
+/// distinct type from [`RangeSelectDrag`] so its own `on_drag`/
+/// `on_drag_move` pair can hold the right edge fixed instead of drawing a
+/// new selection from scratch. See [`left_edge_grip`].
+#[derive(Clone)]
+struct LeftEdgeDrag;
+
+impl Render for LeftEdgeDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+/// The right-edge counterpart to [`LeftEdgeDrag`] — see [`right_edge_grip`].
+#[derive(Clone)]
+struct RightEdgeDrag;
+
+impl Render for RightEdgeDrag {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         gpui::Empty
     }
@@ -71,10 +94,17 @@ pub(crate) struct OverviewState {
     /// overlay each render — used to turn drag x-coordinates into
     /// nanosecond instants.
     bounds: Bounds<Pixels>,
-    /// `start_ns` of an in-progress drag-select; `None` when no selection
-    /// drag is active. The end is always "wherever the pointer currently
-    /// is", so only the anchor needs to be state.
+    /// `start_ns` of an in-progress drag-select (drawing a brand new
+    /// selection); `None` when no such drag is active. The end is always
+    /// "wherever the pointer currently is", so only the anchor needs to be
+    /// state.
     drag_anchor_ns: Option<u64>,
+    /// The *opposite* edge's ns value, held fixed while the user drags one
+    /// of the two selection-edge grips ([`left_edge_grip`]/
+    /// [`right_edge_grip`]) specifically, as opposed to `drag_anchor_ns`
+    /// above (which anchors a brand-new selection instead of resizing an
+    /// existing one). `Some` only while an edge-resize drag is in progress.
+    edge_fixed_ns: Option<u64>,
     gpu: Option<FlameLaneGpu>,
     pipeline: Option<Rc<FlameBarPipeline>>,
     /// Latches once `Window::create_wgpu_surface` ever returns `None`
@@ -119,6 +149,12 @@ const LONG_TASK_HATCH_HEIGHT: f32 = 3.0;
 
 const DEFAULT_WIDTH: f32 = 900.0;
 const RULER_TICKS: usize = 6;
+/// Width of each edge grip's *hit target* (the actual draggable area) —
+/// wider than the visible pill mark itself so the edge is easy to grab
+/// without needing pixel-perfect precision, same padding idea
+/// `resizable::resize_handle`'s own `HANDLE_PADDING` uses for panel-split
+/// handles.
+const GRIP_HIT_WIDTH: f32 = 10.0;
 
 pub(crate) fn render(
     state: &mut OverviewState,
@@ -186,13 +222,22 @@ pub(crate) fn render(
         );
     }
 
-    let selection_element = selection.map(|(start, end)| {
-        render_selection_overlay(start, end, domain_start_ns, domain_span_ns, chart_width, cx)
-    });
-
     let panel_entity = cx.entity().clone();
 
+    let selection_element = selection.map(|(start, end)| {
+        render_selection_overlay(
+            start,
+            end,
+            domain_start_ns,
+            domain_span_ns,
+            chart_width,
+            panel_entity.clone(),
+            cx,
+        )
+    });
+
     v_flex()
+        .w_full()
         .gap_1()
         .child(
             div()
@@ -204,6 +249,7 @@ pub(crate) fn render(
             div()
                 .id("record-overview")
                 .relative()
+                .w_full()
                 .h(px(STRIP_HEIGHT))
                 .overflow_hidden()
                 .rounded_md()
@@ -298,14 +344,16 @@ pub(crate) fn render(
 /// Renders the translucent selection box: a tinted fill + border spanning
 /// the *whole* strip height (ruler included — matches the reference
 /// screenshots, where the selection's drag handles run from the very top of
-/// the ruler down through the Frames row), plus two edge "grip" marks so the
-/// box reads as draggable/resizable at a glance, not just a highlight.
+/// the ruler down through the Frames row), plus two independently
+/// draggable edge grips so either bound can be moved on its own, holding
+/// the other bound fixed — not just a whole-selection redraw gesture.
 fn render_selection_overlay(
     start: u64,
     end: u64,
     domain_start_ns: u64,
     domain_span_ns: f64,
     chart_width: f32,
+    panel_entity: Entity<ProfilerPanel>,
     cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
     let x0 = ((start.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32 * chart_width;
@@ -314,8 +362,8 @@ fn render_selection_overlay(
     let width = (x0 - x1).abs().max(1.0);
     let right = left + width;
 
-    // A single `inset_0()` wrapper so the fill/border box and the two grip
-    // marks all position `left`/`top` against the *same* coordinate space
+    // A single `inset_0()` wrapper so the fill/border box and the two edge
+    // grips all position `left`/`top` against the *same* coordinate space
     // (the whole strip) rather than nesting an absolutely-positioned grip
     // inside an already-absolutely-positioned, explicitly-widthed fill box
     // — that would make the grip's `left` relative to the fill box's edge
@@ -335,23 +383,115 @@ fn render_selection_overlay(
                 .border_1()
                 .border_color(cx.theme().selection),
         )
-        // Left/right grip marks: a small solid pill straddling each edge —
-        // the affordance cue for "you can drag this edge", matching the
-        // reference's own selection handles.
-        .child(selection_grip(left))
-        .child(selection_grip(right))
+        .child(left_edge_grip(left, end, panel_entity.clone()))
+        .child(right_edge_grip(right, start, panel_entity))
         .into_any_element()
 }
 
-fn selection_grip(x: f32) -> AnyElement {
+/// The small visible pill mark inside an edge grip's (wider, invisible)
+/// drag-hit-target — the affordance cue for "you can drag this edge",
+/// matching the reference's own selection handles. `local_x` is relative to
+/// the grip's own hit-target box, not the strip.
+fn selection_grip_mark(local_x: f32) -> AnyElement {
     div()
         .absolute()
         .top(px(STRIP_HEIGHT / 2.0 - 7.0))
-        .left(px(x - 2.0))
+        .left(px(local_x - 2.0))
         .w(px(4.0))
         .h(px(14.0))
         .rounded_full()
         .bg(gpui::black().opacity(0.35))
+        .into_any_element()
+}
+
+/// One selection edge's drag-to-resize hit target: a small `.occlude()`d
+/// box (matching `resizable::resize_handle`'s own "small drag handle on top
+/// of a larger interactive area" pattern — occlusion is what stops the
+/// strip's own whole-selection `RangeSelectDrag` from *also* firing for the
+/// same mouse-down, since GPUI hit-tests the topmost occluding element
+/// first) that moves *only* this edge, holding `other_edge_ns` fixed for
+/// the duration of the drag. `x` is in strip-local coordinates, same axis
+/// [`render_selection_overlay`]'s fill box uses.
+fn left_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel>) -> AnyElement {
+    div()
+        .id("record-overview-grip-left")
+        .occlude()
+        .cursor_col_resize()
+        .absolute()
+        .top(px(0.))
+        .left(px(x - GRIP_HIT_WIDTH / 2.0))
+        .w(px(GRIP_HIT_WIDTH))
+        .h(px(STRIP_HEIGHT))
+        .child(selection_grip_mark(GRIP_HIT_WIDTH / 2.0))
+        .on_drag(LeftEdgeDrag, {
+            let panel_entity = panel_entity.clone();
+            move |_, _start_position, _window, cx| {
+                panel_entity.update(cx, |panel, _cx| {
+                    panel.record.overview.edge_fixed_ns = Some(other_edge_ns);
+                });
+                cx.new(|_| LeftEdgeDrag)
+            }
+        })
+        .on_drag_move(move |event: &DragMoveEvent<LeftEdgeDrag>, _window, cx| {
+            panel_entity.update(cx, |panel, cx| {
+                let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
+                    return;
+                };
+                let Some(current_ns) = overview_x_to_ns(
+                    &panel.record.overview,
+                    panel.record.overview_data(),
+                    event.event.position.x,
+                ) else {
+                    return;
+                };
+                panel.record.selection =
+                    Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
+                cx.notify();
+            });
+        })
+        .into_any_element()
+}
+
+/// The right-edge counterpart to [`left_edge_grip`] — identical shape,
+/// [`RightEdgeDrag`] marker instead so the two grips' gestures can never be
+/// confused with one another.
+fn right_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel>) -> AnyElement {
+    div()
+        .id("record-overview-grip-right")
+        .occlude()
+        .cursor_col_resize()
+        .absolute()
+        .top(px(0.))
+        .left(px(x - GRIP_HIT_WIDTH / 2.0))
+        .w(px(GRIP_HIT_WIDTH))
+        .h(px(STRIP_HEIGHT))
+        .child(selection_grip_mark(GRIP_HIT_WIDTH / 2.0))
+        .on_drag(RightEdgeDrag, {
+            let panel_entity = panel_entity.clone();
+            move |_, _start_position, _window, cx| {
+                panel_entity.update(cx, |panel, _cx| {
+                    panel.record.overview.edge_fixed_ns = Some(other_edge_ns);
+                });
+                cx.new(|_| RightEdgeDrag)
+            }
+        })
+        .on_drag_move(move |event: &DragMoveEvent<RightEdgeDrag>, _window, cx| {
+            panel_entity.update(cx, |panel, cx| {
+                let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
+                    return;
+                };
+                let Some(current_ns) = overview_x_to_ns(
+                    &panel.record.overview,
+                    panel.record.overview_data(),
+                    event.event.position.x,
+                ) else {
+                    return;
+                };
+                panel.record.selection =
+                    Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
+                cx.notify();
+            });
+        })
         .into_any_element()
 }
 
