@@ -104,7 +104,7 @@ use crate::{
     v_flex, ActiveTheme, Icon, IconName, Sizable as _,
 };
 
-use super::data::LONG_TASK_NS;
+use super::data::{self, LONG_TASK_NS};
 
 /// All state this file owns directly. Empty: pan/zoom (`flame_zoom`), hover/
 /// selection (`hovered_bar`/`selected_span`), search (`flame_search`), and
@@ -206,7 +206,15 @@ pub(crate) fn render(
         let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
         let mut label_elements: Vec<AnyElement> = Vec::new();
 
-        for bar in &lane.bars {
+        // Collapse tiny, tightly-packed same-depth bars into fewer,
+        // synthesized ones before this loop ever sees them -- see
+        // `merge_tiny_adjacent_bars`'s own doc comment. Everything below
+        // this line is unaware merging happened at all; it just sees fewer,
+        // wider `FlameBar`s.
+        let merged_bars =
+            merge_tiny_adjacent_bars(&lane.bars, visible_start_ns, visible_span_ns, chart_width);
+
+        for bar in &merged_bars {
             let bar_start_ns = bar.start_ns as f64;
             let bar_end_ns = bar_start_ns + bar.duration_ns as f64;
             // Cull spans outside the zoomed/panned window, same as
@@ -530,6 +538,168 @@ pub(crate) fn render(
         .into_any_element()
 }
 
+/// A bar this narrow on screen is a merge *candidate*. Below this width you
+/// genuinely can't distinguish it from its neighbors -- see
+/// [`merge_tiny_adjacent_bars`].
+const MERGE_MAX_BAR_WIDTH_PX: f32 = 2.0;
+
+/// Two consecutive merge-candidate bars (same depth) merge if the gap
+/// between them is at most this many pixels -- close enough that the gap
+/// itself wouldn't register either. A bar that's already individually wide
+/// enough to read never merges just because a tiny neighbor happens to sit
+/// this close to it; only runs of bars that are *both* tiny stack up.
+const MERGE_MAX_GAP_PX: f32 = 1.5;
+
+/// Collapses runs of tiny, tightly-packed same-depth bars into single
+/// synthesized `FlameBar`s -- this is exactly the reference's own "sawtooth"
+/// texture (`.agents/PROFILER_UI_SPEC.md` §3: "a dense unlabeled sawtooth
+/// texture of hundreds of tiny same-color bars ... rendered as texture, not
+/// as individually hit-testable elements"), and the practical reason a
+/// multi-frame Record selection with tens of thousands of leaf-level spans
+/// doesn't build tens of thousands of GPU instances (plus that many
+/// `HitBar`s) every single render.
+///
+/// Grouped by depth (merging across depths would visually overlap two
+/// unrelated rows), then walked in `start_ns` order within each depth. A
+/// merged bar's `label` becomes `"{n} spans"`, and its `category`/
+/// `gpu_pass_kind` become whichever the run's *total duration* was mostly
+/// spent in -- the same "dominant" principle `OverviewBucket::dominant_category`
+/// already uses for the overview strip's stacked bars, reused here via
+/// `data::category_index`/`data::OVERVIEW_CATEGORIES` so the two views can
+/// never disagree about category ordering. Its `start_ns`/`duration_ns` span
+/// the run's full extent, so `bar_screen_rect` (called again, completely
+/// unmodified, by `render`'s own per-bar loop right after this returns)
+/// reproduces exactly the merged rect this function measured while deciding
+/// to merge -- no separate/divergent geometry math to keep in sync.
+///
+/// A bar that never became part of any merge (individually wide enough, or
+/// too far from any other candidate) passes through byte-for-byte unchanged
+/// via a plain clone -- this never *drops* a bar, only ever combines
+/// adjacent tiny ones, so nothing goes missing from the chart, it just stops
+/// being individually resolvable at this zoom level (exactly like the
+/// reference).
+fn merge_tiny_adjacent_bars(
+    bars: &[FlameBar],
+    visible_start_ns: f64,
+    visible_span_ns: f64,
+    chart_width: f32,
+) -> Vec<FlameBar> {
+    if bars.is_empty() {
+        return Vec::new();
+    }
+    let max_depth = bars.iter().map(|b| b.depth).max().unwrap_or(0);
+    let mut by_depth: Vec<Vec<&FlameBar>> = vec![Vec::new(); max_depth as usize + 1];
+    for bar in bars {
+        by_depth[bar.depth as usize].push(bar);
+    }
+
+    let mut merged: Vec<FlameBar> = Vec::with_capacity(bars.len());
+    for depth_bars in &mut by_depth {
+        depth_bars.sort_by_key(|b| b.start_ns);
+
+        let mut run: Option<MergeRun> = None;
+        for bar in depth_bars.iter().copied() {
+            let (x, width) = bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
+            let bar_end_ns = bar.start_ns.saturating_add(bar.duration_ns as u64);
+
+            if width > MERGE_MAX_BAR_WIDTH_PX {
+                if let Some(r) = run.take() {
+                    merged.push(r.into_bar());
+                }
+                merged.push(bar.clone());
+                continue;
+            }
+
+            let extends_run = run.as_ref().is_some_and(|r| x - r.end_x <= MERGE_MAX_GAP_PX);
+            if extends_run {
+                run.as_mut().unwrap().extend(bar, x + width, bar_end_ns);
+            } else {
+                if let Some(r) = run.take() {
+                    merged.push(r.into_bar());
+                }
+                run = Some(MergeRun::new(bar, x + width, bar_end_ns));
+            }
+        }
+        if let Some(r) = run.take() {
+            merged.push(r.into_bar());
+        }
+    }
+    merged
+}
+
+/// [`merge_tiny_adjacent_bars`]'s in-progress merge-group accumulator.
+/// `end_x` is screen-space bookkeeping used only to decide whether the
+/// *next* candidate bar is close enough to extend this run -- it never
+/// appears in the synthesized [`FlameBar`] this becomes, since that bar's
+/// `start_ns`/`duration_ns` alone are enough for `bar_screen_rect` to
+/// reproduce the same screen rect later.
+struct MergeRun {
+    first_bar: FlameBar,
+    end_ns: u64,
+    end_x: f32,
+    count: u32,
+    category_ns: [u64; data::OVERVIEW_CATEGORIES.len()],
+}
+
+impl MergeRun {
+    fn new(bar: &FlameBar, end_x: f32, end_ns: u64) -> Self {
+        let mut category_ns = [0u64; data::OVERVIEW_CATEGORIES.len()];
+        if let Some(category) = bar.category {
+            category_ns[data::category_index(category)] += bar.duration_ns as u64;
+        }
+        Self {
+            first_bar: bar.clone(),
+            end_ns,
+            end_x,
+            count: 1,
+            category_ns,
+        }
+    }
+
+    fn extend(&mut self, bar: &FlameBar, end_x: f32, end_ns: u64) {
+        self.end_x = end_x;
+        self.end_ns = self.end_ns.max(end_ns);
+        self.count += 1;
+        if let Some(category) = bar.category {
+            self.category_ns[data::category_index(category)] += bar.duration_ns as u64;
+        }
+    }
+
+    /// A run of exactly one bar (a lone candidate with no mergeable
+    /// neighbor) resolves to that original bar completely unchanged -- only
+    /// a run of 2+ actually gets synthesized into an aggregate.
+    fn into_bar(self) -> FlameBar {
+        if self.count <= 1 {
+            return self.first_bar;
+        }
+        let dominant_category = self
+            .category_ns
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, ns)| **ns)
+            .filter(|(_, ns)| **ns > 0)
+            .map(|(index, _)| data::OVERVIEW_CATEGORIES[index]);
+        let duration_ns = self
+            .end_ns
+            .saturating_sub(self.first_bar.start_ns)
+            .min(u32::MAX as u64) as u32;
+        FlameBar {
+            label: SharedString::from(format!("{} spans", self.count)),
+            depth: self.first_bar.depth,
+            start_ns: self.first_bar.start_ns,
+            duration_ns,
+            category: dominant_category.or(self.first_bar.category),
+            gpu_pass_kind: if dominant_category.is_some() {
+                None
+            } else {
+                self.first_bar.gpu_pass_kind
+            },
+            element_type: None,
+            element_source: None,
+        }
+    }
+}
+
 /// The narrow left-edge column identifying a lane's row type, mirroring the
 /// reference's icon gutter. Purely decorative (never hit-tested), so it's a
 /// handful of plain, non-interactive elements -- one per lane, nothing like
@@ -829,5 +999,134 @@ mod tests {
     #[test]
     fn format_tick_label_is_relative_to_the_domain_start() {
         assert_eq!(format_tick_label(5_000_000.0, 1_000_000.0, 1.0e7), "4ms");
+    }
+
+    /// At `visible_span_ns = 100_000.0` / `chart_width = 100.0` (1px per
+    /// 1000ns), a duration this small always renders at `bar_screen_rect`'s
+    /// own 1.5px floor -- i.e. always a merge candidate by construction,
+    /// regardless of the exact duration passed.
+    fn tiny_bar(start_ns: u64, depth: u16, category: SpanCategory) -> FlameBar {
+        FlameBar {
+            label: "leaf".into(),
+            depth,
+            start_ns,
+            duration_ns: 10,
+            category: Some(category),
+            gpu_pass_kind: None,
+            element_type: None,
+            element_source: None,
+        }
+    }
+
+    const MERGE_TEST_SPAN_NS: f64 = 100_000.0;
+    const MERGE_TEST_CHART_WIDTH: f32 = 100.0;
+
+    #[test]
+    fn merge_tiny_adjacent_bars_merges_close_tiny_bars_at_the_same_depth() {
+        let bars = vec![
+            tiny_bar(0, 0, SpanCategory::ElementPaint),
+            tiny_bar(50, 0, SpanCategory::ElementPaint),
+            tiny_bar(100, 0, SpanCategory::ElementPaint),
+        ];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].label.as_ref(), "3 spans");
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_keeps_a_lone_bar_unchanged() {
+        let bars = vec![tiny_bar(0, 0, SpanCategory::ElementPaint)];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].label.as_ref(), "leaf");
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_does_not_merge_across_a_wide_gap() {
+        let bars = vec![
+            tiny_bar(0, 0, SpanCategory::ElementPaint),
+            // 50px away at this zoom -- well past `MERGE_MAX_GAP_PX`.
+            tiny_bar(50_000, 0, SpanCategory::ElementPaint),
+        ];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_never_merges_a_bar_wide_enough_to_read() {
+        let bars = vec![
+            FlameBar {
+                label: "big".into(),
+                depth: 0,
+                start_ns: 0,
+                // 20px at this zoom -- well over `MERGE_MAX_BAR_WIDTH_PX`.
+                duration_ns: 20_000,
+                category: Some(SpanCategory::ElementPaint),
+                gpu_pass_kind: None,
+                element_type: None,
+                element_source: None,
+            },
+            tiny_bar(20_010, 0, SpanCategory::ElementPaint),
+        ];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        // The wide bar never joins a run at all, and the lone tiny bar next
+        // to it has no *candidate* neighbor to merge with -- two bars out,
+        // both untouched.
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].label.as_ref(), "big");
+        assert_eq!(merged[1].label.as_ref(), "leaf");
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_keeps_different_depths_separate() {
+        let bars = vec![
+            tiny_bar(0, 0, SpanCategory::ElementPaint),
+            tiny_bar(50, 1, SpanCategory::ElementPaint),
+        ];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_picks_the_category_with_the_most_total_duration() {
+        let bars = vec![
+            FlameBar {
+                label: "a".into(),
+                depth: 0,
+                start_ns: 0,
+                duration_ns: 5,
+                category: Some(SpanCategory::ElementPaint),
+                gpu_pass_kind: None,
+                element_type: None,
+                element_source: None,
+            },
+            FlameBar {
+                label: "b".into(),
+                depth: 0,
+                start_ns: 10,
+                // Dominates the merged category despite being only one of
+                // two merged bars -- summed *duration* decides, not count.
+                duration_ns: 50,
+                category: Some(SpanCategory::ElementRequestLayout),
+                gpu_pass_kind: None,
+                element_type: None,
+                element_source: None,
+            },
+        ];
+        let merged =
+            merge_tiny_adjacent_bars(&bars, 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].category, Some(SpanCategory::ElementRequestLayout));
+    }
+
+    #[test]
+    fn merge_tiny_adjacent_bars_returns_nothing_for_an_empty_lane() {
+        assert!(merge_tiny_adjacent_bars(&[], 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH)
+            .is_empty());
     }
 }
