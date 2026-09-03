@@ -237,7 +237,20 @@ pub(crate) fn render(
     });
 
     v_flex()
+        // `resizable_panel()`'s own wrapping div is a `display:flex` *row*
+        // (see `resizable::panel::ResizablePanel::render` -- it never sets
+        // `flex_direction`, so it inherits the row default) that this
+        // element is the sole non-absolute child of. `w_full()` alone
+        // (`width: 100%`) asks the *row* to resolve this item's width from
+        // a percentage of its own box, which the flex algorithm doesn't
+        // reliably do for a flex-basis: auto item ahead of knowing that
+        // box's own final size; `flex_1()` (grow: 1, shrink: 1, basis: 0)
+        // sidesteps that entirely by asking for "all available main-axis
+        // space" directly, the same way this file's sibling panes in
+        // `record::mod`'s `main_column` already size themselves.
+        .flex_1()
         .w_full()
+        .min_w(px(0.))
         .gap_1()
         .child(
             div()
