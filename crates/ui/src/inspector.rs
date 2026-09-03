@@ -26,8 +26,9 @@ use crate::{
     h_flex,
     input::{CompletionProvider, InputEvent, InputState, RopeExt, TabSize, TextInput},
     link::Link,
+    switch::Switch,
     tab::{Tab, TabBar},
-    v_flex, ActiveTheme, IconName, Selectable, Sizable, TITLE_BAR_HEIGHT,
+    v_flex, ActiveTheme, Disableable, IconName, Selectable, Sizable, StyledExt, TITLE_BAR_HEIGHT,
 };
 
 actions!(inspector, [ToggleInspector]);
@@ -660,6 +661,7 @@ fn render_tab_content(
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
         #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
+        InspectorTab::Utilities => render_utilities_tab(window, cx),
     };
 
     // Elements and Profiler manage their own internal scrolling (Profiler's
@@ -1244,6 +1246,303 @@ fn render_listeners_tab(
                 )
                 .into_any_element()
         }))
+        .into_any_element()
+}
+
+/// A small caps-style section header for [`render_utilities_tab`].
+fn utility_section_header(label: &'static str, cx: &Context<Inspector>) -> impl IntoElement {
+    div()
+        .text_xs()
+        .font_semibold()
+        .text_color(cx.theme().muted_foreground)
+        .pt(px(4.))
+        .child(label)
+}
+
+/// A one-line, muted description under a switch or stepper in
+/// [`render_utilities_tab`].
+fn utility_description(text: &'static str, cx: &Context<Inspector>) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
+
+/// A `[-] value [+]  Auto` row for one `Option<u32>`-style runtime override —
+/// [`gpui::rasterize_above_override`]/[`gpui::evict_after_frames_override`]
+/// and their setters are the only two today. `current` is the value to show
+/// (the override if set, else the fallback the override would otherwise
+/// replace, so the row always reads as "what's in effect now"); `step` is
+/// how much `-`/`+` change it by; `on_set`/`on_clear` are given the whole
+/// new state to store.
+fn utility_stepper_row(
+    id_prefix: &'static str,
+    label: &'static str,
+    current: u32,
+    step: u32,
+    min: u32,
+    is_override: bool,
+    on_set: impl Fn(u32, &mut Window, &mut App) + 'static,
+    on_clear: impl Fn(&mut Window, &mut App) + 'static,
+    cx: &Context<Inspector>,
+) -> impl IntoElement {
+    let on_set_dec = Rc::new(on_set);
+    let on_set_inc = on_set_dec.clone();
+
+    h_flex()
+        .items_center()
+        .gap(px(6.))
+        .child(div().text_sm().flex_1().child(label))
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-dec")))
+                .label("−")
+                .compact()
+                .outline()
+                .on_click(move |_, window, cx| {
+                    on_set_dec(current.saturating_sub(step).max(min), window, cx);
+                }),
+        )
+        .child(
+            div()
+                .w(px(48.))
+                .text_center()
+                .text_sm()
+                .when(is_override, |el| el.text_color(cx.theme().primary))
+                .child(current.to_string()),
+        )
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-inc")))
+                .label("+")
+                .compact()
+                .outline()
+                .on_click(move |_, window, cx| {
+                    on_set_inc(current.saturating_add(step), window, cx);
+                }),
+        )
+        .child(
+            Button::new(SharedString::from(format!("{id_prefix}-auto")))
+                .label("Auto")
+                .compact()
+                .outline()
+                .disabled(!is_override)
+                .tooltip("Clear the override; each panel falls back to its own default")
+                .on_click(move |_, window, cx| on_clear(window, cx)),
+        )
+}
+
+/// Runtime toggles and tunables for the renderer's debug visualizers and the
+/// retained-layer system (`docs/retained-layers.md`).
+///
+/// These flip switches and overrides inside `gpui-ce` (wgpui) directly —
+/// process-global, takes effect on the very next frame, no restart — rather
+/// than an env var fixed for the app's whole lifetime. Add a new visualizer
+/// by pairing a `gpui::set_*_enabled`/`gpui::is_*_enabled` pair in wgpui with
+/// a `Switch` row below; nothing about the tab itself needs to change.
+///
+/// The per-layer FPS switch is deliberately indented under, and only shown
+/// while, the layer debug switch is checked: its labels are painted next to
+/// that switch's tint (see `Window::paint_layer_fps_labels` in wgpui), so
+/// without the tint on there is nothing for it to label.
+fn render_utilities_tab(_window: &mut Window, cx: &mut Context<Inspector>) -> AnyElement {
+    let layer_debug_on = gpui::is_layer_debug_enabled();
+
+    v_flex()
+        .size_full()
+        .gap(px(10.))
+        .p(px(12.))
+        .child(
+            div().text_xs().text_color(cx.theme().muted_foreground).child(
+                "Runtime debug visualizers and tunables for the renderer. These flip a \
+                 switch inside wgpui directly, with no restart required.",
+            ),
+        )
+        // ---- Performance ---------------------------------------------
+        .child(utility_section_header("Performance", cx))
+        .child(
+            v_flex()
+                .gap(px(2.))
+                .child(
+                    Switch::new("utilities-hud")
+                        .label("Mesa-style performance HUD")
+                        .checked(gpui::is_hud_enabled())
+                        .on_click(|checked, window, _cx| {
+                            gpui::set_hud_enabled(*checked);
+                            window.refresh();
+                        }),
+                )
+                .child(utility_description(
+                    "Top-right overlay: current FPS, a scrolling frame-time graph \
+                     colour-coded green/yellow/red against 60fps/30fps (same bands Mesa's \
+                     own HUD uses), and a live quad/sprite/shadow/layer count.",
+                    cx,
+                )),
+        )
+        .child(
+            v_flex()
+                .gap(px(2.))
+                .child(
+                    Switch::new("utilities-slow-frame-flash")
+                        .label("Slow-frame flash border")
+                        .checked(gpui::is_slow_frame_flash_enabled())
+                        .on_click(|checked, window, _cx| {
+                            gpui::set_slow_frame_flash_enabled(*checked);
+                            window.refresh();
+                        }),
+                )
+                .child(utility_description(
+                    "Flashes a red border for one frame whenever a frame drops below \
+                     30fps — catches a stall even if you weren't watching the graph.",
+                    cx,
+                )),
+        )
+        // ---- Layers -----------------------------------------------------
+        .child(utility_section_header("Layers", cx))
+        .child(
+            v_flex()
+                .gap(px(2.))
+                .child(
+                    Switch::new("utilities-layer-debug")
+                        .label("Layer debug overlay")
+                        .checked(layer_debug_on)
+                        .on_click(|checked, window, _cx| {
+                            gpui::set_layer_debug_enabled(*checked);
+                            // Nothing about the Inspector's own state changed —
+                            // `checked` above reads the wgpui-side switch fresh
+                            // every render — so a plain redraw is enough to pick
+                            // it up, no `cx.notify()` on any specific entity.
+                            window.refresh();
+                        }),
+                )
+                .child(utility_description(
+                    "Tints every retained layer by id and flashes the tint on a frame it \
+                     re-rendered, so a layer silently re-rendering every frame is visible \
+                     instead of merely slow.",
+                    cx,
+                ))
+                // Indented, and only present at all, while the tint above is
+                // on — its labels have nothing to sit next to otherwise.
+                .when(layer_debug_on, |parent| {
+                    parent.child(
+                        div().pl(px(20.)).pt(px(4.)).child(
+                            v_flex()
+                                .gap(px(2.))
+                                .child(
+                                    Switch::new("utilities-layer-fps")
+                                        .label("Per-layer FPS labels")
+                                        .checked(gpui::is_layer_fps_enabled())
+                                        .on_click(|checked, window, _cx| {
+                                            gpui::set_layer_fps_enabled(*checked);
+                                            window.refresh();
+                                        }),
+                                )
+                                .child(utility_description(
+                                    "Labels each tinted layer with its own re-render rate \
+                                     (Hz), or \"static\" if it hasn't re-rendered in the \
+                                     last 5 seconds.",
+                                    cx,
+                                )),
+                        ),
+                    )
+                }),
+        )
+        .child(
+            utility_stepper_row(
+                "utilities-rasterize-above",
+                "Rasterize threshold (primitives)",
+                gpui::rasterize_above_override().unwrap_or(256) as u32,
+                32,
+                0,
+                gpui::rasterize_above_override().is_some(),
+                |value, window, _cx| {
+                    gpui::set_rasterize_above_override(Some(value as usize));
+                    window.refresh();
+                },
+                |window, _cx| {
+                    gpui::set_rasterize_above_override(None);
+                    window.refresh();
+                },
+                cx,
+            ),
+        )
+        .child(utility_description(
+            "A `.layer()`/`.cached()` subtree above this many primitives gets rasterized \
+             to a persistent texture instead of replaying its primitives every clean \
+             frame — overrides every call site's own policy at once. \"Auto\" defers to \
+             each panel's own default (256).",
+            cx,
+        ))
+        .child(
+            Switch::new("utilities-force-rasterize-all")
+                .label("Force-rasterize every layer")
+                .checked(gpui::is_force_rasterize_all())
+                .on_click(|checked, window, _cx| {
+                    gpui::set_force_rasterize_all(*checked);
+                    window.refresh();
+                }),
+        )
+        .child(utility_description(
+            "Bypasses the threshold above entirely: any non-empty layer rasterizes. \
+             Blunter than the threshold override — for finding a bug in the texture \
+             path itself, not for tuning when it kicks in.",
+            cx,
+        ))
+        .child(
+            utility_stepper_row(
+                "utilities-evict-after-frames",
+                "Evict after (frames)",
+                gpui::evict_after_frames_override().unwrap_or(60),
+                15,
+                1,
+                gpui::evict_after_frames_override().is_some(),
+                |value, window, _cx| {
+                    gpui::set_evict_after_frames_override(Some(value));
+                    window.refresh();
+                },
+                |window, _cx| {
+                    gpui::set_evict_after_frames_override(None);
+                    window.refresh();
+                },
+                cx,
+            ),
+        )
+        .child(utility_description(
+            "How many consecutive frames a layer may go unvisited before it drops its \
+             retained content (a scrolled-away-and-back panel re-materialises into the \
+             same identity, so this only costs a rebuild, not correctness).",
+            cx,
+        ))
+        // ---- Occlusion ----------------------------------------------------
+        .child(utility_section_header("Occlusion culling", cx))
+        .child(
+            Switch::new("utilities-occlusion-disabled")
+                .label("Disable occlusion culling")
+                .checked(gpui::is_occlusion_disabled())
+                .on_click(|checked, window, _cx| {
+                    gpui::set_occlusion_disabled(*checked);
+                    window.refresh();
+                }),
+        )
+        .child(utility_description(
+            "Forces every layer to draw regardless of what's on top of it. Useful for \
+             comparing \"with occlusion\" against \"without\" on the same frame instead \
+             of restarting with a different env var.",
+            cx,
+        ))
+        .child(
+            Switch::new("utilities-occlusion-visualizer")
+                .label("Occlusion visualizer")
+                .checked(gpui::is_occlusion_visualizer_enabled())
+                .on_click(|checked, window, _cx| {
+                    gpui::set_occlusion_visualizer_enabled(*checked);
+                    window.refresh();
+                }),
+        )
+        .child(utility_description(
+            "Marks every culled layer with a magenta wash instead of simply skipping it \
+             — distinguishes \"nothing drew here, as intended\" from \"something is \
+             missing\", which otherwise look identical.",
+            cx,
+        ))
         .into_any_element()
 }
 
