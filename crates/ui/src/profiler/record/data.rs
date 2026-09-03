@@ -270,6 +270,52 @@ pub(crate) struct BottomUpRow {
     pub(crate) self_ns: u64,
     pub(crate) total_ns: u64,
     pub(crate) count: u32,
+    /// `file:line` call site, when every occurrence of this name across the
+    /// aggregated range agrees on exactly one ([`SourceAgg::One`]) — reuses
+    /// the same `CpuSpan::element`/`ElementAttribution::source_location`
+    /// `FlameBar::element_source` already reads for the detail flame chart,
+    /// just aggregated across every occurrence instead of one bar. `None`
+    /// when no occurrence carried element attribution at all (most
+    /// framework-internal spans — `Commit`/`Layout`/`Paint`-style pipeline
+    /// phases never have one, matching the reference screenshot, where those
+    /// rows show no source suffix at all) *or* when occurrences disagreed
+    /// (`SourceAgg::Many` — the same name produced by more than one call
+    /// site; showing any single one of them would be misleading). No column
+    /// number: `ElementAttribution::source_location` only carries
+    /// `(file, line)`, unlike the reference's `file:line:col` — the closest
+    /// this profiler's own instrumentation can get.
+    pub(crate) source: Option<SharedString>,
+}
+
+/// Tracks whether every occurrence of one aggregated name agreed on a single
+/// source location — see [`BottomUpRow::source`]'s field doc for why `Many`
+/// collapses to `None` rather than picking one arbitrarily.
+#[derive(Clone)]
+enum SourceAgg {
+    None,
+    One(SharedString),
+    Many,
+}
+
+impl SourceAgg {
+    fn record(&mut self, source: Option<&SharedString>) {
+        match (&self, source) {
+            (SourceAgg::Many, _) | (_, None) => {}
+            (SourceAgg::None, Some(s)) => *self = SourceAgg::One((*s).clone()),
+            (SourceAgg::One(existing), Some(s)) => {
+                if existing != s {
+                    *self = SourceAgg::Many;
+                }
+            }
+        }
+    }
+
+    fn into_option(self) -> Option<SharedString> {
+        match self {
+            SourceAgg::One(s) => Some(s),
+            SourceAgg::None | SourceAgg::Many => None,
+        }
+    }
 }
 
 /// Builds the Bottom-up tab's rows for `[start_ns, end_ns)`.
@@ -293,7 +339,7 @@ pub(crate) fn build_bottom_up_rows(
 ) -> Vec<BottomUpRow> {
     let mut agg: std::collections::HashMap<
         SharedString,
-        (u64, u64, u32, Option<gpui::SpanCategory>),
+        (u64, u64, u32, Option<gpui::SpanCategory>, SourceAgg),
     > = std::collections::HashMap::new();
 
     for frame in capture.frames() {
@@ -314,21 +360,36 @@ pub(crate) fn build_bottom_up_rows(
                 continue;
             }
             let name = span_name_label_resolved(capture, span.name);
-            let entry = agg.entry(name).or_insert((0, 0, 0, Some(span.category)));
+            // Same `(file, line)` `FlameBar::from_cpu_with_label` reads for
+            // the detail flame chart's own `element_source` — see
+            // `BottomUpRow::source`'s field doc for why it's folded down to
+            // "exactly one, across every occurrence" rather than kept
+            // per-occurrence.
+            let span_source = span
+                .element
+                .and_then(|e| e.source_location)
+                .map(|(file, line)| SharedString::from(format!("{file}:{line}")));
+            let entry = agg
+                .entry(name)
+                .or_insert((0, 0, 0, Some(span.category), SourceAgg::None));
             entry.0 += self_ns;
             entry.1 += duration_ns;
             entry.2 += 1;
+            entry.4.record(span_source.as_ref());
         }
     }
 
     agg.into_iter()
-        .map(|(name, (self_ns, total_ns, count, category))| BottomUpRow {
-            name,
-            category,
-            self_ns,
-            total_ns,
-            count,
-        })
+        .map(
+            |(name, (self_ns, total_ns, count, category, source_agg))| BottomUpRow {
+                name,
+                category,
+                self_ns,
+                total_ns,
+                count,
+                source: source_agg.into_option(),
+            },
+        )
         .collect()
 }
 
@@ -466,5 +527,43 @@ mod tests {
     #[test]
     fn ns_to_ms_string_formats_two_decimals() {
         assert_eq!(ns_to_ms_string(1_500_000), "1.50");
+    }
+
+    // `SourceAgg` *is* a pure seam (unlike the rest of `build_bottom_up_rows`,
+    // see the comment above) — no `Capture` needed, just `SharedString`s — so
+    // its three-way "no source seen yet / exactly one / disagreed" collapse
+    // gets real coverage even though the aggregation loop it's used from
+    // doesn't.
+    #[test]
+    fn source_agg_stays_none_with_no_occurrences_carrying_a_source() {
+        let mut agg = SourceAgg::None;
+        agg.record(None);
+        agg.record(None);
+        assert!(agg.into_option().is_none());
+    }
+
+    #[test]
+    fn source_agg_resolves_to_the_one_source_every_occurrence_agreed_on() {
+        let mut agg = SourceAgg::None;
+        let loc: SharedString = "foo.rs:12".into();
+        agg.record(Some(&loc));
+        agg.record(Some(&loc));
+        agg.record(None); // an occurrence with no attribution doesn't count as a conflict.
+        assert_eq!(agg.into_option(), Some(loc));
+    }
+
+    #[test]
+    fn source_agg_collapses_to_none_when_occurrences_disagree() {
+        let mut agg = SourceAgg::None;
+        agg.record(Some(&"foo.rs:12".into()));
+        agg.record(Some(&"bar.rs:34".into()));
+        assert!(agg.into_option().is_none());
+        // Once collapsed, a later occurrence that *would* have agreed with
+        // the first still doesn't resurrect it — "Many" is a one-way trip,
+        // not "whichever source most occurrences had".
+        let mut agg2 = SourceAgg::One("foo.rs:12".into());
+        agg2.record(Some(&"bar.rs:34".into()));
+        agg2.record(Some(&"foo.rs:12".into()));
+        assert!(agg2.into_option().is_none());
     }
 }
