@@ -60,13 +60,34 @@
 //!   container width once, up front (`chart_width = measured - GUTTER_WIDTH`),
 //!   rather than threaded through every downstream calculation.
 //! - **A ruler + gridlines that share the bars' own coordinate space.** A
-//!   thin time-ruler sits above the lane stack, and faint vertical
-//!   gridlines run from it straight down through every lane -- the
-//!   reference's "one shared coordinate system" feel called out for this
-//!   view. Both are built from [`pick_tick_interval_ns`]/[`ruler_ticks`]
-//!   over the exact same `visible_start_ns`/`visible_span_ns`/`chart_width`
-//!   the bars themselves use, so a gridline is never off by even a pixel
-//!   from the bar edges it's meant to line up with.
+//!   thin time-ruler sits above the lane stack (fixed -- it never scrolls,
+//!   see below) and faint vertical gridlines run down through every lane,
+//!   scrolling with them -- the reference's "one shared coordinate space"
+//!   feel called out for this view, along the time axis. Both are built
+//!   from [`pick_tick_interval_ns`]/[`ruler_ticks`] over the exact same
+//!   `visible_start_ns`/`visible_span_ns`/`chart_width` the bars themselves
+//!   use, so a gridline is never off by even a pixel from the bar edges
+//!   it's meant to line up with.
+//! - **Vertical scrolling, with real virtualization underneath it.** A
+//!   deeply-recursive capture can produce a lane hundreds of rows tall --
+//!   the lane stack sits in its own scrollable region (below the fixed
+//!   ruler) so you can actually reach the bottom of one, and, more
+//!   importantly, this file never *builds* GPU instances, hit-test bars, or
+//!   labels for a depth row that isn't within (or near) the current
+//!   viewport in the first place. `render` tracks each lane's vertical
+//!   position as it lays the stack out; a lane entirely outside the
+//!   viewport (± [`VIRTUALIZATION_OVERSCAN_ROWS`] rows of slack) contributes
+//!   only an empty, correctly-sized spacer -- no `wgpu_surface`, no per-bar
+//!   loop at all -- and a lane that's *partially* visible only processes the
+//!   depth rows inside that window, not its full height. The per-lane
+//!   `wgpu_surface`'s own div is sized/positioned to just that visible
+//!   window rather than the lane's full height, so the GPU texture itself
+//!   shrinks along with the CPU-side work. This is the actual fix for "the
+//!   flame chart is slow" at real stack depths -- the merge step
+//!   ([`merge_tiny_adjacent_bars`]) bounds work *along* the time axis, this
+//!   bounds it *along* the depth axis, and together the per-render cost
+//!   stops scaling with total stack size and starts scaling with viewport
+//!   size instead.
 //!
 //! # Known gaps vs. the reference
 //!
@@ -115,7 +136,14 @@ use super::data::{self, LONG_TASK_NS};
 /// future feature genuinely needs Record-only flame-chart state (e.g. a
 /// label-density toggle), it belongs here.
 #[derive(Default)]
-pub(crate) struct FlameState;
+pub(crate) struct FlameState {
+    /// Tracks the lane stack's scroll position (see [`render`]'s "Vertical
+    /// virtualization" section) — the other half of the visible-band
+    /// computation alongside `ProfilerPanel::flame_chart_bounds`, which
+    /// already measures the surrounding viewport's height for the
+    /// scroll-wheel-zoom-anchor math this file already had.
+    scroll_handle: gpui::ScrollHandle,
+}
 
 /// Width of the left-edge lane-type gutter (§3's icon column). Subtracted
 /// from the measured container width once, up front, so every downstream
@@ -135,6 +163,11 @@ const LANE_LABEL_HEIGHT: f32 = 22.0;
 /// Approximates the `v_flex().gap_1()` spacing between lane blocks, for the
 /// same total-height estimate as [`LANE_LABEL_HEIGHT`].
 const LANE_GAP: f32 = 4.0;
+
+/// Extra depth rows built beyond the strictly-visible window on each side,
+/// so a small scroll delta never has to wait a frame for freshly-visible
+/// rows to appear — see [`render`]'s "Vertical virtualization" section.
+const VIRTUALIZATION_OVERSCAN_ROWS: u16 = 6;
 
 pub(crate) fn render(
     panel: &mut ProfilerPanel,
@@ -183,6 +216,20 @@ pub(crate) fn render(
     let mut lane_elements: Vec<AnyElement> = Vec::new();
     let mut total_lanes_height: f32 = 0.0;
 
+    // Vertical virtualization (see this file's module doc): the visible
+    // content-space band, in the lane stack's own local coordinates (0 =
+    // top of the first lane's caption), plus a row-based overscan margin so
+    // a small scroll delta never has to wait a frame for newly-visible rows
+    // to appear. `flame_chart_bounds` measures the *whole*
+    // `#flame-chart-canvas` container (fixed ruler band included), so its
+    // height minus the ruler's own fixed height is the scrollable
+    // viewport's actual height.
+    let scroll_offset_y = f32::from(panel.record.flame.scroll_handle.offset().y);
+    let viewport_height = (f32::from(panel.flame_chart_bounds.size.height) - RULER_HEIGHT).max(0.0);
+    let overscan_px = VIRTUALIZATION_OVERSCAN_ROWS as f32 * FLAME_ROW_HEIGHT;
+    let viewport_top = -scroll_offset_y - overscan_px;
+    let viewport_bottom = -scroll_offset_y + viewport_height + overscan_px;
+
     for (lane_index, lane) in lanes.iter().enumerate() {
         lane_elements.push(
             div()
@@ -196,7 +243,36 @@ pub(crate) fn render(
         total_lanes_height += LANE_LABEL_HEIGHT;
 
         let lane_height = (lane.max_depth as f32 + 1.0) * FLAME_ROW_HEIGHT;
+        // `total_lanes_height` at this exact point already includes this
+        // lane's own caption but not yet its body -- exactly the body's
+        // content-space top.
+        let lane_body_top = total_lanes_height;
+        let lane_body_bottom = lane_body_top + lane_height;
         total_lanes_height += lane_height + LANE_GAP;
+
+        if !lane_intersects_viewport(lane_body_top, lane_body_bottom, viewport_top, viewport_bottom) {
+            // Entirely outside the viewport (± overscan): a correctly-sized
+            // empty spacer keeps scroll extent and every later lane's own
+            // position correct, with none of the per-bar work below.
+            lane_elements.push(
+                div()
+                    .id(SharedString::from(format!("flame-lane-spacer-{lane_index}")))
+                    .w(px(chart_width + GUTTER_WIDTH))
+                    .h(px(lane_height))
+                    .into_any_element(),
+            );
+            continue;
+        }
+
+        // The depth-row window actually worth building: this lane's own
+        // local row range intersecting the viewport (± overscan), clamped
+        // to the rows that actually exist. A lane that fits entirely inside
+        // the viewport gets `depth_start == 0`/`depth_end == max_depth`
+        // here, i.e. no windowing overhead beyond this computation itself.
+        let (depth_start, depth_end) =
+            visible_depth_window(viewport_top, viewport_bottom, lane_body_top, lane.max_depth);
+        let window_top_px = depth_start as f32 * FLAME_ROW_HEIGHT;
+        let window_height_px = (depth_end - depth_start + 1) as f32 * FLAME_ROW_HEIGHT;
 
         let mut instances: Vec<BarInstance> = if gpu_available {
             Vec::with_capacity(lane.bars.len())
@@ -215,6 +291,13 @@ pub(crate) fn render(
             merge_tiny_adjacent_bars(&lane.bars, visible_start_ns, visible_span_ns, chart_width);
 
         for bar in &merged_bars {
+            // The other half of virtualization, alongside the whole-lane
+            // skip above: a bar whose row falls outside this lane's
+            // currently-relevant depth window never gets an instance, a
+            // `HitBar`, or a label element built for it at all.
+            if bar.depth < depth_start || bar.depth > depth_end {
+                continue;
+            }
             let bar_start_ns = bar.start_ns as f64;
             let bar_end_ns = bar_start_ns + bar.duration_ns as f64;
             // Cull spans outside the zoomed/panned window, same as
@@ -224,7 +307,18 @@ pub(crate) fn render(
                 continue;
             }
             let (x, width) = bar_screen_rect(bar, visible_start_ns, visible_span_ns, chart_width);
-            let top = bar.depth as f32 * FLAME_ROW_HEIGHT;
+            // `lane_top` is this bar's position within the *lane's own*
+            // full-height `bar_area` -- what hit-testing and labels use,
+            // since both are plain GPUI elements laid out against that
+            // whole area. `window_top` is the same position re-based to the
+            // *windowed* `wgpu_surface`'s own smaller texture -- since that
+            // surface is itself positioned at `window_top_px` within
+            // `bar_area` (see below), `window_top_px + window_top` always
+            // equals `lane_top`, so the two coordinate spaces agree on
+            // screen even though only one of them is what the GPU instance
+            // buffer is built in.
+            let lane_top = bar.depth as f32 * FLAME_ROW_HEIGHT;
+            let window_top = lane_top - window_top_px;
             let long_task = is_long_task(bar);
             let base_color = bar_fill_color(bar, cx);
 
@@ -244,10 +338,10 @@ pub(crate) fn render(
                 }
 
                 instances.push(BarInstance {
-                    rect_min: [x * scale, top * scale],
+                    rect_min: [x * scale, window_top * scale],
                     rect_max: [
                         (x + width) * scale,
-                        (top + (FLAME_ROW_HEIGHT - 2.0)) * scale,
+                        (window_top + (FLAME_ROW_HEIGHT - 2.0)) * scale,
                     ],
                     color: [rgba.r, rgba.g, rgba.b, rgba.a],
                     corner_radius: 3.0 * scale,
@@ -260,7 +354,7 @@ pub(crate) fn render(
                 // that ordering is what makes the hatch composite on top.
                 if long_task && matches_search {
                     let danger = cx.theme().danger.to_rgb();
-                    for (rx0, ry0, rx1, ry1) in long_task_hatch_rects(x, width, top) {
+                    for (rx0, ry0, rx1, ry1) in long_task_hatch_rects(x, width, window_top) {
                         instances.push(BarInstance {
                             rect_min: [rx0 * scale, ry0 * scale],
                             rect_max: [rx1 * scale, ry1 * scale],
@@ -277,12 +371,18 @@ pub(crate) fn render(
                 bar: bar.clone(),
                 x,
                 width,
-                top,
+                top: lane_top,
             });
 
             if should_label_bar(bar.depth, width) {
                 let text_color = contrasting_label_color(base_color);
-                label_elements.push(bar_label_element(bar.label.clone(), x, top, width, text_color));
+                label_elements.push(bar_label_element(
+                    bar.label.clone(),
+                    x,
+                    lane_top,
+                    width,
+                    text_color,
+                ));
             }
         }
 
@@ -295,14 +395,23 @@ pub(crate) fn render(
             .h(px(lane_height));
 
         if let Some(handle) = surface_handle {
-            // Deferred-resize surface, same rationale as
-            // `render_flame_lanes_body`: without this, every sidebar/window
-            // resize tick would force a real GPU texture reallocation per
-            // lane on top of the instance rebuild this loop already does.
+            // Positioned/sized to just the visible depth window
+            // (`window_top_px`/`window_height_px`), not `inset_0()` across
+            // the whole (potentially much taller) `bar_area` -- the other
+            // half of vertical virtualization: the GPU texture itself
+            // shrinks along with the CPU-side instance count, rather than
+            // always being allocated at the lane's full height. Deferred-
+            // resize, same rationale as `render_flame_lanes_body`: without
+            // it, every sidebar/window resize (and now every scroll tick)
+            // would force a real GPU texture reallocation on top of the
+            // instance rebuild this loop already does.
             bar_area = bar_area.child(
                 wgpu_surface(handle)
                     .absolute()
-                    .inset_0()
+                    .top(px(window_top_px))
+                    .left(px(0.))
+                    .w(px(chart_width))
+                    .h(px(window_height_px))
                     .defer_resize_until_mouse_up(true),
             );
         }
@@ -415,7 +524,14 @@ pub(crate) fn render(
                     .id(SharedString::from(format!("flame-gridline-{tick_index}")))
                     .absolute()
                     .left(px(GUTTER_WIDTH + x))
-                    .top(px(RULER_HEIGHT))
+                    // Relative to the scrollable lane area's own top now,
+                    // not the whole canvas (the ruler band that used to sit
+                    // above this offset is a sibling of that scrollable
+                    // area, not a positioning ancestor of it any more) --
+                    // gridlines scroll together with the lanes they're
+                    // meant to line up with, the ruler itself stays fixed.
+                    // See this file's module doc.
+                    .top(px(0.))
                     .w(px(1.))
                     .h(px(total_lanes_height))
                     .bg(cx.theme().border.alpha(0.35))
@@ -425,6 +541,7 @@ pub(crate) fn render(
     }
 
     let entity = cx.entity().clone();
+    let scroll_handle = panel.record.flame.scroll_handle.clone();
 
     div()
         .id("flame-chart-canvas")
@@ -527,15 +644,70 @@ pub(crate) fn render(
                 .border_b_1()
                 .border_color(cx.theme().border),
         )
+        // The scrollable lane stack, separated from the fixed ruler band
+        // above it -- see this file's module doc's "Vertical scrolling"
+        // section. Explicit height (the same `viewport_height` the
+        // virtualization math above already computed) rather than a flex
+        // fill, since `#flame-chart-canvas` is a plain block container the
+        // way every other top-level `div()` in this file already is, not a
+        // flex column.
         .child(
-            v_flex()
-                .id("flame-chart-lanes")
-                .gap_1()
-                .children(lane_elements),
+            div()
+                .id("flame-chart-scroll-area")
+                .relative()
+                .w_full()
+                .h(px(viewport_height))
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .child(
+                    v_flex()
+                        .id("flame-chart-lanes")
+                        .gap_1()
+                        .children(lane_elements),
+                )
+                .children(gridline_children),
         )
-        .children(gridline_children)
         .children(ruler_children)
         .into_any_element()
+}
+
+/// Whether a lane's content-space body range `[lane_body_top,
+/// lane_body_bottom)` overlaps the currently visible band `[viewport_top,
+/// viewport_bottom)` at all (the band already includes
+/// [`VIRTUALIZATION_OVERSCAN_ROWS`] of slack — see [`render`]) — a lane that
+/// doesn't gets skipped entirely, per this file's module doc.
+fn lane_intersects_viewport(
+    lane_body_top: f32,
+    lane_body_bottom: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+) -> bool {
+    lane_body_bottom >= viewport_top && lane_body_top <= viewport_bottom
+}
+
+/// For a lane known to intersect the viewport (see
+/// [`lane_intersects_viewport`]), the inclusive `[depth_start, depth_end]`
+/// row range — in that lane's own local row coordinates — actually worth
+/// building bars for, clamped to the rows that exist (`0..=max_depth`). A
+/// lane that fits entirely inside the viewport resolves to
+/// `(0, max_depth)`, i.e. every row, matching the pre-virtualization
+/// behavior exactly for a lane short enough that windowing wouldn't help
+/// anyway.
+fn visible_depth_window(
+    viewport_top: f32,
+    viewport_bottom: f32,
+    lane_body_top: f32,
+    max_depth: u16,
+) -> (u16, u16) {
+    let depth_start = ((viewport_top - lane_body_top) / FLAME_ROW_HEIGHT)
+        .floor()
+        .max(0.0) as u16;
+    let depth_end = (((viewport_bottom - lane_body_top) / FLAME_ROW_HEIGHT)
+        .ceil()
+        .max(0.0) as u16)
+        .min(max_depth)
+        .max(depth_start.min(max_depth));
+    (depth_start.min(max_depth), depth_end)
 }
 
 /// A bar this narrow on screen is a merge *candidate*. Below this width you
@@ -1128,5 +1300,45 @@ mod tests {
     fn merge_tiny_adjacent_bars_returns_nothing_for_an_empty_lane() {
         assert!(merge_tiny_adjacent_bars(&[], 0.0, MERGE_TEST_SPAN_NS, MERGE_TEST_CHART_WIDTH)
             .is_empty());
+    }
+
+    #[test]
+    fn lane_intersects_viewport_true_when_ranges_overlap() {
+        assert!(lane_intersects_viewport(100.0, 200.0, 150.0, 300.0));
+        // Touching exactly at an edge still counts as intersecting.
+        assert!(lane_intersects_viewport(100.0, 200.0, 200.0, 300.0));
+    }
+
+    #[test]
+    fn lane_intersects_viewport_false_when_entirely_above_or_below() {
+        assert!(!lane_intersects_viewport(0.0, 50.0, 100.0, 200.0));
+        assert!(!lane_intersects_viewport(300.0, 400.0, 100.0, 200.0));
+    }
+
+    #[test]
+    fn visible_depth_window_covers_the_whole_lane_when_it_fits_in_the_viewport() {
+        // A short lane (5 rows) fully inside a generous viewport should
+        // window to every row, not a subset -- no virtualization overhead
+        // for a lane that's already small.
+        let (start, end) = visible_depth_window(-1000.0, 1000.0, 0.0, 4);
+        assert_eq!((start, end), (0, 4));
+    }
+
+    #[test]
+    fn visible_depth_window_clamps_to_a_partial_range_for_a_tall_lane() {
+        // Viewport covers content-space rows [2*ROW, 5*ROW) of a lane whose
+        // body starts at content-space 0 -- only rows 1..=5 (with the floor/
+        // ceil rounding) should be in the window, not the full 0..=200.
+        let (start, end) =
+            visible_depth_window(2.0 * FLAME_ROW_HEIGHT, 5.0 * FLAME_ROW_HEIGHT, 0.0, 200);
+        assert_eq!(start, 2);
+        assert_eq!(end, 5);
+        assert!(end < 200);
+    }
+
+    #[test]
+    fn visible_depth_window_never_produces_an_inverted_range() {
+        let (start, end) = visible_depth_window(-10.0, -5.0, 0.0, 50);
+        assert!(end >= start);
     }
 }
