@@ -236,6 +236,15 @@ pub(crate) fn render(
             scale,
             cx,
         );
+        push_selection_segments(
+            &mut instances,
+            displayed_range,
+            domain_start_ns,
+            domain_span_ns,
+            chart_width,
+            scale,
+            cx,
+        );
     }
     let surface_handle = if gpu_available {
         paint_gpu(state, window, &instances)
@@ -270,7 +279,6 @@ pub(crate) fn render(
             domain_span_ns,
             chart_width,
             panel_entity.clone(),
-            cx,
         )
     });
 
@@ -413,12 +421,15 @@ pub(crate) fn render(
         .into_any_element()
 }
 
-/// Renders the translucent selection box: a tinted fill + border spanning
-/// the *whole* strip height (ruler included — matches the reference
-/// screenshots, where the selection's drag handles run from the very top of
-/// the ruler down through the Frames row), plus two independently
-/// draggable edge grips so either bound can be moved on its own, holding
-/// the other bound fixed — not just a whole-selection redraw gesture.
+/// Composes the selection's three drag gestures — pan the whole body,
+/// resize the left edge, resize the right edge — into one `inset_0()`
+/// coordinate space. Purely interactive: every one of these is a fully
+/// transparent hit-target div, `.occlude()`d so a drag starting on any of
+/// them doesn't *also* trigger the strip's own from-scratch
+/// `RangeSelectDrag`. The actual selection *pixels* (fill, border, grip
+/// marks) are GPU-instanced alongside the CPU graph/Frames row —
+/// see [`push_selection_segments`] — not drawn by anything in this
+/// function or its children.
 fn render_selection_overlay(
     start: u64,
     end: u64,
@@ -426,7 +437,6 @@ fn render_selection_overlay(
     domain_span_ns: f64,
     chart_width: f32,
     panel_entity: Entity<ProfilerPanel>,
-    cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
     let x0 = ((start.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32 * chart_width;
     let x1 = ((end.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32 * chart_width;
@@ -434,37 +444,36 @@ fn render_selection_overlay(
     let width = (x0 - x1).abs().max(1.0);
     let right = left + width;
 
-    // A single `inset_0()` wrapper so the fill/border box and the two edge
-    // grips all position `left`/`top` against the *same* coordinate space
-    // (the whole strip) rather than nesting an absolutely-positioned grip
-    // inside an already-absolutely-positioned, explicitly-widthed fill box
-    // — that would make the grip's `left` relative to the fill box's edge
-    // in one case and the wrapper's collapsed auto-width in the other,
-    // two different origins for what should be one consistent x axis.
+    // A single `inset_0()` wrapper so the three hit-targets all position
+    // `left`/`top` against the *same* coordinate space (the whole strip)
+    // rather than nesting one absolutely-positioned grip inside another —
+    // that would make the inner one's `left` relative to the outer one's
+    // edge instead of a consistent shared x axis.
     div()
         .absolute()
         .inset_0()
-        .child(selection_body(left, width, start, end, panel_entity.clone(), cx))
+        .child(selection_body(left, width, start, end, panel_entity.clone()))
         .child(left_edge_grip(left, end, panel_entity.clone()))
         .child(right_edge_grip(right, start, panel_entity))
         .into_any_element()
 }
 
-/// The selection's fill/border box, draggable as a whole to *pan* the
+/// The selection's *hit target* for dragging the whole body to pan the
 /// range across the domain (holding its width fixed) rather than redraw
-/// it -- Chrome's own overview selection works the same way: it's a
-/// window into the data, not just a highlight. `.occlude()`d for the same
-/// reason the edge grips are (see [`left_edge_grip`]'s doc comment):
-/// without it, a drag starting inside the selection would *also* trigger
-/// the strip's own `RangeSelectDrag`, which draws a brand-new selection
-/// from scratch instead of panning this one.
+/// it -- Chrome's own overview selection works the same way: it's a window
+/// into the data, not just a highlight. Fully transparent -- the fill/
+/// border pixels this box visually corresponds to are drawn by
+/// [`push_selection_segments`] instead. `.occlude()`d for the same reason
+/// the edge grips are (see [`left_edge_grip`]'s doc comment): without it, a
+/// drag starting inside the selection would *also* trigger the strip's own
+/// `RangeSelectDrag`, which draws a brand-new selection from scratch
+/// instead of panning this one.
 fn selection_body(
     left: f32,
     width: f32,
     start: u64,
     end: u64,
     panel_entity: Entity<ProfilerPanel>,
-    cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
     div()
         .id("record-overview-selection-body")
@@ -475,9 +484,6 @@ fn selection_body(
         .bottom(px(0.))
         .left(px(left))
         .w(px(width))
-        .bg(cx.theme().selection.opacity(0.2))
-        .border_1()
-        .border_color(cx.theme().selection)
         .on_drag(PanSelectionDrag, {
             let panel_entity = panel_entity.clone();
             move |_, start_position, _window, cx| {
@@ -563,30 +569,16 @@ fn pan_selection(
     (new_start as u64, new_end as u64)
 }
 
-/// The small visible pill mark inside an edge grip's (wider, invisible)
-/// drag-hit-target — the affordance cue for "you can drag this edge",
-/// matching the reference's own selection handles. `local_x` is relative to
-/// the grip's own hit-target box, not the strip.
-fn selection_grip_mark(local_x: f32) -> AnyElement {
-    div()
-        .absolute()
-        .top(px(STRIP_HEIGHT / 2.0 - 7.0))
-        .left(px(local_x - 2.0))
-        .w(px(4.0))
-        .h(px(14.0))
-        .rounded_full()
-        .bg(gpui::black().opacity(0.35))
-        .into_any_element()
-}
-
-/// One selection edge's drag-to-resize hit target: a small `.occlude()`d
-/// box (matching `resizable::resize_handle`'s own "small drag handle on top
-/// of a larger interactive area" pattern — occlusion is what stops the
-/// strip's own whole-selection `RangeSelectDrag` from *also* firing for the
-/// same mouse-down, since GPUI hit-tests the topmost occluding element
-/// first) that moves *only* this edge, holding `other_edge_ns` fixed for
-/// the duration of the drag. `x` is in strip-local coordinates, same axis
-/// [`render_selection_overlay`]'s fill box uses.
+/// One selection edge's drag-to-resize hit target: a small, fully
+/// transparent `.occlude()`d box (matching `resizable::resize_handle`'s own
+/// "small drag handle on top of a larger interactive area" pattern —
+/// occlusion is what stops the strip's own whole-selection
+/// `RangeSelectDrag` from *also* firing for the same mouse-down, since
+/// GPUI hit-tests the topmost occluding element first) that moves *only*
+/// this edge, holding `other_edge_ns` fixed for the duration of the drag.
+/// `x` is in strip-local coordinates, same axis [`render_selection_overlay`]
+/// uses. The visible grip pill this hit-target sits over is GPU-instanced
+/// by [`push_selection_segments`], not drawn here.
 fn left_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel>) -> AnyElement {
     div()
         .id("record-overview-grip-left")
@@ -597,7 +589,6 @@ fn left_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel
         .left(px(x - GRIP_HIT_WIDTH / 2.0))
         .w(px(GRIP_HIT_WIDTH))
         .h(px(STRIP_HEIGHT))
-        .child(selection_grip_mark(GRIP_HIT_WIDTH / 2.0))
         .on_drag(LeftEdgeDrag, {
             let panel_entity = panel_entity.clone();
             move |_, _start_position, _window, cx| {
@@ -640,7 +631,6 @@ fn right_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPane
         .left(px(x - GRIP_HIT_WIDTH / 2.0))
         .w(px(GRIP_HIT_WIDTH))
         .h(px(STRIP_HEIGHT))
-        .child(selection_grip_mark(GRIP_HIT_WIDTH / 2.0))
         .on_drag(RightEdgeDrag, {
             let panel_entity = panel_entity.clone();
             move |_, _start_position, _window, cx| {
@@ -793,6 +783,95 @@ fn frame_x_range(cumulative_ns_before: f64, duration_ns: f64, domain_span_ns: f6
     let x0 = (cumulative_ns_before / domain_span_ns) as f32 * chart_width;
     let x1 = ((cumulative_ns_before + duration_ns) / domain_span_ns) as f32 * chart_width;
     (x0, x1.max(x0 + 0.5))
+}
+
+/// Selection box fill/border + edge-grip marks, appended to the same
+/// instance buffer as the CPU graph/Frames row -- moved here from plain
+/// `div()` styling so the "everything except text/popups renders via the
+/// shader" rule applies to the selection the same as everything else in
+/// this strip. Only the *pixels* live here; the draggable hit-target divs
+/// ([`selection_body`]/[`left_edge_grip`]/[`right_edge_grip`]) stay in the
+/// UI framework layer, fully transparent, purely for interactivity — same
+/// split this crate already uses for the flame chart's own bars vs. their
+/// hit-test overlay.
+///
+/// Deliberately confined to the graph area's own local coordinate space
+/// (`0..GRAPH_AREA_HEIGHT`, the same space every other `push_*` function in
+/// this file uses), not the reference's full-strip-height handles (ruler
+/// band included) -- the shared surface this draws into only covers the
+/// graph area; the ruler above it is a separate plain-text overlay, and
+/// extending the surface upward just to cover a few extra pixels of
+/// selection chrome would mean re-deriving every other `push_*`
+/// function's Y math against a taller area for a purely cosmetic gain.
+fn push_selection_segments(
+    instances: &mut Vec<BarInstance>,
+    displayed_range: Option<(u64, u64)>,
+    domain_start_ns: u64,
+    domain_span_ns: f64,
+    chart_width: f32,
+    scale: f32,
+    cx: &Context<ProfilerPanel>,
+) {
+    let Some((start, end)) = displayed_range else {
+        return;
+    };
+    let x0 = ((start.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32 * chart_width;
+    let x1 = ((end.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32 * chart_width;
+    let left = x0.min(x1);
+    let width = (x0 - x1).abs().max(1.0);
+    let right = left + width;
+
+    const BORDER_PX: f32 = 1.0;
+    const GRIP_HALF_WIDTH: f32 = 2.0;
+    const GRIP_HEIGHT: f32 = 14.0;
+
+    let fill = cx.theme().selection.opacity(0.2).to_rgb();
+    instances.push(BarInstance {
+        rect_min: [left * scale, 0.0],
+        rect_max: [right * scale, GRAPH_AREA_HEIGHT * scale],
+        color: [fill.r, fill.g, fill.b, fill.a],
+        corner_radius: 0.0,
+        highlight: 0.0,
+        _pad: [0.0, 0.0],
+    });
+
+    let border = cx.theme().selection.to_rgb();
+    let border_rects = [
+        (left, 0.0, left + BORDER_PX, GRAPH_AREA_HEIGHT),
+        (right - BORDER_PX, 0.0, right, GRAPH_AREA_HEIGHT),
+        (left, 0.0, right, BORDER_PX),
+        (left, GRAPH_AREA_HEIGHT - BORDER_PX, right, GRAPH_AREA_HEIGHT),
+    ];
+    for (bx0, by0, bx1, by1) in border_rects {
+        instances.push(BarInstance {
+            rect_min: [bx0 * scale, by0 * scale],
+            rect_max: [bx1 * scale, by1 * scale],
+            color: [border.r, border.g, border.b, border.a],
+            corner_radius: 0.0,
+            highlight: 0.0,
+            _pad: [0.0, 0.0],
+        });
+    }
+
+    // Edge-grip pills: the affordance cue for "you can drag this edge",
+    // matching the reference's own selection handles -- same visual as
+    // before, just GPU-instanced instead of a `div().rounded_full()`.
+    for grip_x in [left, right] {
+        instances.push(BarInstance {
+            rect_min: [
+                (grip_x - GRIP_HALF_WIDTH) * scale,
+                (GRAPH_AREA_HEIGHT / 2.0 - GRIP_HEIGHT / 2.0) * scale,
+            ],
+            rect_max: [
+                (grip_x + GRIP_HALF_WIDTH) * scale,
+                (GRAPH_AREA_HEIGHT / 2.0 + GRIP_HEIGHT / 2.0) * scale,
+            ],
+            color: [0.0, 0.0, 0.0, 0.35],
+            corner_radius: GRIP_HALF_WIDTH * scale,
+            highlight: 0.0,
+            _pad: [0.0, 0.0],
+        });
+    }
 }
 
 /// Chrome's own three-tier frame-time classification: comfortably inside a
