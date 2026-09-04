@@ -108,10 +108,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    canvas, div, hsla, px, wgpu_surface, AnyElement, AppContext as _, Bounds, ClickEvent, Context,
-    DragMoveEvent, Hsla, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, ScrollWheelEvent, SharedString,
-    StatefulInteractiveElement as _, Styled, Window,
+    canvas, div, hsla, prelude::FluentBuilder as _, px, wgpu_surface, AnyElement, AppContext as _,
+    Bounds, ClickEvent, Context, DragMoveEvent, Hsla, InteractiveElement as _, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
+    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled, Window,
 };
 
 use crate::{
@@ -119,8 +119,9 @@ use crate::{
     h_flex,
     profiler::{
         bar_screen_rect, category_color, contains_ignore_ascii_case, flame_bar_tooltip,
-        gpu_pass_color, ns_to_x, zoom_factor_for_wheel_delta, BarInstance, FlameBar, FlameLane,
-        HitBar, ProfilerPanDrag, ProfilerPanel, FLAME_ROW_HEIGHT,
+        gpu_pass_color, ns_to_x, zoom_factor_for_wheel_delta, BarInstance, FlameBar,
+        FlameBarPipeline, FlameLane, FlameLaneGpu, HitBar, ProfilerPanDrag, ProfilerPanel,
+        FLAME_ROW_HEIGHT,
     },
     v_flex, ActiveTheme, Icon, IconName, Sizable as _,
 };
@@ -143,6 +144,20 @@ pub(crate) struct FlameState {
     /// already measures the surrounding viewport's height for the
     /// scroll-wheel-zoom-anchor math this file already had.
     scroll_handle: gpui::ScrollHandle,
+    /// GPU surface for the ruler gridlines — a single surface spanning the
+    /// *whole* lane stack (unlike the per-lane bar surfaces, which are each
+    /// windowed to their own visible depth range), since a gridline is one
+    /// continuous vertical run across every lane rather than something that
+    /// makes sense to split per lane. Reuses `ProfilerPanel::flame_bar_pipeline`
+    /// (the same compiled shader every bar surface in this profiler already
+    /// shares) rather than compiling a second copy of it.
+    gridline_gpu: Option<FlameLaneGpu>,
+    /// Latches once creating [`Self::gridline_gpu`]'s surface ever fails, so
+    /// the gridlines just silently stop appearing rather than retrying (and
+    /// failing) every render — same pattern `ProfilerPanel::flame_gpu_unavailable`
+    /// already uses for the bar surfaces, kept separate from that flag since
+    /// a gridline-surface failure shouldn't disable the bars themselves.
+    gridline_gpu_unavailable: bool,
 }
 
 /// Width of the left-edge lane-type gutter (§3's icon column). Subtracted
@@ -500,8 +515,14 @@ pub(crate) fn render(
     let tick_interval_ns = pick_tick_interval_ns(visible_span_ns, chart_width);
     let ticks = ruler_ticks(visible_start_ns, visible_end_ns, tick_interval_ns);
 
+    // GPU-instanced now (see `paint_gridlines_gpu`), not one `div()` per
+    // tick -- "everything that isn't text/a popup renders via the shader"
+    // applies here the same as the bars, the overview strip's own CPU
+    // graph/Frames row/selection, and everything else in this profiler's
+    // Record tab. Only the tick *labels* (`ruler_children`, real text)
+    // stay as UI-framework elements.
     let mut ruler_children: Vec<AnyElement> = Vec::new();
-    let mut gridline_children: Vec<AnyElement> = Vec::new();
+    let mut gridline_instances: Vec<BarInstance> = Vec::new();
     if !lanes.is_empty() {
         for (tick_index, tick_ns) in ticks.iter().enumerate() {
             let Some(x) = ns_to_x(tick_ns.max(0.0) as u64, visible_start_ns, visible_span_ns, chart_width)
@@ -519,26 +540,30 @@ pub(crate) fn render(
                     .child(format_tick_label(*tick_ns, domain_start_ns, tick_interval_ns))
                     .into_any_element(),
             );
-            gridline_children.push(
-                div()
-                    .id(SharedString::from(format!("flame-gridline-{tick_index}")))
-                    .absolute()
-                    .left(px(GUTTER_WIDTH + x))
-                    // Relative to the scrollable lane area's own top now,
-                    // not the whole canvas (the ruler band that used to sit
-                    // above this offset is a sibling of that scrollable
-                    // area, not a positioning ancestor of it any more) --
-                    // gridlines scroll together with the lanes they're
-                    // meant to line up with, the ruler itself stays fixed.
-                    // See this file's module doc.
-                    .top(px(0.))
-                    .w(px(1.))
-                    .h(px(total_lanes_height))
-                    .bg(cx.theme().border.alpha(0.35))
-                    .into_any_element(),
-            );
+            let gridline_x = GUTTER_WIDTH + x;
+            let rgba = cx.theme().border.opacity(0.35).to_rgb();
+            gridline_instances.push(BarInstance {
+                rect_min: [gridline_x * scale, 0.0],
+                rect_max: [(gridline_x + 1.0) * scale, total_lanes_height * scale],
+                color: [rgba.r, rgba.g, rgba.b, rgba.a],
+                corner_radius: 0.0,
+                highlight: 0.0,
+                _pad: [0.0, 0.0],
+            });
         }
     }
+
+    let gridline_row_width = GUTTER_WIDTH + chart_width;
+    let gridline_surface = if !gridline_instances.is_empty() {
+        paint_gridlines_gpu(
+            &mut panel.record.flame,
+            &mut panel.flame_bar_pipeline,
+            window,
+            &gridline_instances,
+        )
+    } else {
+        None
+    };
 
     let entity = cx.entity().clone();
     let scroll_handle = panel.record.flame.scroll_handle.clone();
@@ -665,10 +690,75 @@ pub(crate) fn render(
                         .gap_1()
                         .children(lane_elements),
                 )
-                .children(gridline_children),
+                .when_some(gridline_surface, |el, handle| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top(px(0.))
+                            .left(px(0.))
+                            .w(px(gridline_row_width))
+                            .h(px(total_lanes_height))
+                            .child(
+                                // NOT `.defer_resize_until_mouse_up(true)`:
+                                // this is a single shared surface (like the
+                                // overview strip's), not the many per-lane
+                                // ones that flag exists for -- deferring its
+                                // resize while a pane-resize drag is in
+                                // progress (also a left-button drag) would
+                                // reproduce the exact "content briefly goes
+                                // stale relative to the box" bug already
+                                // fixed for the overview strip's own shared
+                                // surface. See that fix's commit message for
+                                // the full mechanism.
+                                gpui::wgpu_surface(handle).absolute().inset_0(),
+                            ),
+                    )
+                }),
         )
         .children(ruler_children)
         .into_any_element()
+}
+
+/// Paints the ruler-gridline instances into [`FlameState::gridline_gpu`]'s
+/// single shared surface, creating it (and, if needed, the shared
+/// `panel_pipeline`) on first use — same lazy-init/render/swap shape
+/// [`ProfilerPanel::paint_flame_lane`] already uses per bar lane, just
+/// against this file's own dedicated surface instead of one indexed by
+/// lane. Takes `panel_pipeline` by `&mut` rather than reading it off
+/// `panel` directly so this function doesn't need a `&mut ProfilerPanel`
+/// just to read/lazily-fill one of its fields.
+fn paint_gridlines_gpu(
+    state: &mut FlameState,
+    panel_pipeline: &mut Option<Rc<FlameBarPipeline>>,
+    window: &Window,
+    instances: &[BarInstance],
+) -> Option<gpui::WgpuSurfaceHandle> {
+    if state.gridline_gpu_unavailable {
+        return None;
+    }
+    if state.gridline_gpu.is_none() {
+        let Some(surface) = window.create_wgpu_surface(1, 1, wgpu::TextureFormat::Rgba8UnormSrgb)
+        else {
+            state.gridline_gpu_unavailable = true;
+            return None;
+        };
+        let device = surface.device().clone();
+        if panel_pipeline.is_none() {
+            *panel_pipeline = Some(Rc::new(FlameBarPipeline::new(&device, surface.format())));
+        }
+        let pipeline = panel_pipeline.clone().unwrap();
+        state.gridline_gpu = Some(FlameLaneGpu::new(&device, surface, &pipeline));
+    }
+    let pipeline = panel_pipeline.clone()?;
+    let gpu = state.gridline_gpu.as_mut()?;
+    let handle = gpu.surface.clone();
+    let Some((view, (width, height))) = handle.back_view_with_size() else {
+        return Some(handle);
+    };
+    gpu.render(&pipeline, instances, &view, width, height);
+    drop(view);
+    handle.swap_buffers();
+    Some(handle)
 }
 
 /// Whether a lane's content-space body range `[lane_body_top,
