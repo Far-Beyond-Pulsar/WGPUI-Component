@@ -88,6 +88,20 @@ impl Render for RightEdgeDrag {
     }
 }
 
+/// Drag marker for panning an *existing* selection's whole body across the
+/// domain, holding its width fixed — the third and last of this file's drag
+/// gestures, alongside [`RangeSelectDrag`] (draw new) and
+/// [`LeftEdgeDrag`]/[`RightEdgeDrag`] (resize one edge). See
+/// [`selection_body`].
+#[derive(Clone)]
+struct PanSelectionDrag;
+
+impl Render for PanSelectionDrag {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct OverviewState {
     /// Measured screen bounds of the strip, captured via a `canvas()`
@@ -105,6 +119,14 @@ pub(crate) struct OverviewState {
     /// above (which anchors a brand-new selection instead of resizing an
     /// existing one). `Some` only while an edge-resize drag is in progress.
     edge_fixed_ns: Option<u64>,
+    /// `Some((anchor_ns, original_selection))` while the user is dragging
+    /// the selection's *body* to pan it (see [`selection_body`]) —
+    /// `anchor_ns` is the domain position under the cursor when the drag
+    /// started, `original_selection` is what the selection was at that
+    /// instant. Keeping both means the pan is one consistent shift computed
+    /// fresh from the drag's start every move, rather than an accumulation
+    /// of per-frame deltas that could drift.
+    pan_drag: Option<(u64, (u64, u64))>,
     gpu: Option<FlameLaneGpu>,
     pipeline: Option<Rc<FlameBarPipeline>>,
     /// Latches once `Window::create_wgpu_surface` ever returns `None`
@@ -293,10 +315,31 @@ pub(crate) fn render(
                             .w(px(chart_width))
                             .h(px(GRAPH_AREA_HEIGHT))
                             .child(
-                                gpui::wgpu_surface(handle)
-                                    .absolute()
-                                    .inset_0()
-                                    .defer_resize_until_mouse_up(true),
+                                // NOT `.defer_resize_until_mouse_up(true)`:
+                                // that flag defers the *texture* reallocation
+                                // while any left mouse button is held OR the
+                                // window itself is resizing (see
+                                // `WgpuSurfaceElement::prepaint`) -- meant for
+                                // the flame chart's many per-lane surfaces,
+                                // where reallocating dozens of textures on
+                                // every pixel of a drag is real cost. This
+                                // strip has exactly one shared surface, so
+                                // that protection isn't worth what it costs
+                                // here: while dragging a pane-resize handle
+                                // (also a left-button drag) the texture stays
+                                // at its *old* size and only actually
+                                // reallocates on mouse-up, but the CPU-side
+                                // `chart_width`/instances this file computes
+                                // every render already tracks the *current*
+                                // measured width throughout the drag -- so
+                                // the strip visibly resized correctly while
+                                // dragging, then front-loaded a mismatch
+                                // (new box, stale-width content) the instant
+                                // the deferred texture resize finally landed
+                                // without a fresh instance rebuild to go with
+                                // it. Resizing immediately keeps the texture
+                                // and the CPU-side math in lockstep always.
+                                gpui::wgpu_surface(handle).absolute().inset_0(),
                             ),
                     )
                 })
@@ -385,20 +428,123 @@ fn render_selection_overlay(
     div()
         .absolute()
         .inset_0()
-        .child(
-            div()
-                .absolute()
-                .top(px(0.))
-                .bottom(px(0.))
-                .left(px(left))
-                .w(px(width))
-                .bg(cx.theme().selection.opacity(0.2))
-                .border_1()
-                .border_color(cx.theme().selection),
-        )
+        .child(selection_body(left, width, start, end, panel_entity.clone(), cx))
         .child(left_edge_grip(left, end, panel_entity.clone()))
         .child(right_edge_grip(right, start, panel_entity))
         .into_any_element()
+}
+
+/// The selection's fill/border box, draggable as a whole to *pan* the
+/// range across the domain (holding its width fixed) rather than redraw
+/// it -- Chrome's own overview selection works the same way: it's a
+/// window into the data, not just a highlight. `.occlude()`d for the same
+/// reason the edge grips are (see [`left_edge_grip`]'s doc comment):
+/// without it, a drag starting inside the selection would *also* trigger
+/// the strip's own `RangeSelectDrag`, which draws a brand-new selection
+/// from scratch instead of panning this one.
+fn selection_body(
+    left: f32,
+    width: f32,
+    start: u64,
+    end: u64,
+    panel_entity: Entity<ProfilerPanel>,
+    cx: &Context<ProfilerPanel>,
+) -> AnyElement {
+    div()
+        .id("record-overview-selection-body")
+        .occlude()
+        .cursor_grab()
+        .absolute()
+        .top(px(0.))
+        .bottom(px(0.))
+        .left(px(left))
+        .w(px(width))
+        .bg(cx.theme().selection.opacity(0.2))
+        .border_1()
+        .border_color(cx.theme().selection)
+        .on_drag(PanSelectionDrag, {
+            let panel_entity = panel_entity.clone();
+            move |_, start_position, _window, cx| {
+                panel_entity.update(cx, |panel, _cx| {
+                    if let Some(anchor_ns) = overview_x_to_ns(
+                        &panel.record.overview,
+                        panel.record.overview_data(),
+                        start_position.x,
+                    ) {
+                        panel.record.overview.pan_drag = Some((anchor_ns, (start, end)));
+                    }
+                });
+                cx.new(|_| PanSelectionDrag)
+            }
+        })
+        .on_drag_move(move |event: &DragMoveEvent<PanSelectionDrag>, _window, cx| {
+            panel_entity.update(cx, |panel, cx| {
+                let Some((anchor_ns, (orig_start, orig_end))) = panel.record.overview.pan_drag
+                else {
+                    return;
+                };
+                let Some(current_ns) = overview_x_to_ns(
+                    &panel.record.overview,
+                    panel.record.overview_data(),
+                    event.event.position.x,
+                ) else {
+                    return;
+                };
+                let Some((domain_start, domain_end)) = panel
+                    .record
+                    .overview_data()
+                    .map(|o| (o.domain_start_ns, o.domain_end_ns))
+                else {
+                    return;
+                };
+                panel.record.selection = Some(pan_selection(
+                    (orig_start, orig_end),
+                    anchor_ns,
+                    current_ns,
+                    (domain_start, domain_end),
+                ));
+                cx.notify();
+            });
+        })
+        .into_any_element()
+}
+
+/// Shifts `(orig_start, orig_end)` by however far the pointer moved from
+/// `anchor_ns` to `current_ns`, then slides the result back inside
+/// `(domain_start, domain_end)` (without changing its width) if that shift
+/// would have pushed either edge outside the domain — the same "clamp by
+/// sliding, not by clipping the width" behavior [`super::data`]'s
+/// `RangeZoom::clamp_to_domain` uses elsewhere in this profiler, kept as a
+/// free function here since this operates on plain `u64` nanoseconds
+/// rather than that type's `f64` fractional domain.
+fn pan_selection(
+    (orig_start, orig_end): (u64, u64),
+    anchor_ns: u64,
+    current_ns: u64,
+    (domain_start, domain_end): (u64, u64),
+) -> (u64, u64) {
+    let delta = current_ns as i64 - anchor_ns as i64;
+    let width = orig_end as i64 - orig_start as i64;
+    let mut new_start = orig_start as i64 + delta;
+    let mut new_end = orig_end as i64 + delta;
+
+    if new_start < domain_start as i64 {
+        let shift = domain_start as i64 - new_start;
+        new_start += shift;
+        new_end += shift;
+    }
+    if new_end > domain_end as i64 {
+        let shift = new_end - domain_end as i64;
+        new_start -= shift;
+        new_end -= shift;
+    }
+    // A selection wider than the domain itself (only possible if the
+    // domain is smaller than the selection to begin with) still has to
+    // land somewhere sane after both clamps above fight each other.
+    new_start = new_start.max(domain_start as i64);
+    new_end = new_end.max(new_start + width.max(1));
+
+    (new_start as u64, new_end as u64)
 }
 
 /// The small visible pill mark inside an edge grip's (wider, invisible)
@@ -817,5 +963,32 @@ mod tests {
         assert_eq!(format_ms_with_commas(999), "999");
         assert_eq!(format_ms_with_commas(1000), "1,000");
         assert_eq!(format_ms_with_commas(1234567), "1,234,567");
+    }
+
+    #[test]
+    fn pan_selection_shifts_by_the_pointer_delta_when_inside_the_domain() {
+        let result = pan_selection((100, 200), 500, 550, (0, 1_000));
+        assert_eq!(result, (150, 250));
+    }
+
+    #[test]
+    fn pan_selection_slides_back_at_the_domain_start_without_shrinking() {
+        // Dragging far enough left that a raw shift would push start < 0
+        // should clamp by sliding the whole window back into the domain,
+        // not by clipping its width.
+        let result = pan_selection((100, 200), 500, 0, (0, 1_000));
+        assert_eq!(result, (0, 100));
+    }
+
+    #[test]
+    fn pan_selection_slides_back_at_the_domain_end_without_shrinking() {
+        let result = pan_selection((800, 900), 500, 1_500, (0, 1_000));
+        assert_eq!(result, (900, 1_000));
+    }
+
+    #[test]
+    fn pan_selection_preserves_width_regardless_of_direction() {
+        let (start, end) = pan_selection((300, 450), 1_000, 700, (0, 10_000));
+        assert_eq!(end - start, 150);
     }
 }
