@@ -231,11 +231,29 @@ pub(crate) fn render_content(
     let selection = panel.record.selection;
     let overview_data = panel.record.overview_data.as_ref();
     let frame_durations_ms = panel.frame_durations_ms.clone();
+    // `recompute_for_selection` above already synced `flame_zoom`'s
+    // *domain* to `selection` (a no-op if `selection` hasn't changed since
+    // last render -- see that function's own doc comment), so its current
+    // *visible* window is exactly the detail chart's own zoom/pan state
+    // within that domain: the whole domain until the user actually zooms,
+    // narrower after. Passing this to the overview lets it show that
+    // zoomed-in range as its own selection box -- syncing detail-view zoom
+    // back to the overview -- without ever writing to `selection` itself
+    // (which stays purely "what a direct drag on the overview last set");
+    // see `overview::render`'s own doc comment for why keeping those two
+    // separate is what avoids a feedback loop between them.
+    let detail_visible = selection.map(|_| {
+        (
+            panel.flame_zoom.visible_start().round() as u64,
+            panel.flame_zoom.visible_end().round() as u64,
+        )
+    });
 
     let overview_element = overview::render(
         &mut panel.record.overview,
         overview_data,
         selection,
+        detail_visible,
         &frame_durations_ms,
         window,
         cx,

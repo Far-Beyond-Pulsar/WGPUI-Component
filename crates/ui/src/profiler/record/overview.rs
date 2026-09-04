@@ -182,6 +182,18 @@ pub(crate) fn render(
     state: &mut OverviewState,
     overview_data: Option<&RecordOverview>,
     selection: Option<(u64, u64)>,
+    // The detail flame chart's own current visible window (only `Some` when
+    // `selection` is, and generally narrower than it once the user zooms in
+    // down there) -- what actually gets *drawn and dragged* as this strip's
+    // selection box. `selection` itself never gets read for that; it stays
+    // purely "what a direct drag on the overview last set", read only by
+    // `record::recompute_for_selection` to (re)establish `flame_zoom`'s
+    // domain. Deliberately two separate values rather than one, so that
+    // detail-view zooming can flow back into this strip's display without
+    // ever writing to `selection` -- if it did, the next render's
+    // `set_domain` call would see a "changed" domain and reset the zoom
+    // right back out to fit it, undoing the very zoom being reflected.
+    detail_visible: Option<(u64, u64)>,
     frame_durations_ms: &[f32],
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
@@ -189,6 +201,10 @@ pub(crate) fn render(
     let Some(overview) = overview_data else {
         return div().into_any_element();
     };
+    // Falls back to `selection` only as a defensive default (`mod.rs`
+    // always passes both `Some` or both `None` together); this is the
+    // range this strip actually shows and drags, per the doc comment above.
+    let displayed_range = detail_visible.or(selection);
 
     let measured_width = f32::from(state.bounds.size.width);
     let chart_width = if measured_width > 1.0 {
@@ -246,7 +262,7 @@ pub(crate) fn render(
 
     let panel_entity = cx.entity().clone();
 
-    let selection_element = selection.map(|(start, end)| {
+    let selection_element = displayed_range.map(|(start, end)| {
         render_selection_overlay(
             start,
             end,
