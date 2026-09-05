@@ -49,13 +49,14 @@
 use std::{collections::HashSet, ops::Range, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
-    canvas, div, img, point, prelude::FluentBuilder as _, px, uniform_list, wgpu_surface,
+    canvas, div, img, point, prelude::FluentBuilder as _, px, size, uniform_list, wgpu_surface,
     AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, DeepCaptureDrawCall,
     DeepCaptureReplay, DragMoveEvent, DrawCallResourceStatus, Empty, Entity, FontWeight, Global,
     ImageSource, Inspector, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, RenderImage,
     ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    Timer, UiElementNode, UiTreeReplay, Window,
+    Timer, UiElementNode, UiTreeReplay, Window, WindowBounds, WindowDecorations, WindowHandle,
+    WindowKind, WindowOptions,
 };
 // `wgpu` and `bytemuck` are used fully-qualified below (both are direct,
 // `flamegraph`-gated dependencies of this crate; see `Cargo.toml`), matching
@@ -69,12 +70,25 @@ use crate::{
     description_list::DescriptionList,
     h_flex,
     input::{InputEvent, InputState, TextInput},
+    resizable::{resizable_panel, v_resizable},
+    scroll::ScrollbarAxis,
     spinner::Spinner,
     styled::Disableable as _,
     tab::{Tab, TabBar},
+    title_bar::TitleBar,
     tooltip::Tooltip,
-    v_flex, ActiveTheme, IconName, Sizable as _,
+    v_flex, ActiveTheme, IconName, Root, Selectable as _, Sizable as _, StyledExt as _,
 };
+
+/// The Record tab (Chrome-DevTools-Performance-panel-style whole-capture
+/// overview + detail view, spec'd in `.agents/PROFILER_UI_SPEC.md`) is big
+/// enough — sidebar, toolbar, overview strip, detail flame chart, memory
+/// chart, bottom tab group are each their own concern — to warrant its own
+/// dedicated module tree rather than living inline in this file alongside
+/// the Flame Chart/Counters/Diagnostics/Memory/UI Tree/GPU Deep Capture
+/// tabs. See `record::RecordState`'s own doc comment for how the pieces
+/// compose and `record`'s module doc for the file layout.
+mod record;
 
 /// How many 50ms polls to wait for an on-demand capture (`DeepCapture`/
 /// `UiTreeCapture`) to complete before giving up and surfacing a timeout.
@@ -101,7 +115,7 @@ const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// available; this type only tracks *which* sub-range of the domain is
 /// currently shown, independent of any pixel measurements.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct RangeZoom {
+pub(crate) struct RangeZoom {
     domain_start: f64,
     domain_end: f64,
     visible_start: f64,
@@ -114,7 +128,7 @@ impl RangeZoom {
     /// keeps the window numerically well-behaved.
     const MIN_VISIBLE_FRACTION: f64 = 0.002;
 
-    fn full(domain_start: f64, domain_end: f64) -> Self {
+    pub(crate) fn full(domain_start: f64, domain_end: f64) -> Self {
         let domain_end = domain_end.max(domain_start + 1.0);
         Self {
             domain_start,
@@ -130,7 +144,7 @@ impl RangeZoom {
     /// to different data shouldn't leave a stale zoom window pointed at the
     /// wrong range. Re-rendering the *same* domain preserves the current
     /// zoom/pan untouched.
-    fn set_domain(&mut self, domain_start: f64, domain_end: f64) {
+    pub(crate) fn set_domain(&mut self, domain_start: f64, domain_end: f64) {
         let domain_end = domain_end.max(domain_start + 1.0);
         if (domain_start - self.domain_start).abs() > f64::EPSILON
             || (domain_end - self.domain_end).abs() > f64::EPSILON
@@ -142,27 +156,27 @@ impl RangeZoom {
         }
     }
 
-    fn domain_span(&self) -> f64 {
+    pub(crate) fn domain_span(&self) -> f64 {
         (self.domain_end - self.domain_start).max(1.0)
     }
 
-    fn visible_span(&self) -> f64 {
+    pub(crate) fn visible_span(&self) -> f64 {
         (self.visible_end - self.visible_start).max(1e-6)
     }
 
-    fn visible_start(&self) -> f64 {
+    pub(crate) fn visible_start(&self) -> f64 {
         self.visible_start
     }
 
-    fn visible_end(&self) -> f64 {
+    pub(crate) fn visible_end(&self) -> f64 {
         self.visible_end
     }
 
-    fn is_zoomed(&self) -> bool {
+    pub(crate) fn is_zoomed(&self) -> bool {
         self.visible_start > self.domain_start + 1e-6 || self.visible_end < self.domain_end - 1e-6
     }
 
-    fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.visible_start = self.domain_start;
         self.visible_end = self.domain_end;
     }
@@ -172,7 +186,7 @@ impl RangeZoom {
     /// edge). `factor` scales the visible span: `< 1.0` zooms in, `> 1.0`
     /// zooms out. The result is clamped so the window never extends past the
     /// domain and never shrinks past `MIN_VISIBLE_FRACTION` of it.
-    fn zoom_at(&mut self, cursor_fraction: f32, factor: f32) {
+    pub(crate) fn zoom_at(&mut self, cursor_fraction: f32, factor: f32) {
         let cursor_fraction = cursor_fraction.clamp(0.0, 1.0) as f64;
         let factor = (factor as f64).max(0.01);
         let span = self.visible_span();
@@ -190,7 +204,7 @@ impl RangeZoom {
     /// Pans by a delta expressed as a fraction of the current visible span
     /// (positive moves the window later/right, negative earlier/left),
     /// clamped to the domain.
-    fn pan_by_fraction(&mut self, delta_fraction: f32) {
+    pub(crate) fn pan_by_fraction(&mut self, delta_fraction: f32) {
         let delta = delta_fraction as f64 * self.visible_span();
         let mut new_start = self.visible_start + delta;
         let mut new_end = self.visible_end + delta;
@@ -221,7 +235,7 @@ impl RangeZoom {
     /// current visible window (used to position elements along the axis;
     /// values outside the visible window map outside `0.0..=1.0`, which
     /// callers use to cull off-screen elements).
-    fn value_to_fraction(&self, value: f64) -> f32 {
+    pub(crate) fn value_to_fraction(&self, value: f64) -> f32 {
         ((value - self.visible_start) / self.visible_span()) as f32
     }
 }
@@ -232,7 +246,7 @@ impl RangeZoom {
 /// zooms in; scrolling down/toward the viewer (positive delta) zooms out.
 /// The input is clamped so a single large trackpad flick can't jump the zoom
 /// level by an extreme amount in one event.
-fn zoom_factor_for_wheel_delta(delta_y: f32) -> f32 {
+pub(crate) fn zoom_factor_for_wheel_delta(delta_y: f32) -> f32 {
     let clamped = delta_y.clamp(-160.0, 160.0);
     (1.0 + clamped / 400.0).clamp(0.6, 1.4)
 }
@@ -294,7 +308,7 @@ impl ImageViewport {
 /// `ProfilerPanel::render`), so at most one of these views is ever mounted —
 /// and thus draggable — at a time.
 #[derive(Clone)]
-struct ProfilerPanDrag;
+pub(crate) struct ProfilerPanDrag;
 
 impl Render for ProfilerPanDrag {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -327,6 +341,7 @@ fn profiler_panel(window: &mut Window, cx: &mut App) -> Entity<ProfilerPanel> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProfilerSection {
+    Record,
     FlameChart,
     Counters,
     Diagnostics,
@@ -336,7 +351,8 @@ enum ProfilerSection {
 }
 
 impl ProfilerSection {
-    const ALL: [ProfilerSection; 6] = [
+    const ALL: [ProfilerSection; 7] = [
+        ProfilerSection::Record,
         ProfilerSection::FlameChart,
         ProfilerSection::Counters,
         ProfilerSection::Diagnostics,
@@ -347,6 +363,7 @@ impl ProfilerSection {
 
     fn label(self) -> &'static str {
         match self {
+            ProfilerSection::Record => "Record",
             ProfilerSection::FlameChart => "Flame Chart",
             ProfilerSection::Counters => "Counters",
             ProfilerSection::Diagnostics => "Diagnostics",
@@ -390,6 +407,21 @@ struct FlameLaneCache {
 
 pub struct ProfilerPanel {
     section: ProfilerSection,
+
+    // Record (Chrome-DevTools-Performance-panel-style overview + detail,
+    // `.agents/PROFILER_UI_SPEC.md`): a whole-capture-window view layered on
+    // top of the same `Capture`/`FrameCapture` data the Flame Chart tab
+    // already reads, rather than a second capture mechanism. Owns its own
+    // dedicated module tree (`profiler::record`) — sidebar, toolbar,
+    // overview strip, detail flame chart, memory chart, and bottom tab
+    // group are each their own file with their own local UI state, composed
+    // by `record::render`. This field is the *only* thing about that module
+    // `ProfilerPanel` itself has to know: everything else is reached
+    // through `self.capture`/`self.capture_generation`, passed in as
+    // parameters rather than duplicated, so there is exactly one source of
+    // truth for "what got captured" shared with the Flame Chart/Counters/
+    // Diagnostics tabs.
+    record: record::RecordState,
 
     // Flame chart / capture session (Phase 1-2: `Capture`/`CounterSummary`).
     capture_handle: Option<gpui::CaptureHandle>,
@@ -472,6 +504,11 @@ pub struct ProfilerPanel {
     ui_tree_selected: Option<usize>,
     ui_tree_collapsed: HashSet<usize>,
     ui_tree_poll_task: Option<Task<()>>,
+    /// Persists the UI tree's scroll position (and its `uniform_list`-native
+    /// smooth-scroll animation state) across renders -- without a handle
+    /// tracked here, `uniform_list` would build a fresh, un-animated one
+    /// every render.
+    ui_tree_scroll: gpui::UniformListScrollHandle,
 
     // GPU deep capture (Phase 4/6: `DeepCapture` + `DeepCaptureReplay`).
     deep_capture_replay: Option<DeepCaptureReplay>,
@@ -479,6 +516,15 @@ pub struct ProfilerPanel {
     deep_capture_error: Option<SharedString>,
     deep_capture_preview: Option<DeepCapturePreview>,
     deep_capture_poll_task: Option<Task<()>>,
+
+    // Draw-call list scroll (§`render_deep_capture_section`): this list
+    // shrinks to fit its content up to a max height rather than always
+    // filling it, so it can't use the generic `.scrollable()` wrapper (which
+    // demands a definite, filled size) — a real `ScrollHandle` +
+    // `ScrollbarState` pair, painted over the list the same way
+    // `hierarchical_list_view.rs` already does, instead.
+    deep_capture_list_scroll: gpui::ScrollHandle,
+    deep_capture_list_scrollbar: crate::scroll::ScrollbarState,
 
     // GPU deep-capture preview 2D pan/zoom (image space), same shape as the
     // flame chart's fields above but for a 2D `ImageViewport`.
@@ -513,7 +559,9 @@ impl ProfilerPanel {
         )];
 
         Self {
-            section: ProfilerSection::FlameChart,
+            section: ProfilerSection::Record,
+
+            record: record::RecordState::default(),
 
             capture_handle: None,
             capture: None,
@@ -554,12 +602,16 @@ impl ProfilerPanel {
             ui_tree_selected: None,
             ui_tree_collapsed: HashSet::default(),
             ui_tree_poll_task: None,
+            ui_tree_scroll: gpui::UniformListScrollHandle::new(),
 
             deep_capture_replay: None,
             deep_capture_pending: false,
             deep_capture_error: None,
             deep_capture_preview: None,
             deep_capture_poll_task: None,
+
+            deep_capture_list_scroll: gpui::ScrollHandle::new(),
+            deep_capture_list_scrollbar: crate::scroll::ScrollbarState::default(),
 
             deep_capture_view: ImageViewport::new(),
             deep_capture_preview_bounds: Bounds::default(),
@@ -591,27 +643,53 @@ impl ProfilerPanel {
                     .overflow_x_scroll()
                     .child(self.render_section_tabs(cx)),
             )
-            .child(
-                div()
-                    .id("profiler-section-body")
-                    .flex_1()
-                    .w_full()
-                    .min_h(px(0.))
-                    .min_w(px(0.))
-                    .when(self.section != ProfilerSection::FlameChart, |d| {
-                        d.overflow_y_scroll()
-                    })
-                    .child(match self.section {
-                        ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
-                        ProfilerSection::Counters => self.render_counters_section(cx),
-                        ProfilerSection::Diagnostics => self.render_diagnostics_section(cx),
-                        ProfilerSection::Memory => self.render_memory_section(window, cx),
-                        ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
-                        ProfilerSection::DeepCapture => {
-                            self.render_deep_capture_section(window, cx)
-                        }
-                    }),
-            )
+            .child({
+                let section_content = match self.section {
+                    ProfilerSection::Record => record::render(self, window, cx),
+                    ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
+                    ProfilerSection::Counters => self.render_counters_section(cx),
+                    ProfilerSection::Diagnostics => self.render_diagnostics_section(cx),
+                    ProfilerSection::Memory => self.render_memory_section(window, cx),
+                    ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
+                    ProfilerSection::DeepCapture => self.render_deep_capture_section(window, cx),
+                };
+
+                // Flame Chart and Record manage their own internal scrolling
+                // (each sub-pane scrolls independently, and Flame Chart's
+                // time axis pans/zooms rather than scrolls), so only wrap
+                // the remaining, simpler sections in a scroll region here.
+                // A real, visible scrollbar (`.scrollable`) rather than a
+                // bare `overflow_y_scroll()`, matching Chromium DevTools,
+                // where every scrollable pane shows one.
+                let wants_scroll = !matches!(
+                    self.section,
+                    ProfilerSection::FlameChart | ProfilerSection::Record
+                );
+
+                if wants_scroll {
+                    div()
+                        .id("profiler-section-body")
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.))
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .size_full()
+                                .scrollable(ScrollbarAxis::Vertical)
+                                .child(section_content),
+                        )
+                } else {
+                    div()
+                        .id("profiler-section-body")
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.))
+                        .min_w(px(0.))
+                        .child(section_content)
+                }
+            })
             .into_any_element()
     }
 
@@ -702,6 +780,10 @@ impl ProfilerPanel {
 
             self.selected_frame =
                 healthy_last.unwrap_or_else(|| capture.frame_count().saturating_sub(1));
+            // Record's own overview/lane/bottom-up caches, same "computed
+            // once when the capture stops" treatment as `counter_summary`/
+            // `frame_durations_ms` above — see `record::RecordState::on_capture_stopped`.
+            self.record.on_capture_stopped(&frames);
             self.capture = Some(capture);
             self.counter_summary = Some(counter_summary);
             self.frame_durations_ms = frame_durations_ms;
@@ -714,7 +796,19 @@ impl ProfilerPanel {
             // built from the old capture's data.
             self.capture_generation = self.capture_generation.wrapping_add(1);
         } else {
-            match gpui::start_capture(gpui::CaptureOptions::default()) {
+            // The Record tab's own "Screenshots" toggle (`record::toolbar`)
+            // is read directly here rather than threaded through this
+            // function's signature -- there is exactly one capture session
+            // shared across every tab (see this function's own comments
+            // elsewhere about starting/stopping from either tab populating
+            // both), so whatever the Record tab's toggle is set to applies
+            // regardless of which tab's Record/Stop button was actually
+            // clicked.
+            let options = gpui::CaptureOptions {
+                capture_screenshots: self.record.toolbar.capture_screenshots,
+                ..gpui::CaptureOptions::default()
+            };
+            match gpui::start_capture(options) {
                 Ok(handle) => {
                     self.capture_handle = Some(handle);
                     self.capture = None;
@@ -723,6 +817,7 @@ impl ProfilerPanel {
                     self.counter_summary = None;
                     self.frame_durations_ms = Vec::new();
                     self.frame_durations_max_ms = 1.0;
+                    self.record.on_capture_started();
                 }
                 Err(_already_capturing) => {
                     self.capture_error = Some(
@@ -790,7 +885,7 @@ impl ProfilerPanel {
                     .items_center()
                     .child(
                         Button::new("flame-prev")
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(IconName::ChevronLeft)
                             .disabled(at_start)
@@ -807,7 +902,7 @@ impl ProfilerPanel {
                     )))
                     .child(
                         Button::new("flame-next")
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(IconName::ChevronRight)
                             .disabled(at_end)
@@ -853,13 +948,19 @@ impl ProfilerPanel {
         }
         body = body.child(
             div()
-                .id("flame-chart-scroll")
+                .id("flame-chart-scroll-outer")
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_y_scroll()
-                .px_2()
-                .pb_2()
-                .child(self.render_flame_chart_body(window, cx)),
+                .overflow_hidden()
+                .child(
+                    div()
+                        .id("flame-chart-scroll")
+                        .size_full()
+                        .px_2()
+                        .pb_2()
+                        .scrollable(ScrollbarAxis::Vertical)
+                        .child(self.render_flame_chart_body(window, cx)),
+                ),
         );
         if let Some(span) = self.selected_span.clone() {
             body = body.child(self.render_selected_span_details(&span, cx));
@@ -1134,9 +1235,11 @@ impl ProfilerPanel {
                     {
                         let entity = entity.clone();
                         move |bounds, _window, cx| {
-                            entity.update(cx, |state, _cx| {
+                            entity.update(cx, |state, cx| {
                                 if let Some(slot) = state.flame_lane_bounds.get_mut(lane_index) {
-                                    *slot = bounds;
+                                    if update_measured_bounds(slot, bounds) {
+                                        cx.notify();
+                                    }
                                 }
                             });
                         }
@@ -1249,7 +1352,11 @@ impl ProfilerPanel {
                     {
                         let entity = entity.clone();
                         move |bounds, _window, cx| {
-                            entity.update(cx, |state, _cx| state.flame_chart_bounds = bounds);
+                            entity.update(cx, |state, cx| {
+                                if update_measured_bounds(&mut state.flame_chart_bounds, bounds) {
+                                    cx.notify();
+                                }
+                            });
                         }
                     },
                     |_, _, _, _| {},
@@ -1651,8 +1758,13 @@ impl ProfilerPanel {
                             {
                                 let entity = entity.clone();
                                 move |bounds, _window, cx| {
-                                    entity.update(cx, |state, _cx| {
-                                        state.counters_chart_bounds = bounds
+                                    entity.update(cx, |state, cx| {
+                                        if update_measured_bounds(
+                                            &mut state.counters_chart_bounds,
+                                            bounds,
+                                        ) {
+                                            cx.notify();
+                                        }
                                     });
                                 }
                             },
@@ -2038,10 +2150,40 @@ impl ProfilerPanel {
         };
         let rows = flatten_ui_tree_rows(replay, &self.ui_tree_collapsed, self.ui_tree_selected);
         let item_count = rows.len();
+
+        // Same horizontal-overflow problem, and the same fix, as the
+        // Elements tab's tree (`inspector::render_elements_tab`): plain
+        // `.min_w()`/an outer wrapper div does nothing here, because
+        // `uniform_list`'s default `ListHorizontalSizingBehavior::FitList`
+        // forces every row to lay out (and clip) at the container's own
+        // width regardless of how the element around the list is styled.
+        // `Unconstrained` is the real switch -- it sizes the list to
+        // whichever *one* row `with_width_from_item` points at and turns on
+        // real horizontal scrolling -- so this rough per-character width
+        // estimate now only picks which row is probably widest; the actual
+        // width used comes from measuring that specific row for real.
+        const INDENT_PX: f32 = 14.;
+        const TOGGLE_PX: f32 = 14.;
+        const CHAR_PX: f32 = 6.5;
+        let widest_row_index = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let estimate = INDENT_PX * row.depth as f32
+                    + TOGGLE_PX
+                    + row.type_name.chars().count() as f32 * CHAR_PX
+                    + 6.
+                    + row.bounds_label.chars().count() as f32 * CHAR_PX;
+                (i, estimate)
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
         let rows_rc = Rc::new(rows);
         let entity = cx.entity().clone();
 
-        uniform_list("profiler-ui-tree", item_count, {
+        let list = uniform_list("profiler-ui-tree", item_count, {
             let rows = rows_rc.clone();
             let entity = entity.clone();
             move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
@@ -2117,9 +2259,13 @@ impl ProfilerPanel {
                     .collect::<Vec<_>>()
             }
         })
+        .with_width_from_item(Some(widest_row_index))
+        .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+        .track_scroll(&self.ui_tree_scroll)
         .w_full()
-        .h(px(260.))
-        .into_any_element()
+        .h(px(260.));
+
+        list.into_any_element()
     }
 
     // ── GPU deep capture ─────────────────────────────────────────────
@@ -2364,7 +2510,7 @@ impl ProfilerPanel {
                 .items_center()
                 .child(
                     Button::new("deep-prev")
-                        .xsmall()
+                        .small()
                         .ghost()
                         .icon(IconName::ChevronLeft)
                         .disabled(current_step == 0)
@@ -2379,7 +2525,7 @@ impl ProfilerPanel {
                 )))
                 .child(
                     Button::new("deep-next")
-                        .xsmall()
+                        .small()
                         .ghost()
                         .icon(IconName::ChevronRight)
                         .disabled(current_step + 1 >= draw_call_count)
@@ -2391,17 +2537,41 @@ impl ProfilerPanel {
 
         root = root.child(
             div()
-                .id("deep-capture-list")
+                .id("deep-capture-list-outer")
+                .relative()
                 .w_full()
                 .max_h(px(220.))
                 .flex_shrink_0()
-                .overflow_y_scroll()
                 .border_1()
                 .border_color(cx.theme().border)
                 .rounded_md()
-                .children(rows.into_iter().map(|(index, call, status)| {
-                    self.render_deep_capture_row(index, &call, status, index == current_step, cx)
-                })),
+                .child(
+                    div()
+                        .id("deep-capture-list")
+                        .track_scroll(&self.deep_capture_list_scroll)
+                        .overflow_y_scroll()
+                        .children(rows.into_iter().map(|(index, call, status)| {
+                            self.render_deep_capture_row(
+                                index,
+                                &call,
+                                status,
+                                index == current_step,
+                                cx,
+                            )
+                        })),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(crate::scroll::Scrollbar::vertical(
+                            &self.deep_capture_list_scrollbar,
+                            &self.deep_capture_list_scroll,
+                        )),
+                ),
         );
 
         if let Some(call) = current_call {
@@ -2487,7 +2657,11 @@ impl ProfilerPanel {
         // user-resizable width instead of a hardcoded constant.
         let bounds_capture = canvas(
             move |bounds, _window, cx| {
-                entity.update(cx, |state, _cx| state.deep_capture_panel_bounds = bounds);
+                entity.update(cx, |state, cx| {
+                    if update_measured_bounds(&mut state.deep_capture_panel_bounds, bounds) {
+                        cx.notify();
+                    }
+                });
             },
             |_, _, _, _| {},
         )
@@ -2596,8 +2770,13 @@ impl ProfilerPanel {
                                     {
                                         let entity = entity.clone();
                                         move |bounds, _window, cx| {
-                                            entity.update(cx, |state, _cx| {
-                                                state.deep_capture_preview_bounds = bounds
+                                            entity.update(cx, |state, cx| {
+                                                if update_measured_bounds(
+                                                    &mut state.deep_capture_preview_bounds,
+                                                    bounds,
+                                                ) {
+                                                    cx.notify();
+                                                }
                                             });
                                         }
                                     },
@@ -2735,7 +2914,7 @@ impl ProfilerPanel {
     }
 }
 
-fn profiler_empty_state(
+pub(crate) fn profiler_empty_state(
     message: impl Into<SharedString>,
     cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -2764,12 +2943,17 @@ fn render_zoom_controls(
     on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     _cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
+    // `.small()`, not `.xsmall()` — these are frequently-clicked, icon-only
+    // targets (no label to widen the hitbox the way a labeled button gets
+    // one for free), so the extra 4px per side is the difference between a
+    // comfortable click and a miss. Matches the toolbar's own primary action
+    // buttons, which are already `.small()`.
     h_flex()
         .gap_1()
         .items_center()
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-out")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::ZoomOut)
                 .tooltip("Zoom out")
@@ -2777,7 +2961,7 @@ fn render_zoom_controls(
         )
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-in")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::ZoomIn)
                 .tooltip("Zoom in")
@@ -2785,7 +2969,7 @@ fn render_zoom_controls(
         )
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-reset")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::Maximize)
                 .disabled(!is_zoomed)
@@ -2810,7 +2994,7 @@ fn zoom_pan_hint(cx: &Context<ProfilerPanel>) -> AnyElement {
         .into_any_element()
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
     let mut unit_index = 0usize;
@@ -2841,13 +3025,13 @@ fn format_bytes(bytes: u64) -> String {
 /// `Vec<BarInstance>` can be uploaded directly via `bytemuck::cast_slice`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct BarInstance {
-    rect_min: [f32; 2],
-    rect_max: [f32; 2],
-    color: [f32; 4],
-    corner_radius: f32,
-    highlight: f32,
-    _pad: [f32; 2],
+pub(crate) struct BarInstance {
+    pub(crate) rect_min: [f32; 2],
+    pub(crate) rect_max: [f32; 2],
+    pub(crate) color: [f32; 4],
+    pub(crate) corner_radius: f32,
+    pub(crate) highlight: f32,
+    pub(crate) _pad: [f32; 2],
 }
 
 /// A visible bar's screen-space geometry plus its underlying `FlameBar`,
@@ -2880,7 +3064,7 @@ struct HoveredBar {
 /// Computes a bar's `(x, width)` in chart pixels for the current zoom
 /// window. Shared by the GPU-instance builder and `hit_test_lane_bar` so the
 /// two can never disagree about where a bar is drawn.
-fn bar_screen_rect(
+pub(crate) fn bar_screen_rect(
     bar: &FlameBar,
     visible_start_ns: f64,
     visible_span_ns: f64,
@@ -2892,6 +3076,40 @@ fn bar_screen_rect(
     (x, width)
 }
 
+/// Updates a canvas-measured-bounds field in place, returning whether it
+/// changed enough to matter (a half-pixel tolerance, not exact equality, so
+/// ordinary sub-pixel layout jitter between two otherwise-identical frames
+/// never counts as a change).
+///
+/// Every GPU-instanced chart in this module (the overview strip, both flame
+/// charts, the counters sparkline, GPU deep capture) measures its own
+/// on-screen size via a `canvas()` overlay purely because `ScrollWheelEvent`/
+/// `MouseMoveEvent` carry only window-absolute positions, and because a
+/// literal-pixel-sized child (the shared `wgpu_surface`, sized to match the
+/// bar-instance math exactly) can't size itself from percentages the way its
+/// `w_full()` container can. That measurement is normally read back on
+/// *this same panel's next render* -- fine, since something else (a hover, a
+/// zoom, a capture toggling) usually causes one within a frame or two. But a
+/// pure resize (the window itself, or a `v_resizable` split-pane handle)
+/// only asks Taffy to relay out the *existing* element tree at new bounds;
+/// it doesn't by itself re-invoke this entity's `render()`, so a
+/// `w_full()` container resizes immediately while a sibling sized from a
+/// stale measurement here stays frozen at its pre-resize size -- visibly a
+/// small, left-aligned graph adrift in a now-much-wider panel -- until
+/// something unrelated happens to notify this entity. Calling `cx.notify()`
+/// whenever this measurement actually changes closes that gap: the very
+/// next paint after a resize settles corrects it, with no dependence on an
+/// unrelated interaction ever happening.
+pub(crate) fn update_measured_bounds(slot: &mut Bounds<Pixels>, measured: Bounds<Pixels>) -> bool {
+    const EPSILON: f32 = 0.5;
+    let changed = (f32::from(measured.size.width) - f32::from(slot.size.width)).abs() > EPSILON
+        || (f32::from(measured.size.height) - f32::from(slot.size.height)).abs() > EPSILON
+        || (f32::from(measured.origin.x) - f32::from(slot.origin.x)).abs() > EPSILON
+        || (f32::from(measured.origin.y) - f32::from(slot.origin.y)).abs() > EPSILON;
+    *slot = measured;
+    changed
+}
+
 /// Case-insensitive substring search that doesn't allocate a lowercased copy
 /// of `haystack`. Called for every visible bar's label on every render
 /// whenever the flame chart search box is non-empty, so avoiding a
@@ -2900,7 +3118,7 @@ fn bar_screen_rect(
 /// counts. Span labels are Rust identifiers/type names, so plain ASCII
 /// case-folding is sufficient -- this intentionally isn't full Unicode
 /// case-insensitive matching.
-fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
+pub(crate) fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
@@ -2919,7 +3137,7 @@ fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
 
 /// Maps a nanosecond instant to an x pixel coordinate in the current zoom
 /// window, or `None` if it falls outside the visible range.
-fn ns_to_x(ns: u64, visible_start_ns: f64, visible_span_ns: f64, chart_width: f32) -> Option<f32> {
+pub(crate) fn ns_to_x(ns: u64, visible_start_ns: f64, visible_span_ns: f64, chart_width: f32) -> Option<f32> {
     let fraction = (ns as f64 - visible_start_ns) / visible_span_ns;
     if !(0.0..=1.0).contains(&fraction) {
         return None;
@@ -2984,13 +3202,13 @@ fn timeline_marker(x: f32, height: f32, color: gpui::Hsla, label: &'static str) 
 /// surface) and shared across every lane's own [`FlameLaneGpu`] -- a
 /// `wgpu::RenderPipeline` only depends on the shader + bind group layout +
 /// target format, not on any particular lane's instance data.
-struct FlameBarPipeline {
+pub(crate) struct FlameBarPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl FlameBarPipeline {
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("flame_bar_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("profiler_flame_shader.wgsl").into()),
@@ -3070,8 +3288,8 @@ impl FlameBarPipeline {
 /// reused (and grown, never shrunk) across renders. A handful of these exist
 /// at once (one per flame-chart lane -- typically the main thread, a couple
 /// of background threads, and the GPU lane), nothing like one per bar.
-struct FlameLaneGpu {
-    surface: gpui::WgpuSurfaceHandle,
+pub(crate) struct FlameLaneGpu {
+    pub(crate) surface: gpui::WgpuSurfaceHandle,
     viewport_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
@@ -3081,7 +3299,7 @@ struct FlameLaneGpu {
 impl FlameLaneGpu {
     const INITIAL_CAPACITY: usize = 64;
 
-    fn new(
+    pub(crate) fn new(
         device: &wgpu::Device,
         surface: gpui::WgpuSurfaceHandle,
         pipeline: &FlameBarPipeline,
@@ -3155,7 +3373,7 @@ impl FlameLaneGpu {
         );
     }
 
-    fn render(
+    pub(crate) fn render(
         &mut self,
         pipeline: &FlameBarPipeline,
         instances: &[BarInstance],
@@ -3210,15 +3428,15 @@ impl FlameLaneGpu {
 // ── Flame chart data model ──────────────────────────────────────────────
 
 #[derive(Clone)]
-struct FlameBar {
-    label: SharedString,
-    depth: u16,
-    start_ns: u64,
-    duration_ns: u32,
-    category: Option<gpui::SpanCategory>,
-    gpu_pass_kind: Option<gpui::GpuPassKind>,
-    element_type: Option<SharedString>,
-    element_source: Option<SharedString>,
+pub(crate) struct FlameBar {
+    pub(crate) label: SharedString,
+    pub(crate) depth: u16,
+    pub(crate) start_ns: u64,
+    pub(crate) duration_ns: u32,
+    pub(crate) category: Option<gpui::SpanCategory>,
+    pub(crate) gpu_pass_kind: Option<gpui::GpuPassKind>,
+    pub(crate) element_type: Option<SharedString>,
+    pub(crate) element_source: Option<SharedString>,
 }
 
 impl FlameBar {
@@ -3260,27 +3478,27 @@ impl FlameBar {
     }
 }
 
-struct FlameLane {
-    label: SharedString,
-    bars: Vec<FlameBar>,
-    max_depth: u16,
+pub(crate) struct FlameLane {
+    pub(crate) label: SharedString,
+    pub(crate) bars: Vec<FlameBar>,
+    pub(crate) max_depth: u16,
 }
 
-fn span_name_label(name: gpui::SpanName) -> SharedString {
+pub(crate) fn span_name_label(name: gpui::SpanName) -> SharedString {
     match name {
         gpui::SpanName::Static(s) => SharedString::from(s),
         gpui::SpanName::Interned(id) => SharedString::from(format!("<interned #{id}>")),
     }
 }
 
-fn span_name_label_resolved(capture: &gpui::Capture, name: gpui::SpanName) -> SharedString {
+pub(crate) fn span_name_label_resolved(capture: &gpui::Capture, name: gpui::SpanName) -> SharedString {
     capture
         .span_name(name)
         .map(SharedString::from)
         .unwrap_or_else(|| span_name_label(name))
 }
 
-fn build_flame_lanes_with_resolver<F>(frame: &gpui::FrameCapture, resolve: F) -> Vec<FlameLane>
+pub(crate) fn build_flame_lanes_with_resolver<F>(frame: &gpui::FrameCapture, resolve: F) -> Vec<FlameLane>
 where
     F: Fn(gpui::SpanName) -> SharedString + Copy,
 {
@@ -3391,7 +3609,7 @@ fn diagnostic_details(event: &gpui::DiagnosticEvent) -> String {
     }
 }
 
-fn category_color(category: gpui::SpanCategory, cx: &Context<ProfilerPanel>) -> gpui::Hsla {
+pub(crate) fn category_color(category: gpui::SpanCategory, cx: &Context<ProfilerPanel>) -> gpui::Hsla {
     let theme = cx.theme();
     match category {
         gpui::SpanCategory::WindowFrame => theme.chart_1,
@@ -3405,7 +3623,7 @@ fn category_color(category: gpui::SpanCategory, cx: &Context<ProfilerPanel>) -> 
     }
 }
 
-fn gpu_pass_color(kind: gpui::GpuPassKind, cx: &Context<ProfilerPanel>) -> gpui::Hsla {
+pub(crate) fn gpu_pass_color(kind: gpui::GpuPassKind, cx: &Context<ProfilerPanel>) -> gpui::Hsla {
     let theme = cx.theme();
     match kind {
         gpui::GpuPassKind::Main | gpui::GpuPassKind::MainResumed => theme.info,

@@ -12,7 +12,7 @@ use gpui::{
     actions, canvas, div, prelude::FluentBuilder, AnyElement, AnyView, AnyWindowHandle, App,
     AppContext, Axis, Bounds, Context, Edges, Entity, EntityId, EventEmitter,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, ReadGlobal, Render,
-    SharedString, Styled, Subscription, UpdateGlobal, WeakEntity, Window,
+    SharedString, StyleRefinement, Styled, Subscription, UpdateGlobal, WeakEntity, Window,
 };
 use std::sync::{Arc, OnceLock};
 
@@ -1113,7 +1113,20 @@ impl DockArea {
             DockItem::Split { view, .. } => view.clone().into_any_element(),
             DockItem::Tabs { view, .. } => view.clone().into_any_element(),
             DockItem::Tiles { view, .. } => view.clone().into_any_element(),
-            DockItem::Panel { view, .. } => view.clone().view().into_any_element(),
+            // `Split`/`Tabs`/`Tiles` all bottom out in `TabPanel::render_active_panel`,
+            // which already wraps a tab's active content in `.cached()` — a
+            // retained layer keyed by the panel's own entity id, eligible for
+            // rasterization once it crosses `LayerPolicy::rasterize_above`
+            // (`docs/retained-layers.md` §3.3/Phase 11, wgpui side). A bare
+            // `DockItem::Panel` — no tab wrapper — skipped that entirely, so a
+            // single-panel centre dock never got a retained layer at all.
+            // `Dock::render` (the left/right/bottom sibling to this) already
+            // gets this right for exactly the same case; mirror it here.
+            DockItem::Panel { view, .. } => view
+                .clone()
+                .view()
+                .cached(StyleRefinement::default().absolute().size_full())
+                .into_any_element(),
         }
     }
 
