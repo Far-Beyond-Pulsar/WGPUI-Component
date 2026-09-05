@@ -135,6 +135,10 @@ pub(crate) struct RecordState {
     /// Cached [`data::build_flame_lanes_for_range`] output for the current
     /// `(capture_generation, selection)` pair.
     lane_cache: Option<data::RecordLaneCache>,
+    /// Cached [`data::build_bottom_up_rows`] output for the current
+    /// `(capture_generation, selection)` pair — see
+    /// [`data::RecordBottomUpCache`]'s field doc for why this matters.
+    bottom_up_cache: Option<data::RecordBottomUpCache>,
 }
 
 impl RecordState {
@@ -155,6 +159,7 @@ impl RecordState {
         self.overview_data = data::build_overview(frames);
         self.selection = None;
         self.lane_cache = None;
+        self.bottom_up_cache = None;
     }
 
     pub(crate) fn overview_data(&self) -> Option<&data::RecordOverview> {
@@ -230,7 +235,14 @@ pub(crate) fn render_content(
     let show_memory = panel.record.toolbar.show_memory;
     let selection = panel.record.selection;
     let overview_data = panel.record.overview_data.as_ref();
-    let frame_durations_ms = panel.frame_durations_ms.clone();
+    // Borrowed, not `.clone()`'d: this can run to thousands of frames deep
+    // into a long capture, and every render (every hover, every mouse
+    // move) used to pay for a full `Vec<f32>` allocation + copy here for no
+    // reason -- `panel.frame_durations_ms` and the disjoint fields borrowed
+    // mutably below (`panel.record.overview`/`.insights`) don't conflict,
+    // same as `capture`'s own borrow past this point (see the comment a few
+    // lines down).
+    let frame_durations_ms = &panel.frame_durations_ms;
     // `recompute_for_selection` above already synced `flame_zoom`'s
     // *domain* to `selection` (a no-op if `selection` hasn't changed since
     // last render -- see that function's own doc comment), so its current
@@ -254,7 +266,7 @@ pub(crate) fn render_content(
         overview_data,
         selection,
         detail_visible,
-        &frame_durations_ms,
+        frame_durations_ms,
         panel.capture.as_ref(),
         panel.capture_generation,
         window,
@@ -281,13 +293,20 @@ pub(crate) fn render_content(
     // bound once and lets its last use naturally precede those calls.
     let frame_durations_max_ms = panel.frame_durations_max_ms;
     let (sel_start, sel_end) = current_selection_bounds(panel);
-    let bottom_up_rows = data::build_bottom_up_rows(capture, sel_start, sel_end);
+    let bottom_up_rows = recompute_bottom_up_for_selection(
+        &mut panel.record,
+        capture,
+        panel.capture_generation,
+        sel_start,
+        sel_end,
+    );
     let memory_element = show_memory
         .then(|| memory_chart::render(&mut panel.record.memory, capture, sel_start, sel_end, window, cx));
     let insights_element = insights::render(
         &mut panel.record.insights,
         Some(capture),
-        &frame_durations_ms,
+        panel.capture_generation,
+        frame_durations_ms,
         frame_durations_max_ms,
         window,
         cx,
@@ -400,6 +419,48 @@ fn recompute_for_selection(panel: &mut ProfilerPanel) {
     panel
         .flame_zoom
         .set_domain(start_ns as f64, end_ns.max(start_ns + 1) as f64);
+}
+
+/// Keeps `bottom_up_cache` matched to the current `(capture_generation,
+/// selection)` pair, exactly mirroring [`recompute_for_selection`]'s own
+/// cache above — `build_bottom_up_rows` walks every CPU span in every frame
+/// of the capture, so it must not run on every render the way it used to
+/// (see [`data::RecordBottomUpCache`]'s field doc for what that cost). A
+/// genuinely different capture or selection recomputes; re-renders for
+/// hover/search/tab-switching on the same range just clone the `Rc`.
+///
+/// Takes `record`/`capture` as separate disjoint-field borrows rather than
+/// `panel: &mut ProfilerPanel` wholesale — same reason `render_content`
+/// passes `&mut panel.record.memory` alongside `capture` to
+/// `memory_chart::render` instead of `panel` itself: `capture` (borrowed
+/// from `panel.capture`) is still alive and re-used by later calls in
+/// `render_content`, which a whole-`panel` mutable borrow here would
+/// conflict with.
+fn recompute_bottom_up_for_selection(
+    record: &mut RecordState,
+    capture: &gpui::Capture,
+    capture_generation: u64,
+    start_ns: u64,
+    end_ns: u64,
+) -> std::rc::Rc<Vec<data::BottomUpRow>> {
+    let cache_hit = record
+        .bottom_up_cache
+        .as_ref()
+        .is_some_and(|c| c.capture_generation == capture_generation && c.range == (start_ns, end_ns));
+    if !cache_hit {
+        let rows = std::rc::Rc::new(data::build_bottom_up_rows(capture, start_ns, end_ns));
+        record.bottom_up_cache = Some(data::RecordBottomUpCache {
+            capture_generation,
+            range: (start_ns, end_ns),
+            rows,
+        });
+    }
+    record
+        .bottom_up_cache
+        .as_ref()
+        .expect("just populated above on a cache miss")
+        .rows
+        .clone()
 }
 
 fn render_bottom_tabs(

@@ -57,6 +57,15 @@ pub(crate) struct InsightsState {
     /// clean capture shouldn't open by dumping every non-finding onto
     /// screen.
     passed_expanded: bool,
+    /// Cached [`build_insights`] output, keyed by `capture_generation` —
+    /// same reasoning as `record::RecordBottomUpCache`: `build_insights`
+    /// walks every diagnostic event in every frame of the capture, so it
+    /// must not re-run on every render (every hover, every mouse move) just
+    /// because this sidebar always renders alongside everything else in the
+    /// Record tab. Unlike the bottom-up cache this isn't keyed by
+    /// selection/range too — insights are always computed over the whole
+    /// capture, never the selected sub-range.
+    insights_cache: Option<(u64, std::rc::Rc<Vec<Insight>>)>,
 }
 
 /// One diagnostic insight card. `finding` is the honest hinge this whole
@@ -65,6 +74,7 @@ pub(crate) struct InsightsState {
 /// `None` means this category was checked and came back clean, so it gets
 /// folded into the collapsed "Passed insights" group instead — see the
 /// module doc's "Honest substitution" section.
+#[derive(Clone)]
 struct Insight {
     /// Stable id for this card's element id, independent of `title` so
     /// re-wording a card's copy can never change its element identity.
@@ -76,6 +86,7 @@ struct Insight {
 pub(crate) fn render(
     state: &mut InsightsState,
     capture: Option<&gpui::Capture>,
+    capture_generation: u64,
     frame_durations_ms: &[f32],
     frame_durations_max_ms: f32,
     _window: &mut gpui::Window,
@@ -128,9 +139,13 @@ pub(crate) fn render(
             .child("Start and stop a capture to see insights.")
             .into_any_element()
     } else {
-        let all_insights = capture.map(build_insights).unwrap_or_default();
-        let (active, passed): (Vec<Insight>, Vec<Insight>) =
-            all_insights.into_iter().partition(|i| i.finding.is_some());
+        let all_insights = capture
+            .map(|capture| cached_insights(state, capture, capture_generation))
+            .unwrap_or_default();
+        let (active, passed): (Vec<Insight>, Vec<Insight>) = all_insights
+            .iter()
+            .cloned()
+            .partition(|i| i.finding.is_some());
 
         let mut list = v_flex().id("record-insights-active").w_full();
         if active.is_empty() {
@@ -200,6 +215,24 @@ fn headline_metric(
                 .child(value.unwrap_or_else(|| "\u{2013}".to_string())),
         )
         .into_any_element()
+}
+
+/// Keeps `InsightsState::insights_cache` matched to the current
+/// `capture_generation`, mirroring `record::recompute_for_selection`'s own
+/// cache pattern — see `InsightsState::insights_cache`'s field doc for why.
+fn cached_insights(
+    state: &mut InsightsState,
+    capture: &gpui::Capture,
+    capture_generation: u64,
+) -> std::rc::Rc<Vec<Insight>> {
+    let cache_hit = state
+        .insights_cache
+        .as_ref()
+        .is_some_and(|(gen, _)| *gen == capture_generation);
+    if !cache_hit {
+        state.insights_cache = Some((capture_generation, std::rc::Rc::new(build_insights(capture))));
+    }
+    state.insights_cache.as_ref().expect("just populated above on a cache miss").1.clone()
 }
 
 /// Builds this capture's full insight set — always the same fixed roster

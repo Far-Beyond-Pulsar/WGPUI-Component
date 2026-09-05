@@ -168,6 +168,21 @@ pub(crate) struct RecordLaneCache {
     pub(crate) lanes: Rc<Vec<FlameLane>>,
 }
 
+/// Cached [`build_bottom_up_rows`] output, keyed by `(capture_generation,
+/// range)` — mirrors [`RecordLaneCache`]. `build_bottom_up_rows` walks every
+/// CPU span in every frame of the capture (an aggregation over the whole
+/// recording, not just whatever's on screen), so without this cache it was
+/// paying that full-capture cost on *every* `render_content` call — every
+/// hover, every mouse move, every tooltip update, not just when the
+/// selection actually changes or the Bottom-up/Summary tab is what's
+/// visible. That's what produced lag that scaled with recording length/span
+/// count while the on-screen element count stayed small and constant.
+pub(crate) struct RecordBottomUpCache {
+    pub(crate) capture_generation: u64,
+    pub(crate) range: (u64, u64),
+    pub(crate) rows: Rc<Vec<BottomUpRow>>,
+}
+
 /// The multi-frame generalization of the single-frame lane builder: gathers
 /// every span across *every* frame in `capture` whose time range intersects
 /// `[start_ns, end_ns)`, and lanes them exactly like a single-frame build
