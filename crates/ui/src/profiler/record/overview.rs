@@ -231,11 +231,15 @@ const THUMBNAIL_ASPECT: f32 = gpui::THUMBNAIL_WIDTH as f32 / gpui::THUMBNAIL_HEI
 /// however many same-size slots fit, rather than a fixed slot count, so
 /// this file does the same (see [`render_filmstrip_row`]).
 const FILMSTRIP_SLOT_WIDTH: f32 = FILMSTRIP_HEIGHT * THUMBNAIL_ASPECT;
-/// The hover/scrub preview popup's size — larger than one filmstrip slot
-/// (matching the reference screenshots' own "small filmstrip, bigger
+/// The hover/scrub preview popup's size — much larger than one filmstrip
+/// slot (matching the reference screenshots' own "small filmstrip, bigger
 /// hover-preview" size relationship) so it's actually useful to look at,
-/// not just a magnified version of the same tiny thumbnail.
-const PREVIEW_HEIGHT: f32 = 150.0;
+/// not just a slightly-magnified version of the same tiny thumbnail. Sized
+/// well past a single thumbnail's own native resolution (§ `Thumbnail`'s
+/// doc comment: 160x100) since legibility, not pixel-density, is the goal
+/// here — this is a quick "what was on screen" glance, not a lossless
+/// zoom.
+const PREVIEW_HEIGHT: f32 = 320.0;
 const PREVIEW_WIDTH: f32 = PREVIEW_HEIGHT * THUMBNAIL_ASPECT;
 /// Height of the red long-task hatch mark drawn along the very top edge of
 /// the CPU graph — an orthogonal "is-a-problem" channel from category color
@@ -1041,9 +1045,13 @@ fn render_filmstrip_row(
 /// wiring), which is what makes dragging across the overview double as a
 /// live filmstrip scrub instead of only a selection-editing gesture.
 ///
-/// Positioned just *above* the strip near the hovered x (not directly under
+/// Positioned just *below* the strip near the hovered x (not directly under
 /// the cursor, which would put the popup under the finger/pointer doing the
 /// hovering) and clamped so it never runs off either edge of the strip.
+/// Below rather than above because there's reliably open space there —
+/// above the strip risks running into whatever's docked above the Record
+/// tab (or the window's own top edge when the strip is scrolled to the
+/// top), while the space below the strip is always free.
 fn render_hover_preview(
     state: &OverviewState,
     domain_start_ns: u64,
@@ -1063,7 +1071,7 @@ fn render_hover_preview(
     Some(
         div()
             .absolute()
-            .top(px(-(PREVIEW_HEIGHT + RULER_HEIGHT + 6.0)))
+            .top(px(STRIP_HEIGHT + 6.0))
             .left(px(left))
             .flex()
             .flex_col()
