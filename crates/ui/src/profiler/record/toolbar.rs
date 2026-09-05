@@ -32,7 +32,6 @@ use crate::{
 
 use super::{popout, ProfilerPanel};
 
-#[derive(Default)]
 pub(crate) struct ToolbarState {
     /// Whether the memory step-line chart pane (§3, memory track) renders
     /// below the detail flame chart.
@@ -44,6 +43,19 @@ pub(crate) struct ToolbarState {
     /// a capture already in progress (`pub(crate)` rather than private for
     /// exactly that cross-module read).
     pub(crate) capture_screenshots: bool,
+}
+
+impl Default for ToolbarState {
+    // Not `#[derive(Default)]`: `capture_screenshots` defaults to `true`,
+    // not `bool::default()`'s `false` -- recording without a filmstrip is
+    // the surprising case a user has to explicitly ask for by unchecking
+    // the toggle, not the other way around.
+    fn default() -> Self {
+        Self {
+            show_memory: false,
+            capture_screenshots: true,
+        }
+    }
 }
 
 pub(crate) fn render(
