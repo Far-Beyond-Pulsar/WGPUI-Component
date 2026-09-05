@@ -19,12 +19,13 @@
 //! session already running).
 
 use gpui::{
-    div, prelude::FluentBuilder as _, AnyElement, AppContext as _, Context,
+    div, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Context,
     InteractiveElement as _, IntoElement, ParentElement as _, Styled, Window,
 };
 
 use crate::{
     button::{Button, ButtonVariants as _},
+    divider::Divider,
     h_flex,
     styled::Disableable as _,
     ActiveTheme, IconName, Selectable as _, Sizable as _,
@@ -112,9 +113,15 @@ pub(crate) fn render(
                 })),
         )
         .child(div().flex_1())
+        // A visual break between the recording controls (left) and the view
+        // toggles (right) — every button here is now the same `.small()`
+        // height, so without a divider the two groups would read as one
+        // undifferentiated row; Chrome's own Performance toolbar keeps the
+        // same separation between its record controls and its view options.
+        .child(Divider::vertical().h(px(20.)))
         .child(
             Button::new("record-toggle-screenshots")
-                .xsmall()
+                .small()
                 .ghost()
                 .selected(capture_screenshots)
                 .icon(IconName::Image)
@@ -133,7 +140,7 @@ pub(crate) fn render(
         )
         .child(
             Button::new("record-toggle-memory")
-                .xsmall()
+                .small()
                 .ghost()
                 .selected(show_memory)
                 .icon(IconName::Cpu)
@@ -144,9 +151,10 @@ pub(crate) fn render(
                     cx.notify();
                 })),
         )
+        .child(Divider::vertical().h(px(20.)))
         .child(
             Button::new("record-pop-out")
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::ExternalLink)
                 .tooltip("Open Record in its own window")

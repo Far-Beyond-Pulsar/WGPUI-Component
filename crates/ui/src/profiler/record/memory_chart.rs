@@ -40,12 +40,16 @@
 //!   still read clearly). It's also why unchecking one series never moves
 //!   any other series' line or rescales the chart: each line's `y` values
 //!   never depended on any other series' data to begin with.
-//! - **Line rendering**: GPUI has no path/line-drawing primitive in this
-//!   codebase's existing patterns — everything reference-quality here (the
-//!   detail flame chart, the overview strip) is instanced *rectangles* via
+//! - **Line rendering**: still instanced *rectangles* via
 //!   `wgpu_surface`/[`crate::profiler::FlameBarPipeline`]/[`crate::profiler::BarInstance`]/
 //!   [`crate::profiler::FlameLaneGpu`] (see [`super::overview`], which does
-//!   the same GPU setup end-to-end). So a step-line polyline is approximated
+//!   the same GPU setup end-to-end) — deliberately, not an oversight: this
+//!   crate *does* have a real path/curve primitive now (`crate::plot`,
+//!   backed by `gpui::PathBuilder`; see `super::overview::build_stacked_area_bands`
+//!   for the CPU-activity graph's own move to it), but a step line is
+//!   flat-then-jump *by definition* — smoothly interpolating between two
+//!   discrete per-frame counts would misrepresent them as continuously
+//!   changing, which they aren't. So a step-line polyline is approximated
 //!   as a sequence of thin filled rectangles — a flat horizontal rect held
 //!   at each sample's value until the next sample's x, plus a thin vertical
 //!   rect at each jump (see [`step_polyline_rects`]) — one instanced draw
@@ -120,6 +124,10 @@ pub(crate) fn render(
     capture: &gpui::Capture,
     start_ns: u64,
     end_ns: u64,
+    // The one authoritative panel width every panel in the resizable group
+    // shares -- see `RecordState::panels_bounds`'s field doc. `<= 1.0`
+    // means "not measured yet".
+    panels_width: f32,
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -128,7 +136,20 @@ pub(crate) fn render(
         .filter(|f| f.frame_end_ns >= start_ns && f.frame_start_ns <= end_ns)
         .collect();
     if frames.is_empty() {
-        return super::super::profiler_empty_state("No frames in the selected range.", cx);
+        // Bare `profiler_empty_state` has no explicit sizing of its own
+        // (by design -- it's used inline in plenty of already-`flex_1`
+        // contexts too), which given no other content of its own to
+        // stretch against would leave this pane exactly as wide as its
+        // own message text. Same explicit-width treatment as the real
+        // chart below, for the same reason.
+        return div()
+            .flex_1()
+            .when(panels_width > 1.0, |el| el.w(px(panels_width)))
+            .child(super::super::profiler_empty_state(
+                "No frames in the selected range.",
+                cx,
+            ))
+            .into_any_element();
     }
 
     let series_values: [Vec<u32>; SERIES_COUNT] = [
@@ -161,7 +182,13 @@ pub(crate) fn render(
 
     v_flex()
         .id("record-memory-chart")
+        // `flex_1().size_full()` is only this frame's fallback (before
+        // `panels_width` is measured); `.when(..)` below overrides it with
+        // an explicit pixel width shared by every panel in the resizable
+        // group -- see `RecordState::panels_bounds`'s field doc.
+        .flex_1()
         .size_full()
+        .when(panels_width > 1.0, |el| el.w(px(panels_width)))
         .gap_1()
         .p_2()
         .child(legend)
@@ -318,8 +345,18 @@ fn render_chart(
         .child(
             canvas(
                 move |bounds, _window, cx| {
-                    panel_entity.update(cx, |panel, _cx| {
-                        panel.record.memory.bounds = bounds;
+                    panel_entity.update(cx, |panel, cx| {
+                        // See `crate::profiler::update_measured_bounds`'s doc
+                        // comment: without this notify-on-real-change, a pure
+                        // resize (window or split-pane handle) leaves the
+                        // fixed-pixel surface below stuck at its pre-resize
+                        // size inside this now-correctly-resized container.
+                        if crate::profiler::update_measured_bounds(
+                            &mut panel.record.memory.bounds,
+                            bounds,
+                        ) {
+                            cx.notify();
+                        }
                     });
                 },
                 |_, _, _, _| {},

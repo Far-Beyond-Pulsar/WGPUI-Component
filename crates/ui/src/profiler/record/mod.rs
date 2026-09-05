@@ -58,8 +58,8 @@ mod summary;
 mod toolbar;
 
 use gpui::{
-    div, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Context, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Styled, Window,
+    canvas, div, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds, Context,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Styled, Window,
 };
 
 use crate::{
@@ -139,6 +139,18 @@ pub(crate) struct RecordState {
     /// `(capture_generation, selection)` pair — see
     /// [`data::RecordBottomUpCache`]'s field doc for why this matters.
     bottom_up_cache: Option<data::RecordBottomUpCache>,
+    /// Measured bounds of `#record-main-panels-slot` (see [`render_content`]'s
+    /// own bounds-capture canvas) -- the *one* authoritative source every
+    /// panel in the vertically-stacked group below reads its width from,
+    /// via an explicit `.w(px(..))` rather than any flex/percentage
+    /// resolution. This exists specifically so that panel is never again
+    /// sized off of Taffy's cross-axis resolution inside a `resizable_panel`
+    /// row (documented, historically unreliable there -- see
+    /// `overview::render`'s own `#record-overview` doc comment for the full
+    /// mechanism), and so no *sibling* panel's own content can ever perturb
+    /// another panel's width: every panel reads the exact same number,
+    /// measured once, upstream of all of them.
+    panels_bounds: gpui::Bounds<Pixels>,
 }
 
 impl RecordState {
@@ -232,6 +244,14 @@ pub(crate) fn render_content(
             .into_any_element();
     }
 
+    // The one authoritative width every panel below is given explicitly --
+    // see `RecordState::panels_bounds`'s field doc. `<= 1.0` means "not
+    // measured yet" (the very first render of this tab), in which case
+    // each panel's own `.when(panels_width > 1.0, ..)` below leaves its
+    // ordinary flex-based sizing in place for that one frame instead of
+    // collapsing to zero width.
+    let panels_width = f32::from(panel.record.panels_bounds.size.width);
+
     let show_memory = panel.record.toolbar.show_memory;
     let selection = panel.record.selection;
     let overview_data = panel.record.overview_data.as_ref();
@@ -254,12 +274,28 @@ pub(crate) fn render_content(
     // (which stays purely "what a direct drag on the overview last set");
     // see `overview::render`'s own doc comment for why keeping those two
     // separate is what avoids a feedback loop between them.
-    let detail_visible = selection.map(|_| {
-        (
-            panel.flame_zoom.visible_start().round() as u64,
-            panel.flame_zoom.visible_end().round() as u64,
-        )
-    });
+    // While a drag-select gesture is actively changing `selection` on
+    // every tick, `recompute_for_selection` above deliberately left
+    // `flame_zoom`'s domain frozen at whatever it was before the drag
+    // started (see that function's own doc comment) -- so `detail_visible`
+    // would otherwise report that *stale* window here, and since it's
+    // preferred first below (`detail_visible.or(selection)`), the overview
+    // strip's own selection box would appear to freeze mid-drag even
+    // though `selection` itself is still updating live. `None` here falls
+    // back to the live `selection` value instead, so the box still tracks
+    // the pointer in real time; the (expensive, and correctly deferred)
+    // zoomed-window reflection resumes once the drag ends and one real
+    // recompute runs.
+    let detail_visible = if panel.record.overview.is_dragging_selection() {
+        None
+    } else {
+        selection.map(|_| {
+            (
+                panel.flame_zoom.visible_start().round() as u64,
+                panel.flame_zoom.visible_end().round() as u64,
+            )
+        })
+    };
 
     let overview_element = overview::render(
         &mut panel.record.overview,
@@ -269,6 +305,7 @@ pub(crate) fn render_content(
         frame_durations_ms,
         panel.capture.as_ref(),
         panel.capture_generation,
+        panels_width,
         window,
         cx,
     );
@@ -278,6 +315,12 @@ pub(crate) fn render_content(
         .lane_cache
         .as_ref()
         .map(|c| c.lanes.clone())
+        .unwrap_or_default();
+    let lane_max_bar_duration_ns = panel
+        .record
+        .lane_cache
+        .as_ref()
+        .map(|c| c.max_bar_duration_ns.clone())
         .unwrap_or_default();
 
     // Everything below that still needs `capture` (borrowed from
@@ -300,8 +343,17 @@ pub(crate) fn render_content(
         sel_start,
         sel_end,
     );
-    let memory_element = show_memory
-        .then(|| memory_chart::render(&mut panel.record.memory, capture, sel_start, sel_end, window, cx));
+    let memory_element = show_memory.then(|| {
+        memory_chart::render(
+            &mut panel.record.memory,
+            capture,
+            sel_start,
+            sel_end,
+            panels_width,
+            window,
+            cx,
+        )
+    });
     let insights_element = insights::render(
         &mut panel.record.insights,
         Some(capture),
@@ -312,9 +364,17 @@ pub(crate) fn render_content(
         cx,
     );
 
-    let flame_element = flame::render(panel, &lanes, window, cx);
+    let flame_element = flame::render(
+        panel,
+        &lanes,
+        &lane_max_bar_duration_ns,
+        panels_width,
+        window,
+        cx,
+    );
     let bottom_tab = panel.record.bottom_tab;
-    let bottom_element = render_bottom_tabs(panel, &bottom_up_rows, bottom_tab, window, cx);
+    let bottom_element =
+        render_bottom_tabs(panel, &bottom_up_rows, bottom_tab, panels_width, window, cx);
 
     let mut main_column = v_resizable("record-panels")
         .child(
@@ -369,9 +429,39 @@ pub(crate) fn render_content(
                 .child(
                     div()
                         .id("record-main-panels-slot")
+                        .relative()
                         .flex_1()
                         .min_h(px(0.))
-                        .child(main_column),
+                        .child(main_column)
+                        .child({
+                            // Measures this slot's own bounds -- the single
+                            // authoritative width every panel in the group
+                            // above reads back on the *next* render via
+                            // `panels_width` (see `RecordState::panels_bounds`'s
+                            // field doc). This slot's own sizing (`flex_1()`
+                            // for height, default cross-axis stretch for
+                            // width, no percentage anywhere) is exactly the
+                            // shape already established as reliable
+                            // elsewhere in this module, unlike anything
+                            // further down inside the resizable group
+                            // itself.
+                            let entity = cx.entity().clone();
+                            canvas(
+                                move |bounds, _window, cx| {
+                                    entity.update(cx, |panel, cx| {
+                                        if super::update_measured_bounds(
+                                            &mut panel.record.panels_bounds,
+                                            bounds,
+                                        ) {
+                                            cx.notify();
+                                        }
+                                    });
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        }),
                 ),
         )
         .into_any_element()
@@ -392,10 +482,28 @@ fn current_selection_bounds(panel: &ProfilerPanel) -> (u64, u64) {
 /// pattern: only a genuinely different capture or selection pays for
 /// `build_flame_lanes_for_range`; re-renders for hover/search on the same
 /// range just clone the `Rc`.
+///
+/// Also skips that rebuild entirely — leaving the *previous* range's lanes
+/// on screen, stale but stable — while a drag-select gesture on the
+/// overview strip is actively in progress (see
+/// `overview::OverviewState::is_dragging_selection`'s doc comment). Without
+/// this, every one of the dozens of `on_drag_move` ticks a single drag
+/// fires (mouse-move samples arrive far faster than a human notices) called
+/// this — each one a fresh `build_flame_lanes_for_range` walk of every span
+/// in whatever range the selection had grown to *by that tick* — which is
+/// exactly what made dragging a large selection visibly tank the frame
+/// rate: the flame chart's own GPU-instanced rendering was never the
+/// expensive part, rebuilding its *input data* dozens of times a second was.
+/// The one real rebuild this gate defers happens exactly once, right when
+/// the drag ends (`overview`'s `on_mouse_up` handlers all force a render
+/// after clearing the drag flags this checks).
 fn recompute_for_selection(panel: &mut ProfilerPanel) {
     let Some(capture) = panel.capture.as_ref() else {
         return;
     };
+    if panel.record.overview.is_dragging_selection() && panel.record.lane_cache.is_some() {
+        return;
+    }
     let (start_ns, end_ns) = current_selection_bounds(panel);
     let capture_generation = panel.capture_generation;
     let cache_hit = panel
@@ -406,11 +514,18 @@ fn recompute_for_selection(panel: &mut ProfilerPanel) {
     if cache_hit {
         return;
     }
-    let lanes = std::rc::Rc::new(data::build_flame_lanes_for_range(capture, start_ns, end_ns));
+    let lanes = data::build_flame_lanes_for_range(capture, start_ns, end_ns);
+    let max_bar_duration_ns = std::rc::Rc::new(
+        lanes
+            .iter()
+            .map(|lane| lane.bars.iter().map(|b| b.duration_ns as u64).max().unwrap_or(0))
+            .collect(),
+    );
     panel.record.lane_cache = Some(data::RecordLaneCache {
         capture_generation,
         range: (start_ns, end_ns),
-        lanes,
+        lanes: std::rc::Rc::new(lanes),
+        max_bar_duration_ns,
     });
     // Keeps the (shared, see `ProfilerPanel::flame_zoom`'s field doc) detail
     // chart's time axis matched to the current selection before `flame`
@@ -423,11 +538,13 @@ fn recompute_for_selection(panel: &mut ProfilerPanel) {
 
 /// Keeps `bottom_up_cache` matched to the current `(capture_generation,
 /// selection)` pair, exactly mirroring [`recompute_for_selection`]'s own
-/// cache above — `build_bottom_up_rows` walks every CPU span in every frame
-/// of the capture, so it must not run on every render the way it used to
-/// (see [`data::RecordBottomUpCache`]'s field doc for what that cost). A
-/// genuinely different capture or selection recomputes; re-renders for
-/// hover/search/tab-switching on the same range just clone the `Rc`.
+/// cache above — `build_bottom_up_rows` walks every CPU span of every frame
+/// *within the selected range* (it skips whole out-of-range frames outright,
+/// same as `build_flame_lanes_for_range`), so it must not run on every
+/// render the way it used to (see [`data::RecordBottomUpCache`]'s field doc
+/// for what that cost). A genuinely different capture or selection
+/// recomputes; re-renders for hover/search/tab-switching on the same range
+/// just clone the `Rc`.
 ///
 /// Takes `record`/`capture` as separate disjoint-field borrows rather than
 /// `panel: &mut ProfilerPanel` wholesale — same reason `render_content`
@@ -443,11 +560,17 @@ fn recompute_bottom_up_for_selection(
     start_ns: u64,
     end_ns: u64,
 ) -> std::rc::Rc<Vec<data::BottomUpRow>> {
+    // Same drag-in-progress gate as `recompute_for_selection`, and for the
+    // exact same reason: skip the rebuild (keep serving the previous
+    // range's stale-but-stable rows) while the selection is still actively
+    // changing dozens of times a second, rather than paying for a fresh
+    // `build_bottom_up_rows` walk on every one of those ticks.
+    let dragging = record.overview.is_dragging_selection();
     let cache_hit = record
         .bottom_up_cache
         .as_ref()
         .is_some_and(|c| c.capture_generation == capture_generation && c.range == (start_ns, end_ns));
-    if !cache_hit {
+    if !cache_hit && !(dragging && record.bottom_up_cache.is_some()) {
         let rows = std::rc::Rc::new(data::build_bottom_up_rows(capture, start_ns, end_ns));
         record.bottom_up_cache = Some(data::RecordBottomUpCache {
             capture_generation,
@@ -467,6 +590,10 @@ fn render_bottom_tabs(
     panel: &mut ProfilerPanel,
     rows: &[data::BottomUpRow],
     active: BottomTab,
+    // The one authoritative panel width every panel in the resizable group
+    // shares -- see `RecordState::panels_bounds`'s field doc. `<= 1.0`
+    // means "not measured yet".
+    panels_width: f32,
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -508,7 +635,13 @@ fn render_bottom_tabs(
 
     v_flex()
         .id("record-bottom-tabs")
+        // `flex_1().size_full()` is only this frame's fallback (before
+        // `panels_width` is measured); `.when(..)` below overrides it with
+        // an explicit pixel width shared by every panel in the resizable
+        // group -- see `RecordState::panels_bounds`'s field doc.
+        .flex_1()
         .size_full()
+        .when(panels_width > 1.0, |el| el.w(px(panels_width)))
         .border_t_1()
         .border_color(cx.theme().border)
         .child(tab_row)

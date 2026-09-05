@@ -42,7 +42,10 @@ use gpui::{
     StatefulInteractiveElement as _, Styled,
 };
 
-use crate::{h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable as _};
+use crate::{
+    h_flex, scroll::ScrollbarAxis, v_flex, ActiveTheme, Icon, IconName, Sizable as _,
+    StyledExt as _,
+};
 
 use super::ProfilerPanel;
 
@@ -179,8 +182,13 @@ pub(crate) fn render(
                 .id("record-insights-list")
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_y_scroll()
-                .child(body),
+                .overflow_hidden()
+                .child(
+                    div()
+                        .size_full()
+                        .scrollable(ScrollbarAxis::Vertical)
+                        .child(body),
+                ),
         )
         .into_any_element()
 }

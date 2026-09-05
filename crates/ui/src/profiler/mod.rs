@@ -71,12 +71,13 @@ use crate::{
     h_flex,
     input::{InputEvent, InputState, TextInput},
     resizable::{resizable_panel, v_resizable},
+    scroll::ScrollbarAxis,
     spinner::Spinner,
     styled::Disableable as _,
     tab::{Tab, TabBar},
     title_bar::TitleBar,
     tooltip::Tooltip,
-    v_flex, ActiveTheme, IconName, Root, Selectable as _, Sizable as _,
+    v_flex, ActiveTheme, IconName, Root, Selectable as _, Sizable as _, StyledExt as _,
 };
 
 /// The Record tab (Chrome-DevTools-Performance-panel-style whole-capture
@@ -503,6 +504,11 @@ pub struct ProfilerPanel {
     ui_tree_selected: Option<usize>,
     ui_tree_collapsed: HashSet<usize>,
     ui_tree_poll_task: Option<Task<()>>,
+    /// Persists the UI tree's scroll position (and its `uniform_list`-native
+    /// smooth-scroll animation state) across renders -- without a handle
+    /// tracked here, `uniform_list` would build a fresh, un-animated one
+    /// every render.
+    ui_tree_scroll: gpui::UniformListScrollHandle,
 
     // GPU deep capture (Phase 4/6: `DeepCapture` + `DeepCaptureReplay`).
     deep_capture_replay: Option<DeepCaptureReplay>,
@@ -510,6 +516,15 @@ pub struct ProfilerPanel {
     deep_capture_error: Option<SharedString>,
     deep_capture_preview: Option<DeepCapturePreview>,
     deep_capture_poll_task: Option<Task<()>>,
+
+    // Draw-call list scroll (§`render_deep_capture_section`): this list
+    // shrinks to fit its content up to a max height rather than always
+    // filling it, so it can't use the generic `.scrollable()` wrapper (which
+    // demands a definite, filled size) — a real `ScrollHandle` +
+    // `ScrollbarState` pair, painted over the list the same way
+    // `hierarchical_list_view.rs` already does, instead.
+    deep_capture_list_scroll: gpui::ScrollHandle,
+    deep_capture_list_scrollbar: crate::scroll::ScrollbarState,
 
     // GPU deep-capture preview 2D pan/zoom (image space), same shape as the
     // flame chart's fields above but for a 2D `ImageViewport`.
@@ -587,12 +602,16 @@ impl ProfilerPanel {
             ui_tree_selected: None,
             ui_tree_collapsed: HashSet::default(),
             ui_tree_poll_task: None,
+            ui_tree_scroll: gpui::UniformListScrollHandle::new(),
 
             deep_capture_replay: None,
             deep_capture_pending: false,
             deep_capture_error: None,
             deep_capture_preview: None,
             deep_capture_poll_task: None,
+
+            deep_capture_list_scroll: gpui::ScrollHandle::new(),
+            deep_capture_list_scrollbar: crate::scroll::ScrollbarState::default(),
 
             deep_capture_view: ImageViewport::new(),
             deep_capture_preview_bounds: Bounds::default(),
@@ -624,32 +643,53 @@ impl ProfilerPanel {
                     .overflow_x_scroll()
                     .child(self.render_section_tabs(cx)),
             )
-            .child(
-                div()
-                    .id("profiler-section-body")
-                    .flex_1()
-                    .w_full()
-                    .min_h(px(0.))
-                    .min_w(px(0.))
-                    .when(
-                        !matches!(
-                            self.section,
-                            ProfilerSection::FlameChart | ProfilerSection::Record
-                        ),
-                        |d| d.overflow_y_scroll(),
-                    )
-                    .child(match self.section {
-                        ProfilerSection::Record => record::render(self, window, cx),
-                        ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
-                        ProfilerSection::Counters => self.render_counters_section(cx),
-                        ProfilerSection::Diagnostics => self.render_diagnostics_section(cx),
-                        ProfilerSection::Memory => self.render_memory_section(window, cx),
-                        ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
-                        ProfilerSection::DeepCapture => {
-                            self.render_deep_capture_section(window, cx)
-                        }
-                    }),
-            )
+            .child({
+                let section_content = match self.section {
+                    ProfilerSection::Record => record::render(self, window, cx),
+                    ProfilerSection::FlameChart => self.render_flame_chart_section(window, cx),
+                    ProfilerSection::Counters => self.render_counters_section(cx),
+                    ProfilerSection::Diagnostics => self.render_diagnostics_section(cx),
+                    ProfilerSection::Memory => self.render_memory_section(window, cx),
+                    ProfilerSection::UiTree => self.render_ui_tree_section(window, cx),
+                    ProfilerSection::DeepCapture => self.render_deep_capture_section(window, cx),
+                };
+
+                // Flame Chart and Record manage their own internal scrolling
+                // (each sub-pane scrolls independently, and Flame Chart's
+                // time axis pans/zooms rather than scrolls), so only wrap
+                // the remaining, simpler sections in a scroll region here.
+                // A real, visible scrollbar (`.scrollable`) rather than a
+                // bare `overflow_y_scroll()`, matching Chromium DevTools,
+                // where every scrollable pane shows one.
+                let wants_scroll = !matches!(
+                    self.section,
+                    ProfilerSection::FlameChart | ProfilerSection::Record
+                );
+
+                if wants_scroll {
+                    div()
+                        .id("profiler-section-body")
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.))
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .size_full()
+                                .scrollable(ScrollbarAxis::Vertical)
+                                .child(section_content),
+                        )
+                } else {
+                    div()
+                        .id("profiler-section-body")
+                        .flex_1()
+                        .w_full()
+                        .min_h(px(0.))
+                        .min_w(px(0.))
+                        .child(section_content)
+                }
+            })
             .into_any_element()
     }
 
@@ -845,7 +885,7 @@ impl ProfilerPanel {
                     .items_center()
                     .child(
                         Button::new("flame-prev")
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(IconName::ChevronLeft)
                             .disabled(at_start)
@@ -862,7 +902,7 @@ impl ProfilerPanel {
                     )))
                     .child(
                         Button::new("flame-next")
-                            .xsmall()
+                            .small()
                             .ghost()
                             .icon(IconName::ChevronRight)
                             .disabled(at_end)
@@ -908,13 +948,19 @@ impl ProfilerPanel {
         }
         body = body.child(
             div()
-                .id("flame-chart-scroll")
+                .id("flame-chart-scroll-outer")
                 .flex_1()
                 .min_h(px(0.))
-                .overflow_y_scroll()
-                .px_2()
-                .pb_2()
-                .child(self.render_flame_chart_body(window, cx)),
+                .overflow_hidden()
+                .child(
+                    div()
+                        .id("flame-chart-scroll")
+                        .size_full()
+                        .px_2()
+                        .pb_2()
+                        .scrollable(ScrollbarAxis::Vertical)
+                        .child(self.render_flame_chart_body(window, cx)),
+                ),
         );
         if let Some(span) = self.selected_span.clone() {
             body = body.child(self.render_selected_span_details(&span, cx));
@@ -1189,9 +1235,11 @@ impl ProfilerPanel {
                     {
                         let entity = entity.clone();
                         move |bounds, _window, cx| {
-                            entity.update(cx, |state, _cx| {
+                            entity.update(cx, |state, cx| {
                                 if let Some(slot) = state.flame_lane_bounds.get_mut(lane_index) {
-                                    *slot = bounds;
+                                    if update_measured_bounds(slot, bounds) {
+                                        cx.notify();
+                                    }
                                 }
                             });
                         }
@@ -1304,7 +1352,11 @@ impl ProfilerPanel {
                     {
                         let entity = entity.clone();
                         move |bounds, _window, cx| {
-                            entity.update(cx, |state, _cx| state.flame_chart_bounds = bounds);
+                            entity.update(cx, |state, cx| {
+                                if update_measured_bounds(&mut state.flame_chart_bounds, bounds) {
+                                    cx.notify();
+                                }
+                            });
                         }
                     },
                     |_, _, _, _| {},
@@ -1706,8 +1758,13 @@ impl ProfilerPanel {
                             {
                                 let entity = entity.clone();
                                 move |bounds, _window, cx| {
-                                    entity.update(cx, |state, _cx| {
-                                        state.counters_chart_bounds = bounds
+                                    entity.update(cx, |state, cx| {
+                                        if update_measured_bounds(
+                                            &mut state.counters_chart_bounds,
+                                            bounds,
+                                        ) {
+                                            cx.notify();
+                                        }
                                     });
                                 }
                             },
@@ -2093,10 +2150,40 @@ impl ProfilerPanel {
         };
         let rows = flatten_ui_tree_rows(replay, &self.ui_tree_collapsed, self.ui_tree_selected);
         let item_count = rows.len();
+
+        // Same horizontal-overflow problem, and the same fix, as the
+        // Elements tab's tree (`inspector::render_elements_tab`): plain
+        // `.min_w()`/an outer wrapper div does nothing here, because
+        // `uniform_list`'s default `ListHorizontalSizingBehavior::FitList`
+        // forces every row to lay out (and clip) at the container's own
+        // width regardless of how the element around the list is styled.
+        // `Unconstrained` is the real switch -- it sizes the list to
+        // whichever *one* row `with_width_from_item` points at and turns on
+        // real horizontal scrolling -- so this rough per-character width
+        // estimate now only picks which row is probably widest; the actual
+        // width used comes from measuring that specific row for real.
+        const INDENT_PX: f32 = 14.;
+        const TOGGLE_PX: f32 = 14.;
+        const CHAR_PX: f32 = 6.5;
+        let widest_row_index = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let estimate = INDENT_PX * row.depth as f32
+                    + TOGGLE_PX
+                    + row.type_name.chars().count() as f32 * CHAR_PX
+                    + 6.
+                    + row.bounds_label.chars().count() as f32 * CHAR_PX;
+                (i, estimate)
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
         let rows_rc = Rc::new(rows);
         let entity = cx.entity().clone();
 
-        uniform_list("profiler-ui-tree", item_count, {
+        let list = uniform_list("profiler-ui-tree", item_count, {
             let rows = rows_rc.clone();
             let entity = entity.clone();
             move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
@@ -2172,9 +2259,13 @@ impl ProfilerPanel {
                     .collect::<Vec<_>>()
             }
         })
+        .with_width_from_item(Some(widest_row_index))
+        .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+        .track_scroll(&self.ui_tree_scroll)
         .w_full()
-        .h(px(260.))
-        .into_any_element()
+        .h(px(260.));
+
+        list.into_any_element()
     }
 
     // ── GPU deep capture ─────────────────────────────────────────────
@@ -2419,7 +2510,7 @@ impl ProfilerPanel {
                 .items_center()
                 .child(
                     Button::new("deep-prev")
-                        .xsmall()
+                        .small()
                         .ghost()
                         .icon(IconName::ChevronLeft)
                         .disabled(current_step == 0)
@@ -2434,7 +2525,7 @@ impl ProfilerPanel {
                 )))
                 .child(
                     Button::new("deep-next")
-                        .xsmall()
+                        .small()
                         .ghost()
                         .icon(IconName::ChevronRight)
                         .disabled(current_step + 1 >= draw_call_count)
@@ -2446,17 +2537,41 @@ impl ProfilerPanel {
 
         root = root.child(
             div()
-                .id("deep-capture-list")
+                .id("deep-capture-list-outer")
+                .relative()
                 .w_full()
                 .max_h(px(220.))
                 .flex_shrink_0()
-                .overflow_y_scroll()
                 .border_1()
                 .border_color(cx.theme().border)
                 .rounded_md()
-                .children(rows.into_iter().map(|(index, call, status)| {
-                    self.render_deep_capture_row(index, &call, status, index == current_step, cx)
-                })),
+                .child(
+                    div()
+                        .id("deep-capture-list")
+                        .track_scroll(&self.deep_capture_list_scroll)
+                        .overflow_y_scroll()
+                        .children(rows.into_iter().map(|(index, call, status)| {
+                            self.render_deep_capture_row(
+                                index,
+                                &call,
+                                status,
+                                index == current_step,
+                                cx,
+                            )
+                        })),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(crate::scroll::Scrollbar::vertical(
+                            &self.deep_capture_list_scrollbar,
+                            &self.deep_capture_list_scroll,
+                        )),
+                ),
         );
 
         if let Some(call) = current_call {
@@ -2542,7 +2657,11 @@ impl ProfilerPanel {
         // user-resizable width instead of a hardcoded constant.
         let bounds_capture = canvas(
             move |bounds, _window, cx| {
-                entity.update(cx, |state, _cx| state.deep_capture_panel_bounds = bounds);
+                entity.update(cx, |state, cx| {
+                    if update_measured_bounds(&mut state.deep_capture_panel_bounds, bounds) {
+                        cx.notify();
+                    }
+                });
             },
             |_, _, _, _| {},
         )
@@ -2651,8 +2770,13 @@ impl ProfilerPanel {
                                     {
                                         let entity = entity.clone();
                                         move |bounds, _window, cx| {
-                                            entity.update(cx, |state, _cx| {
-                                                state.deep_capture_preview_bounds = bounds
+                                            entity.update(cx, |state, cx| {
+                                                if update_measured_bounds(
+                                                    &mut state.deep_capture_preview_bounds,
+                                                    bounds,
+                                                ) {
+                                                    cx.notify();
+                                                }
                                             });
                                         }
                                     },
@@ -2819,12 +2943,17 @@ fn render_zoom_controls(
     on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     _cx: &Context<ProfilerPanel>,
 ) -> AnyElement {
+    // `.small()`, not `.xsmall()` — these are frequently-clicked, icon-only
+    // targets (no label to widen the hitbox the way a labeled button gets
+    // one for free), so the extra 4px per side is the difference between a
+    // comfortable click and a miss. Matches the toolbar's own primary action
+    // buttons, which are already `.small()`.
     h_flex()
         .gap_1()
         .items_center()
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-out")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::ZoomOut)
                 .tooltip("Zoom out")
@@ -2832,7 +2961,7 @@ fn render_zoom_controls(
         )
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-in")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::ZoomIn)
                 .tooltip("Zoom in")
@@ -2840,7 +2969,7 @@ fn render_zoom_controls(
         )
         .child(
             Button::new(SharedString::from(format!("{id_prefix}-zoom-reset")))
-                .xsmall()
+                .small()
                 .ghost()
                 .icon(IconName::Maximize)
                 .disabled(!is_zoomed)
@@ -2945,6 +3074,40 @@ pub(crate) fn bar_screen_rect(
     let x = ((bar_start_ns - visible_start_ns) / visible_span_ns) as f32 * chart_width;
     let width = ((bar.duration_ns as f64 / visible_span_ns) as f32 * chart_width).max(1.5);
     (x, width)
+}
+
+/// Updates a canvas-measured-bounds field in place, returning whether it
+/// changed enough to matter (a half-pixel tolerance, not exact equality, so
+/// ordinary sub-pixel layout jitter between two otherwise-identical frames
+/// never counts as a change).
+///
+/// Every GPU-instanced chart in this module (the overview strip, both flame
+/// charts, the counters sparkline, GPU deep capture) measures its own
+/// on-screen size via a `canvas()` overlay purely because `ScrollWheelEvent`/
+/// `MouseMoveEvent` carry only window-absolute positions, and because a
+/// literal-pixel-sized child (the shared `wgpu_surface`, sized to match the
+/// bar-instance math exactly) can't size itself from percentages the way its
+/// `w_full()` container can. That measurement is normally read back on
+/// *this same panel's next render* -- fine, since something else (a hover, a
+/// zoom, a capture toggling) usually causes one within a frame or two. But a
+/// pure resize (the window itself, or a `v_resizable` split-pane handle)
+/// only asks Taffy to relay out the *existing* element tree at new bounds;
+/// it doesn't by itself re-invoke this entity's `render()`, so a
+/// `w_full()` container resizes immediately while a sibling sized from a
+/// stale measurement here stays frozen at its pre-resize size -- visibly a
+/// small, left-aligned graph adrift in a now-much-wider panel -- until
+/// something unrelated happens to notify this entity. Calling `cx.notify()`
+/// whenever this measurement actually changes closes that gap: the very
+/// next paint after a resize settles corrects it, with no dependence on an
+/// unrelated interaction ever happening.
+pub(crate) fn update_measured_bounds(slot: &mut Bounds<Pixels>, measured: Bounds<Pixels>) -> bool {
+    const EPSILON: f32 = 0.5;
+    let changed = (f32::from(measured.size.width) - f32::from(slot.size.width)).abs() > EPSILON
+        || (f32::from(measured.size.height) - f32::from(slot.size.height)).abs() > EPSILON
+        || (f32::from(measured.origin.x) - f32::from(slot.origin.x)).abs() > EPSILON
+        || (f32::from(measured.origin.y) - f32::from(slot.origin.y)).abs() > EPSILON;
+    *slot = measured;
+    changed
 }
 
 /// Case-insensitive substring search that doesn't allocate a lowercased copy

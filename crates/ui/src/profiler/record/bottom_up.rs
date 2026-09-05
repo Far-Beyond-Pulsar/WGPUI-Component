@@ -61,7 +61,8 @@ use crate::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{InputEvent, InputState, TextInput},
-    v_flex, ActiveTheme, Icon, IconName, Selectable as _, Sizable as _,
+    scroll::ScrollbarAxis,
+    v_flex, ActiveTheme, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _,
 };
 
 use crate::profiler::category_color;
@@ -507,7 +508,19 @@ pub(crate) fn render(
             )
         })
         .when(!no_matches, |el| {
-            el.child(v_flex().flex_1().min_h(px(0.)).overflow_y_scroll().children(rows_elements))
+            el.child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .w_full()
+                    .overflow_hidden()
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .scrollable(ScrollbarAxis::Vertical)
+                            .children(rows_elements),
+                    ),
+            )
         })
         .into_any_element()
 }

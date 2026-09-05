@@ -166,17 +166,29 @@ pub(crate) struct RecordLaneCache {
     pub(crate) capture_generation: u64,
     pub(crate) range: (u64, u64),
     pub(crate) lanes: Rc<Vec<FlameLane>>,
+    /// The longest `duration_ns` of any bar in each lane (indexed the same
+    /// as `lanes`), computed once alongside them. `record::flame::render`
+    /// uses this as the conservative margin for its binary search: a bar
+    /// starting before the visible window can still overlap it, but never
+    /// by more than the widest bar in the whole lane, so subtracting this
+    /// from the visible window's start before searching can only ever
+    /// include a few extra (cheaply filtered afterward) bars near that
+    /// edge — never miss a genuinely overlapping one.
+    pub(crate) max_bar_duration_ns: Rc<Vec<u64>>,
 }
 
 /// Cached [`build_bottom_up_rows`] output, keyed by `(capture_generation,
-/// range)` — mirrors [`RecordLaneCache`]. `build_bottom_up_rows` walks every
-/// CPU span in every frame of the capture (an aggregation over the whole
-/// recording, not just whatever's on screen), so without this cache it was
-/// paying that full-capture cost on *every* `render_content` call — every
-/// hover, every mouse move, every tooltip update, not just when the
-/// selection actually changes or the Bottom-up/Summary tab is what's
-/// visible. That's what produced lag that scaled with recording length/span
-/// count while the on-screen element count stayed small and constant.
+/// range)` — mirrors [`RecordLaneCache`]. Self-time is a whole-range
+/// aggregate (every occurrence of an activity across every in-range frame
+/// folds into one row), so `build_bottom_up_rows` still has to walk every
+/// span of every frame *within the selected range* — unlike a per-frame
+/// view, there's no smaller "what's on screen" subset to further narrow to.
+/// Without this cache, that walk repeated on *every* `render_content`
+/// call — every hover, every mouse move, every tooltip update, not just
+/// when the selection actually changes or the Bottom-up/Summary tab is
+/// what's visible — which is what produced lag scaling with the *selected
+/// range's* span count while the on-screen element count stayed small and
+/// constant.
 pub(crate) struct RecordBottomUpCache {
     pub(crate) capture_generation: u64,
     pub(crate) range: (u64, u64),
@@ -190,6 +202,16 @@ pub(crate) struct RecordBottomUpCache {
 /// spans already carry capture-wide absolute `start_ns` values, so no
 /// time-rebasing is needed to concatenate spans from different frames onto
 /// one axis.
+///
+/// Each lane's `bars` come back sorted by `start_ns` — `gpui::CpuSpan`'s own
+/// doc comment guarantees `cpu_spans` arrives in *completion* order within
+/// one frame (children before their parent), not start order, and spans
+/// from different frames are concatenated frame-by-frame above, so without
+/// this explicit sort a lane's bars would be in neither order globally.
+/// `record::flame::render` depends on this: it binary-searches straight to
+/// the bars within the current visible time window instead of scanning
+/// every bar in the selection on every render (see its own doc comment),
+/// which only works against a genuinely sorted slice.
 pub(crate) fn build_flame_lanes_for_range(
     capture: &gpui::Capture,
     start_ns: u64,
@@ -236,39 +258,43 @@ pub(crate) fn build_flame_lanes_for_range(
     let mut lanes = Vec::new();
     if !cpu.is_empty() {
         let max_depth = cpu.iter().map(|s| s.depth).max().unwrap_or(0);
+        let mut bars: Vec<FlameBar> = cpu
+            .iter()
+            .map(|span| FlameBar::from_cpu_with_label(span, span_name_label_resolved(capture, span.name)))
+            .collect();
+        // Sorted by `start_ns` -- see this function's own doc comment on
+        // why: it's what lets `record::flame::render` binary-search straight
+        // to the bars actually within the current visible window instead of
+        // scanning every bar in the selection on every render.
+        bars.sort_by_key(|b| b.start_ns);
         lanes.push(FlameLane {
             label: "Main Thread (CPU)".into(),
-            bars: cpu
-                .iter()
-                .map(|span| {
-                    FlameBar::from_cpu_with_label(span, span_name_label_resolved(capture, span.name))
-                })
-                .collect(),
+            bars,
             max_depth,
         });
     }
     for (index, (_key, spans)) in background_by_thread.iter().enumerate() {
         let max_depth = spans.iter().map(|s| s.depth).max().unwrap_or(0);
+        let mut bars: Vec<FlameBar> = spans
+            .iter()
+            .map(|span| FlameBar::from_cpu_with_label(span, span_name_label_resolved(capture, span.name)))
+            .collect();
+        bars.sort_by_key(|b| b.start_ns);
         lanes.push(FlameLane {
             label: format!("Background Thread {}", index + 1).into(),
-            bars: spans
-                .iter()
-                .map(|span| {
-                    FlameBar::from_cpu_with_label(span, span_name_label_resolved(capture, span.name))
-                })
-                .collect(),
+            bars,
             max_depth,
         });
     }
     if !gpu.is_empty() {
+        let mut bars: Vec<FlameBar> = gpu
+            .iter()
+            .map(|span| FlameBar::from_gpu_with_label(span, span_name_label_resolved(capture, span.name)))
+            .collect();
+        bars.sort_by_key(|b| b.start_ns);
         lanes.push(FlameLane {
             label: "GPU".into(),
-            bars: gpu
-                .iter()
-                .map(|span| {
-                    FlameBar::from_gpu_with_label(span, span_name_label_resolved(capture, span.name))
-                })
-                .collect(),
+            bars,
             max_depth: 0,
         });
     }
@@ -358,6 +384,19 @@ pub(crate) fn build_bottom_up_rows(
     > = std::collections::HashMap::new();
 
     for frame in capture.frames() {
+        // Skip whole frames outside the range before touching any span --
+        // mirrors `build_flame_lanes_for_range`'s own frame-level skip.
+        // Self-time bookkeeping (`child_ns_by_depth`) is reset fresh for
+        // every frame right below, so it never carries state across frames;
+        // a frame entirely outside `[start_ns, end_ns)` can't contribute
+        // any span to the output no matter how far its own stack gets
+        // walked, so doing that walk at all was pure waste. This mattered:
+        // without it, zooming into a one-second window of a five-minute
+        // capture still re-walked all five minutes' worth of spans on
+        // every selection change.
+        if frame.frame_end_ns < start_ns || frame.frame_start_ns > end_ns {
+            continue;
+        }
         let mut child_ns_by_depth: Vec<u64> = Vec::new();
         for span in &frame.cpu_spans {
             let depth = span.depth as usize;

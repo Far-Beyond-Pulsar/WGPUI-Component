@@ -144,6 +144,12 @@ pub(crate) struct FlameState {
     /// already measures the surrounding viewport's height for the
     /// scroll-wheel-zoom-anchor math this file already had.
     scroll_handle: gpui::ScrollHandle,
+    /// Paired with `scroll_handle` to paint a real, visible scrollbar thumb
+    /// over the lane stack — a bare `overflow_y_scroll()` (this file's
+    /// previous state) scrolls fine but gives no on-screen hint that there's
+    /// more content below, the exact complaint Chromium's own DevTools never
+    /// has since every scrollable pane there shows one.
+    scrollbar: crate::scroll::ScrollbarState,
     /// GPU surface for the ruler gridlines — a single surface spanning the
     /// *whole* lane stack (unlike the per-lane bar surfaces, which are each
     /// windowed to their own visible depth range), since a gridline is one
@@ -187,6 +193,15 @@ const VIRTUALIZATION_OVERSCAN_ROWS: u16 = 6;
 pub(crate) fn render(
     panel: &mut ProfilerPanel,
     lanes: &[FlameLane],
+    // The longest bar in each lane (same indices as `lanes`) -- see
+    // `data::RecordLaneCache::max_bar_duration_ns`'s doc comment. Used to
+    // binary-search each lane down to just the bars overlapping the
+    // current visible window before any per-bar work runs on them.
+    lane_max_bar_duration_ns: &[u64],
+    // The one authoritative panel width every panel in the resizable group
+    // shares -- see `RecordState::panels_bounds`'s field doc. `<= 1.0`
+    // means "not measured yet".
+    panels_width: f32,
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -289,12 +304,46 @@ pub(crate) fn render(
         let window_top_px = depth_start as f32 * FLAME_ROW_HEIGHT;
         let window_height_px = (depth_end - depth_start + 1) as f32 * FLAME_ROW_HEIGHT;
 
+        // The other half of virtualization, alongside the depth-row window
+        // above: narrow `lane.bars` down to just the bars that could
+        // possibly be relevant *before* any per-bar work (merging,
+        // GPU-instance building, hit-testing) touches them, instead of
+        // filtering everything out only after paying to process the whole
+        // lane every render. See `visible_bars_in_lane`'s own doc comment
+        // for why this is what actually keeps a render's cost proportional
+        // to what's on screen rather than to the size of the *selection* --
+        // that, not this lane loop's own GPU-instanced rendering, is what
+        // made a large selection lag even at rest (not just while actively
+        // being dragged): every render was re-deriving `merged_bars` from
+        // *every* bar in the whole selected range, sorting and all.
+        let max_bar_duration_ns = lane_max_bar_duration_ns.get(lane_index).copied().unwrap_or(0);
+        let windowed_bars =
+            visible_bars_in_lane(&lane.bars, visible_start_ns, visible_end_ns, max_bar_duration_ns);
+        // Depth-filtered too, on top of the time window above -- a bar
+        // outside `[depth_start, depth_end]` (this lane's own vertical
+        // scroll window) can't produce an instance/hit-bar/label below no
+        // matter what, so `merge_tiny_adjacent_bars` shouldn't have to
+        // group, sort, and walk it either.
+        let depth_windowed_bars: Vec<FlameBar> = if depth_start == 0 && depth_end >= lane.max_depth {
+            // The common case (a lane short enough to fit entirely inside
+            // the viewport): every depth is already in range, so skip the
+            // allocation/copy a `.filter().cloned().collect()` would cost
+            // and reuse the time-windowed slice directly.
+            windowed_bars.to_vec()
+        } else {
+            windowed_bars
+                .iter()
+                .filter(|b| b.depth >= depth_start && b.depth <= depth_end)
+                .cloned()
+                .collect()
+        };
+
         let mut instances: Vec<BarInstance> = if gpu_available {
-            Vec::with_capacity(lane.bars.len())
+            Vec::with_capacity(depth_windowed_bars.len())
         } else {
             Vec::new()
         };
-        let mut hit_bars: Vec<HitBar> = Vec::with_capacity(lane.bars.len());
+        let mut hit_bars: Vec<HitBar> = Vec::with_capacity(depth_windowed_bars.len());
         let mut label_elements: Vec<AnyElement> = Vec::new();
 
         // Collapse tiny, tightly-packed same-depth bars into fewer,
@@ -302,8 +351,12 @@ pub(crate) fn render(
         // `merge_tiny_adjacent_bars`'s own doc comment. Everything below
         // this line is unaware merging happened at all; it just sees fewer,
         // wider `FlameBar`s.
-        let merged_bars =
-            merge_tiny_adjacent_bars(&lane.bars, visible_start_ns, visible_span_ns, chart_width);
+        let merged_bars = merge_tiny_adjacent_bars(
+            &depth_windowed_bars,
+            visible_start_ns,
+            visible_span_ns,
+            chart_width,
+        );
 
         for bar in &merged_bars {
             // The other half of virtualization, alongside the whole-lane
@@ -437,9 +490,11 @@ pub(crate) fn render(
                 {
                     let entity = entity.clone();
                     move |bounds, _window, cx| {
-                        entity.update(cx, |state, _cx| {
+                        entity.update(cx, |state, cx| {
                             if let Some(slot) = state.flame_lane_bounds.get_mut(lane_index) {
-                                *slot = bounds;
+                                if crate::profiler::update_measured_bounds(slot, bounds) {
+                                    cx.notify();
+                                }
                             }
                         });
                     }
@@ -572,7 +627,15 @@ pub(crate) fn render(
         .id("flame-chart-canvas")
         .relative()
         .overflow_hidden()
+        // `flex_1().w_full()` is only this frame's fallback (before
+        // `panels_width` is measured); `.when(..)` below overrides it with
+        // an explicit pixel width -- the *one* number every panel in the
+        // resizable group shares, see `RecordState::panels_bounds`'s field
+        // doc -- so this panel's width can never again be perturbed by its
+        // own content, nor by a sibling's.
+        .flex_1()
         .w_full()
+        .when(panels_width > 1.0, |el| el.w(px(panels_width)))
         .h_full()
         .child(
             // Zero-footprint overlay capturing this container's screen
@@ -582,7 +645,14 @@ pub(crate) fn render(
                 {
                     let entity = entity.clone();
                     move |bounds, _window, cx| {
-                        entity.update(cx, |state, _cx| state.flame_chart_bounds = bounds);
+                        entity.update(cx, |state, cx| {
+                            if crate::profiler::update_measured_bounds(
+                                &mut state.flame_chart_bounds,
+                                bounds,
+                            ) {
+                                cx.notify();
+                            }
+                        });
                     }
                 },
                 |_, _, _, _| {},
@@ -713,7 +783,19 @@ pub(crate) fn render(
                                 gpui::wgpu_surface(handle).absolute().inset_0(),
                             ),
                     )
-                }),
+                })
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(crate::scroll::Scrollbar::vertical(
+                            &panel.record.flame.scrollbar,
+                            &scroll_handle,
+                        )),
+                ),
         )
         .children(ruler_children)
         .into_any_element()
@@ -798,6 +880,40 @@ fn visible_depth_window(
         .min(max_depth)
         .max(depth_start.min(max_depth));
     (depth_start.min(max_depth), depth_end)
+}
+
+/// The other half of virtualization along the *time* axis, alongside
+/// [`visible_depth_window`]'s row-based one: `bars` (sorted by `start_ns` --
+/// see `data::build_flame_lanes_for_range`'s own doc comment for why that's
+/// guaranteed) binary-searched down to the sub-slice that could possibly
+/// overlap `[visible_start_ns, visible_end_ns)`, instead of every bar in
+/// the whole selected range being scanned, sorted-by-depth, and walked by
+/// [`merge_tiny_adjacent_bars`] on *every render* regardless of how much of
+/// the selection is actually zoomed into.
+///
+/// The upper bound is exact: a bar starting at or after `visible_end_ns`
+/// cannot overlap the visible window no matter how long it runs. The lower
+/// bound is conservative, not exact: since bars are sorted by *start*, not
+/// *end*, a bar starting well before `visible_start_ns` could still be
+/// running through it if it's long enough -- so this subtracts
+/// `max_bar_duration_ns` (the longest bar anywhere in this lane) from
+/// `visible_start_ns` before searching, which can only ever pull in a
+/// handful of extra bars near that edge (filtered back out by the exact
+/// per-bar check `render` already does after merging), never miss a
+/// genuinely overlapping one.
+fn visible_bars_in_lane(
+    bars: &[FlameBar],
+    visible_start_ns: f64,
+    visible_end_ns: f64,
+    max_bar_duration_ns: u64,
+) -> &[FlameBar] {
+    if bars.is_empty() {
+        return bars;
+    }
+    let lower_bound_ns = (visible_start_ns - max_bar_duration_ns as f64).max(0.0) as u64;
+    let end_idx = bars.partition_point(|b| (b.start_ns as f64) < visible_end_ns);
+    let start_idx = bars[..end_idx].partition_point(|b| b.start_ns < lower_bound_ns);
+    &bars[start_idx..end_idx]
 }
 
 /// A bar this narrow on screen is a merge *candidate*. Below this width you

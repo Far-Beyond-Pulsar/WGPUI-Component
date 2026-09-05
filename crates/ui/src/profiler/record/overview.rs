@@ -3,16 +3,25 @@
 //! *whole* capture window, with a drag-to-select gesture that sets the
 //! active range. Deliberately never zooms itself — it's the navigator, not
 //! the thing being navigated; the detail flame chart is what zooms, via the
-//! selection this produces. GPU-instanced via
+//! selection this produces.
+//!
+//! Two rendering paths, not one: the CPU-activity graph itself is a smooth
+//! curve — [`build_stacked_area_bands`]/[`paint_stacked_area_bands`], backed
+//! by `gpui::PathBuilder`, one tessellated fill per category (at most
+//! [`super::data::OVERVIEW_CATEGORIES`]`.len()` = 8 draw calls total,
+//! matching the reference's own smoothly-shaped CPU graph instead of a
+//! blocky one flat-topped rectangle per bucket per category). Everything
+//! else here — ruler gridlines, the long-task hatch, the Frames row, the
+//! drag-selection overlay — is still GPU-instanced via
 //! [`crate::profiler::BarInstance`]/[`FlameLaneGpu`], the same approach the
-//! detail flame chart's lanes use — not one `div()` per bucket/frame (up to
-//! [`super::data::OVERVIEW_BUCKET_COUNT`] buckets times up to
-//! [`super::data::OVERVIEW_CATEGORIES`]`.len()` stacked segments, plus one
-//! rectangle per recorded frame, redrawn on every pan/selection change).
-//! Both rows share a single `wgpu_surface`/instance buffer (one draw call for
-//! the whole strip) rather than one surface per row — nothing here needs
-//! independent GPU resources, and halving the surface count halves the
-//! per-render `back_view_with_size`/`swap_buffers` bookkeeping.
+//! detail flame chart's lanes use: those are genuinely axis-aligned
+//! rectangles with no benefit from a smooth curve, so instancing them into
+//! one shared `wgpu_surface`/instance buffer (one draw call for all of
+//! them) stays the cheaper, simpler choice. The curve paints *underneath*
+//! that shared surface (see [`render`]'s own doc comment at the relevant
+//! `.child(..)` call for the exact ordering reasoning), so the selection
+//! overlay -- always the last thing pushed into that shared buffer -- still
+//! reads on top of the graph exactly as before.
 //!
 //! # What's here vs. still deferred
 //!
@@ -29,12 +38,12 @@
 //! own periodic thumbnail capture (opt-in via the toolbar's `☑ Screenshots`
 //! toggle — see `record::toolbar`) — see [`render_filmstrip_row`] and
 //! [`render_hover_preview`]. It's the one visual element in this whole
-//! strip that isn't GPU-instanced: a thumbnail is decoded bitmap content,
-//! not a solid-color rectangle a shader can synthesize from a handful of
-//! numbers, so it goes through this crate's ordinary `img()` element
-//! (backed by the UI framework's own already-GPU-accelerated sprite atlas)
-//! instead of another [`BarInstance`]. Hovering — or dragging any of this
-//! strip's own gestures — anywhere on the strip live-scrubs a larger
+//! strip that's neither GPU-instanced nor a tessellated path: a thumbnail
+//! is decoded bitmap content, not something a shader or a fill can
+//! synthesize from a handful of numbers, so it goes through this crate's
+//! ordinary `img()` element (backed by the UI framework's own
+//! already-GPU-accelerated sprite atlas) instead. Hovering — or dragging
+//! any of this strip's own gestures — anywhere on the strip live-scrubs a larger
 //! preview of the nearest sample, Chrome's own "drag to see a live replay"
 //! filmstrip behavior.
 //!
@@ -51,10 +60,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds,
+    canvas, div, img, point, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds,
     ClickEvent, Context, DragMoveEvent, Entity, Hsla, ImageSource, InteractiveElement as _,
-    IntoElement, MouseMoveEvent, ParentElement as _, Pixels, Render, RenderImage,
-    StatefulInteractiveElement as _, Styled, Thumbnail, Window,
+    IntoElement, MouseButton, MouseMoveEvent, ParentElement as _, PathBuilder, Pixels, Point,
+    Render, RenderImage, StatefulInteractiveElement as _, Styled, Thumbnail, Window,
 };
 
 use crate::{v_flex, ActiveTheme};
@@ -62,7 +71,7 @@ use crate::{v_flex, ActiveTheme};
 use crate::profiler::{category_color, BarInstance, FlameBarPipeline, FlameLaneGpu};
 
 use super::{
-    data::{OverviewBucket, RecordOverview, OVERVIEW_CATEGORIES},
+    data::{OverviewBucket, RecordOverview, OVERVIEW_BUCKET_COUNT, OVERVIEW_CATEGORIES},
     ProfilerPanel,
 };
 
@@ -167,6 +176,36 @@ pub(crate) struct OverviewState {
     /// already get. `None` before any thumbnails exist for the current
     /// capture (screenshots weren't enabled, or none have landed yet).
     thumbnail_images: Option<ThumbnailImageCache>,
+}
+
+impl OverviewState {
+    /// Whether any of this strip's three selection-editing drags (draw a
+    /// new selection, resize an edge, pan the body) is currently in
+    /// progress. `record::recompute_for_selection`/
+    /// `recompute_bottom_up_for_selection` read this to skip their
+    /// expensive per-range rebuild while `true` — see those functions' own
+    /// doc comments for why a drag firing dozens of these rebuilds per
+    /// second (once per mouse-move tick, each one a fresh walk of every
+    /// span in the *current, still-changing* selection) was the actual
+    /// source of the reported lag while dragging a large selection, not
+    /// the flame chart's own GPU-instanced rendering.
+    pub(crate) fn is_dragging_selection(&self) -> bool {
+        self.drag_anchor_ns.is_some() || self.edge_fixed_ns.is_some() || self.pan_drag.is_some()
+    }
+
+    /// Clears all three drag-in-progress flags at once — called from every
+    /// one of this strip's `on_mouse_up` handlers regardless of *which*
+    /// gesture just ended, since exactly one of the three is ever `Some` at
+    /// a time and clearing the other two (already `None`) is a no-op.
+    /// Without this, none of them was ever reset back to `None` anywhere,
+    /// which would otherwise leave `is_dragging_selection` stuck `true` —
+    /// and the expensive rebuild it gates permanently skipped — from the
+    /// very first drag onward.
+    fn end_drag(&mut self) {
+        self.drag_anchor_ns = None;
+        self.edge_fixed_ns = None;
+        self.pan_drag = None;
+    }
 }
 
 /// [`OverviewState::thumbnail_images`]'s cached contents: every captured
@@ -280,6 +319,11 @@ pub(crate) fn render(
     // query rather than owning it.
     capture: Option<&gpui::Capture>,
     capture_generation: u64,
+    // The one authoritative panel width every panel in the resizable group
+    // shares -- see `RecordState::panels_bounds`'s field doc. `<= 1.0`
+    // means "not measured yet"; `#record-overview` below falls back to its
+    // ordinary flex-based sizing for that one frame instead.
+    panels_width: f32,
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -321,6 +365,20 @@ pub(crate) fn render(
     let bucket_width_px = (chart_width as f64 / overview.buckets.len().max(1) as f64) as f32;
     let max_ns = overview.max_bucket_ns.max(1);
 
+    // The stacked CPU-activity graph itself: a smooth curve, not one flat
+    // rectangle per bucket per category (see `build_stacked_area_bands`'s
+    // own doc comment for the full reasoning -- fewer draw calls *and* the
+    // curved look, from the same change). Built here, in `App`-context,
+    // because `category_color` needs `Context<ProfilerPanel>`, not the
+    // bare `&mut App` the painting canvas below only has; the bands
+    // themselves are plain data with no GPU/paint dependency, so they're
+    // just captured into that canvas's closure once built.
+    let cpu_area_bands = build_stacked_area_bands(&overview.buckets, max_ns, bucket_width_px);
+    let cpu_area_colors: Vec<Hsla> = OVERVIEW_CATEGORIES
+        .iter()
+        .map(|c| category_color(*c, cx))
+        .collect();
+
     let gpu_available = !state.gpu_unavailable;
     let scale = window.scale_factor();
     let mut instances: Vec<BarInstance> = Vec::new();
@@ -329,7 +387,7 @@ pub(crate) fn render(
         for (index, bucket) in overview.buckets.iter().enumerate() {
             let x = index as f32 * bucket_width_px;
             let width = (bucket_width_px - 0.5).max(1.0);
-            push_cpu_stack_segments(&mut instances, bucket, x, width, max_ns, scale, cx);
+            push_long_task_hatch(&mut instances, bucket, x, width, scale);
         }
         push_frame_row_segments(
             &mut instances,
@@ -427,7 +485,26 @@ pub(crate) fn render(
             div()
                 .id("record-overview")
                 .relative()
-                .w_full()
+                // Explicit pixel width from `panels_width` -- the *one*
+                // number every panel in the resizable group below reads
+                // (see `RecordState::panels_bounds`'s field doc) -- rather
+                // than any flex/percentage resolution. This `div` sits
+                // inside a plain column, so ordinarily its width would just
+                // be the cross axis, resolved for free by the column's
+                // default stretch with no percentage math involved at all
+                // -- and that *is* what the `.when` below falls back to
+                // for the one frame before `panels_width` is measured.
+                // But stretch-based sizing here turned out to still be
+                // reachable by the exact same "row flex-item resolving a
+                // percentage of a box whose own size isn't pinned down
+                // yet" failure this whole module tree already documents
+                // (`record::flame::render`'s own outer container has the
+                // matching fix) one level further up the tree, where a
+                // *sibling* panel's own content could perturb the result.
+                // An explicit pixel value measured upstream of the entire
+                // resizable group sidesteps every one of those layers at
+                // once, unconditionally.
+                .when(panels_width > 1.0, |el| el.w(px(panels_width)))
                 .h(px(STRIP_HEIGHT))
                 .overflow_hidden()
                 .rounded_md()
@@ -438,8 +515,25 @@ pub(crate) fn render(
                         {
                             let panel_entity = panel_entity.clone();
                             move |bounds, _window, cx| {
-                                panel_entity.update(cx, |panel, _cx| {
-                                    panel.record.overview.bounds = bounds;
+                                panel_entity.update(cx, |panel, cx| {
+                                    // See `crate::profiler::update_measured_bounds`'s doc
+                                    // comment: a resize (window or split-pane handle)
+                                    // settles this `w_full()` container's own layout
+                                    // immediately, but the shared GPU surface below is
+                                    // sized to a fixed `chart_width` derived from this
+                                    // measurement -- without an explicit notify here on
+                                    // a real change, that surface (and the whole CPU
+                                    // graph/filmstrip/Frames row painted onto it) stays
+                                    // frozen at its pre-resize size, adrift small and
+                                    // left-aligned in the now-correctly-resized
+                                    // container, until something unrelated causes
+                                    // another render of this panel.
+                                    if crate::profiler::update_measured_bounds(
+                                        &mut panel.record.overview.bounds,
+                                        bounds,
+                                    ) {
+                                        cx.notify();
+                                    }
                                 });
                             }
                         },
@@ -449,6 +543,33 @@ pub(crate) fn render(
                     .size_full(),
                 )
                 .children(ruler_elements)
+                // The smooth stacked CPU-activity curve -- painted here,
+                // *before* (so visually underneath) the GPU-instanced
+                // gridlines/Frames-row/selection-overlay surface below, so
+                // the selection highlight and its border/grips stay
+                // visible over the graph exactly as before (that overlay
+                // was always the last thing painted into the shared
+                // surface, i.e. already on top; this curve just joins
+                // everything else that already sits under it). Gridlines
+                // painting on top of the curve instead of being masked by
+                // it wherever the old flat-topped bars used to cover them
+                // is the one visible ordering change, and if anything
+                // reads as more correct: a reference line is now always
+                // visible, never hidden behind the data it's a reference
+                // for.
+                .child(
+                    canvas(
+                        move |_bounds, _window, _cx| (cpu_area_bands, cpu_area_colors),
+                        |bounds, (bands, colors), window, _cx| {
+                            paint_stacked_area_bands(&bands, bounds.origin, &colors, window);
+                        },
+                    )
+                    .absolute()
+                    .top(px(RULER_HEIGHT))
+                    .left(px(0.))
+                    .w(px(chart_width))
+                    .h(px(CPU_GRAPH_HEIGHT)),
+                )
                 .when_some(surface_handle, |el, handle| {
                     el.child(
                         div()
@@ -554,6 +675,18 @@ pub(crate) fn render(
                         cx.notify();
                     },
                 ))
+                // Ends the drag-select gesture and forces one fresh render
+                // so the (until now, deliberately skipped -- see
+                // `OverviewState::is_dragging_selection`'s doc comment)
+                // expensive lane/bottom-up rebuild finally runs exactly
+                // once, against the range the user actually settled on.
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|panel, _, _window, cx| {
+                        panel.record.overview.end_drag();
+                        cx.notify();
+                    }),
+                )
                 .on_click(cx.listener(|panel, event: &ClickEvent, _window, cx| {
                     if event.click_count() >= 2 {
                         panel.record.selection = None;
@@ -642,36 +775,48 @@ fn selection_body(
                 cx.new(|_| PanSelectionDrag)
             }
         })
-        .on_drag_move(move |event: &DragMoveEvent<PanSelectionDrag>, _window, cx| {
-            panel_entity.update(cx, |panel, cx| {
-                let Some((anchor_ns, (orig_start, orig_end))) = panel.record.overview.pan_drag
-                else {
-                    return;
-                };
-                let Some(current_ns) = overview_x_to_ns(
-                    &panel.record.overview,
-                    panel.record.overview_data(),
-                    event.event.position.x,
-                ) else {
-                    return;
-                };
-                let Some((domain_start, domain_end)) = panel
-                    .record
-                    .overview_data()
-                    .map(|o| (o.domain_start_ns, o.domain_end_ns))
-                else {
-                    return;
-                };
-                panel.record.selection = Some(pan_selection(
-                    (orig_start, orig_end),
-                    anchor_ns,
-                    current_ns,
-                    (domain_start, domain_end),
-                ));
-                panel.record.overview.hover_ns = Some(current_ns);
-                cx.notify();
-            });
+        .on_drag_move({
+            let panel_entity = panel_entity.clone();
+            move |event: &DragMoveEvent<PanSelectionDrag>, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    let Some((anchor_ns, (orig_start, orig_end))) = panel.record.overview.pan_drag
+                    else {
+                        return;
+                    };
+                    let Some(current_ns) = overview_x_to_ns(
+                        &panel.record.overview,
+                        panel.record.overview_data(),
+                        event.event.position.x,
+                    ) else {
+                        return;
+                    };
+                    let Some((domain_start, domain_end)) = panel
+                        .record
+                        .overview_data()
+                        .map(|o| (o.domain_start_ns, o.domain_end_ns))
+                    else {
+                        return;
+                    };
+                    panel.record.selection = Some(pan_selection(
+                        (orig_start, orig_end),
+                        anchor_ns,
+                        current_ns,
+                        (domain_start, domain_end),
+                    ));
+                    panel.record.overview.hover_ns = Some(current_ns);
+                    cx.notify();
+                });
+            }
         })
+        .on_mouse_up(
+            MouseButton::Left,
+            move |_, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    panel.record.overview.end_drag();
+                    cx.notify();
+                });
+            },
+        )
         .into_any_element()
 }
 
@@ -742,24 +887,38 @@ fn left_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel
                 cx.new(|_| LeftEdgeDrag)
             }
         })
-        .on_drag_move(move |event: &DragMoveEvent<LeftEdgeDrag>, _window, cx| {
-            panel_entity.update(cx, |panel, cx| {
-                let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
-                    return;
-                };
-                let Some(current_ns) = overview_x_to_ns(
-                    &panel.record.overview,
-                    panel.record.overview_data(),
-                    event.event.position.x,
-                ) else {
-                    return;
-                };
-                panel.record.selection =
-                    Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
-                panel.record.overview.hover_ns = Some(current_ns);
-                cx.notify();
-            });
+        .on_drag_move({
+            let panel_entity = panel_entity.clone();
+            move |event: &DragMoveEvent<LeftEdgeDrag>, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
+                        return;
+                    };
+                    let Some(current_ns) = overview_x_to_ns(
+                        &panel.record.overview,
+                        panel.record.overview_data(),
+                        event.event.position.x,
+                    ) else {
+                        return;
+                    };
+                    panel.record.selection = Some((
+                        fixed_ns.min(current_ns),
+                        fixed_ns.max(current_ns).max(fixed_ns + 1),
+                    ));
+                    panel.record.overview.hover_ns = Some(current_ns);
+                    cx.notify();
+                });
+            }
         })
+        .on_mouse_up(
+            MouseButton::Left,
+            move |_, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    panel.record.overview.end_drag();
+                    cx.notify();
+                });
+            },
+        )
         .into_any_element()
 }
 
@@ -785,65 +944,48 @@ fn right_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPane
                 cx.new(|_| RightEdgeDrag)
             }
         })
-        .on_drag_move(move |event: &DragMoveEvent<RightEdgeDrag>, _window, cx| {
-            panel_entity.update(cx, |panel, cx| {
-                let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
-                    return;
-                };
-                let Some(current_ns) = overview_x_to_ns(
-                    &panel.record.overview,
-                    panel.record.overview_data(),
-                    event.event.position.x,
-                ) else {
-                    return;
-                };
-                panel.record.selection =
-                    Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
-                panel.record.overview.hover_ns = Some(current_ns);
-                cx.notify();
-            });
+        .on_drag_move({
+            let panel_entity = panel_entity.clone();
+            move |event: &DragMoveEvent<RightEdgeDrag>, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    let Some(fixed_ns) = panel.record.overview.edge_fixed_ns else {
+                        return;
+                    };
+                    let Some(current_ns) = overview_x_to_ns(
+                        &panel.record.overview,
+                        panel.record.overview_data(),
+                        event.event.position.x,
+                    ) else {
+                        return;
+                    };
+                    panel.record.selection = Some((
+                        fixed_ns.min(current_ns),
+                        fixed_ns.max(current_ns).max(fixed_ns + 1),
+                    ));
+                    panel.record.overview.hover_ns = Some(current_ns);
+                    cx.notify();
+                });
+            }
         })
+        .on_mouse_up(
+            MouseButton::Left,
+            move |_, _window, cx| {
+                panel_entity.update(cx, |panel, cx| {
+                    panel.record.overview.end_drag();
+                    cx.notify();
+                });
+            },
+        )
         .into_any_element()
 }
 
-/// Appends the stacked-area segments for one CPU-graph bucket: one
-/// [`BarInstance`] per non-empty category in [`OVERVIEW_CATEGORIES`] order
-/// (bottom of the graph upward), plus the long-task hatch when this bucket
-/// has one — matches Chrome's own layered/stacked CPU graph rather than
-/// collapsing each bucket to its single dominant category's color.
-fn push_cpu_stack_segments(
-    instances: &mut Vec<BarInstance>,
-    bucket: &OverviewBucket,
-    x: f32,
-    width: f32,
-    max_ns: u64,
-    scale: f32,
-    cx: &Context<ProfilerPanel>,
-) {
-    if bucket.total_ns == 0 {
-        return;
-    }
-    let mut cumulative_ns: u64 = 0;
-    for (category_index, category) in OVERVIEW_CATEGORIES.iter().enumerate() {
-        let segment_ns = bucket.category_ns[category_index];
-        if segment_ns == 0 {
-            continue;
-        }
-        let cumulative_after = cumulative_ns + segment_ns;
-        let (top, bottom) = stack_segment_y(cumulative_ns, cumulative_after, max_ns, CPU_GRAPH_HEIGHT);
-        cumulative_ns = cumulative_after;
-
-        let rgba = category_color(*category, cx).to_rgb();
-        instances.push(BarInstance {
-            rect_min: [x * scale, top * scale],
-            rect_max: [(x + width) * scale, bottom * scale],
-            color: [rgba.r, rgba.g, rgba.b, rgba.a],
-            corner_radius: 0.0,
-            highlight: 0.0,
-            _pad: [0.0, 0.0],
-        });
-    }
-
+/// Appends this bucket's long-task hatch instance, if it has one — the one
+/// piece of the old `push_cpu_stack_segments` (see its git history) that's
+/// still a plain instanced rect: a thin warning stripe along the top edge
+/// reads fine blocky, unlike the stacked category fill itself, which moved
+/// to [`build_stacked_area_bands`]'s smooth curve (see that function's own
+/// doc comment for why).
+fn push_long_task_hatch(instances: &mut Vec<BarInstance>, bucket: &OverviewBucket, x: f32, width: f32, scale: f32) {
     if bucket.has_long_task {
         instances.push(BarInstance {
             rect_min: [x * scale, 0.0],
@@ -859,10 +1001,12 @@ fn push_cpu_stack_segments(
 /// Computes one stacked category segment's `(top_y, bottom_y)` in local
 /// graph pixels, stacked from the bottom of a `graph_height`-tall area
 /// upward given the running nanosecond totals before/after this segment
-/// (out of `max_ns`). Pulled out of [`push_cpu_stack_segments`] so the
-/// stacking math has exactly one implementation to unit-test (see
-/// `tests::stack_segment_*` below) instead of re-deriving the two fractions
-/// inline for every category of every bucket.
+/// (out of `max_ns`). Pulled out into its own function so the stacking math
+/// has exactly one implementation to unit-test (see `tests::stack_segment_*`
+/// below) instead of re-deriving the two fractions inline for every
+/// category of every bucket -- shared by [`build_stacked_area_bands`]
+/// (sampled once per bucket *center* into a curve) the same way it used to
+/// be shared by the old per-bucket flat-rectangle approach.
 fn stack_segment_y(cumulative_before: u64, cumulative_after: u64, max_ns: u64, graph_height: f32) -> (f32, f32) {
     let max_ns = max_ns.max(1) as f32;
     let bottom = graph_height - (cumulative_before as f32 / max_ns) * graph_height;
@@ -870,9 +1014,214 @@ fn stack_segment_y(cumulative_before: u64, cumulative_after: u64, max_ns: u64, g
     (top, bottom)
 }
 
-/// Appends one [`BarInstance`] per entry in `frame_durations_ms`, colored by
+/// Builds one smooth, closed "band" shape per [`OVERVIEW_CATEGORIES`] entry
+/// that has any nonzero contribution across `buckets` — the stacked CPU
+/// activity graph itself. Each band is the region between two natural
+/// (Catmull-Rom-to-cubic-bezier — matching `crate::plot::shape::{Line,
+/// Area}`'s own "Natural" interpolation, see [`trace_natural_curve`])
+/// curves: this category's cumulative top edge, and its cumulative bottom
+/// edge (== the previous category's top edge) — the exact same stacking
+/// math [`stack_segment_y`] already computed for the old per-bucket flat
+/// rectangles, just sampled once per bucket *center* into a curve instead
+/// of turned into one flat-topped `BarInstance` per bucket.
+///
+/// Replaces what used to be up to `OVERVIEW_BUCKET_COUNT *
+/// OVERVIEW_CATEGORIES.len()` (400 × 8 = 3,200) GPU instances for this one
+/// chart with at most `OVERVIEW_CATEGORIES.len()` = 8 tessellated paths,
+/// each a single draw call — both the smoother curve look and a real
+/// reduction in per-frame GPU work behind it, not a purely visual change.
+/// Returned as plain point data (no path tessellation, no color, no
+/// `Window`/`App` dependency) so the caller can build this from
+/// `Context<ProfilerPanel>` (needed for `category_color`) and hand it off
+/// to a plain `canvas()` paint closure (which only has a bare `&mut App`)
+/// to actually turn into `Path`s and paint — see [`paint_stacked_area_bands`].
+fn build_stacked_area_bands(
+    buckets: &[OverviewBucket],
+    max_ns: u64,
+    bucket_width_px: f32,
+) -> Vec<(usize, Vec<Point<Pixels>>, Vec<Point<Pixels>>)> {
+    let n = buckets.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut cumulative_ns = vec![0u64; n];
+    let mut bands = Vec::with_capacity(OVERVIEW_CATEGORIES.len());
+
+    for category_index in 0..OVERVIEW_CATEGORIES.len() {
+        let mut top_points = Vec::with_capacity(n);
+        let mut bottom_points = Vec::with_capacity(n);
+        let mut any_nonzero = false;
+
+        for (i, bucket) in buckets.iter().enumerate() {
+            // Sampled at each bucket's *center*, not its left edge -- a
+            // curve through left edges would visually shift the whole
+            // graph half a bucket earlier than where the data actually is.
+            let x = (i as f32 + 0.5) * bucket_width_px;
+            let cumulative_before = cumulative_ns[i];
+            let segment_ns = bucket.category_ns[category_index];
+            let cumulative_after = cumulative_before + segment_ns;
+            if segment_ns > 0 {
+                any_nonzero = true;
+            }
+            let (top, bottom) =
+                stack_segment_y(cumulative_before, cumulative_after, max_ns, CPU_GRAPH_HEIGHT);
+            top_points.push(point(px(x), px(top)));
+            bottom_points.push(point(px(x), px(bottom)));
+            cumulative_ns[i] = cumulative_after;
+        }
+
+        if any_nonzero {
+            bands.push((category_index, top_points, bottom_points));
+        }
+    }
+
+    bands
+}
+
+/// Traces a smooth curve through `points` via the exact Catmull-Rom-to-
+/// cubic-bezier construction `crate::plot::shape::{Line, Area}` already use
+/// for their own "Natural" stroke style — duplicated rather than reused
+/// because this file needs the curve as one edge of a larger closed band
+/// `Path` (see [`paint_stacked_area_bands`]), not a whole standalone
+/// stroked/filled `Path` the way `Line`/`Area` build for themselves. Traces
+/// from wherever the builder's pen currently is through every point in
+/// `points` in order; call `builder.move_to(points[0])` yourself first if
+/// this is the start of a new subpath rather than a continuation.
+fn trace_natural_curve(builder: &mut PathBuilder, points: &[Point<Pixels>]) {
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
+    for i in 0..n - 1 {
+        let p0 = if i == 0 { points[0] } else { points[i - 1] };
+        let p1 = points[i];
+        let p2 = points[i + 1];
+        let p3 = if i + 2 < n { points[i + 2] } else { points[n - 1] };
+
+        // Catmull-Rom to Bezier.
+        let c1 = Point::new(p1.x + (p2.x - p0.x) / 6.0, p1.y + (p2.y - p0.y) / 6.0);
+        let c2 = Point::new(p2.x - (p3.x - p1.x) / 6.0, p2.y - (p3.y - p1.y) / 6.0);
+        builder.cubic_bezier_to(p2, c1, c2);
+    }
+}
+
+/// Turns [`build_stacked_area_bands`]'s plain point data into actual
+/// `Path`s and paints them, one per band, back to front in
+/// [`OVERVIEW_CATEGORIES`] order (depth-0 first) — called from inside a
+/// `canvas()` paint closure, the one place in this render pass that
+/// actually has paint access. `origin` is the painting canvas element's own
+/// screen-space top-left (its `Bounds::origin`); `bands`' own points are in
+/// local, canvas-relative space, matching every other builder in this file.
+fn paint_stacked_area_bands(
+    bands: &[(usize, Vec<Point<Pixels>>, Vec<Point<Pixels>>)],
+    origin: Point<Pixels>,
+    colors: &[Hsla],
+    window: &mut Window,
+) {
+    let offset = |p: &Point<Pixels>| point(p.x + origin.x, p.y + origin.y);
+
+    for (category_index, top_points, bottom_points) in bands {
+        if top_points.is_empty() {
+            continue;
+        }
+        let Some(&color) = colors.get(*category_index) else {
+            continue;
+        };
+
+        let top: Vec<Point<Pixels>> = top_points.iter().map(offset).collect();
+        let bottom_rev: Vec<Point<Pixels>> = bottom_points.iter().rev().map(offset).collect();
+
+        let mut builder = PathBuilder::fill();
+        builder.move_to(top[0]);
+        trace_natural_curve(&mut builder, &top);
+        // Close the band: a straight connector down to this category's
+        // bottom edge at the same x (the right edge of the last bucket),
+        // the bottom curve traced backward, then a straight connector back
+        // up to the top curve's own start (the left edge of the first
+        // bucket) -- `top_points`/`bottom_points` share the same x per
+        // index by construction, so both connectors are simple verticals.
+        builder.line_to(bottom_rev[0]);
+        trace_natural_curve(&mut builder, &bottom_rev);
+        builder.line_to(top[0]);
+        builder.close();
+
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, color);
+        }
+    }
+}
+
+/// Above this many recorded frames, [`push_frame_row_segments`] switches
+/// from one rectangle per frame to grouping consecutive frames into this
+/// many buckets instead — a resolution limit, not a length limit, matching
+/// how [`super::data::OVERVIEW_BUCKET_COUNT`] already caps the CPU graph
+/// regardless of the capture's own length (see that constant's own doc
+/// comment). Without this, the Frames row was the one part of this strip
+/// that scaled with capture length rather than screen resolution: a
+/// ten-minute capture at 60fps is 36,000 frames, which used to mean 36,000
+/// `BarInstance`s rebuilt from scratch on every render (this function isn't
+/// cached — see `overview::render`'s own doc comment on why the strip as a
+/// whole doesn't need to be) — density the viewer can never actually
+/// resolve past a few hundred pixels wide, and paid for anyway. Set equal
+/// to the CPU graph's own bucket budget so neither row is the odd one out.
+const FRAME_ROW_MAX_SEGMENTS: usize = OVERVIEW_BUCKET_COUNT;
+
+/// How many consecutive frames [`push_frame_row_segments`] groups into one
+/// rendered segment, given `frame_count` recorded frames total — always `1`
+/// (one segment per frame, today's exact behavior) at or under
+/// [`FRAME_ROW_MAX_SEGMENTS`] frames, growing only once there are more
+/// frames than the resolution budget has room for.
+fn frame_row_bucket_size(frame_count: usize) -> usize {
+    ((frame_count + FRAME_ROW_MAX_SEGMENTS - 1) / FRAME_ROW_MAX_SEGMENTS).max(1)
+}
+
+/// One rendered Frames-row segment: `(start_ns, duration_ns, worst_ms)` for
+/// either a single frame or (above [`FRAME_ROW_MAX_SEGMENTS`] frames) a
+/// bucket of consecutive ones grouped by [`frame_row_bucket_size`] — see
+/// [`push_frame_row_segments`]'s own doc comment for why this exists at all.
+/// A pure function over `frame_durations_ms` (no `Context`/GPU dependency)
+/// specifically so the bucketing math itself — not just its resulting
+/// pixels — has something to unit-test.
+fn bucket_frame_durations(frame_durations_ms: &[f32]) -> Vec<(f64, f64, f32)> {
+    let bucket_size = frame_row_bucket_size(frame_durations_ms.len());
+    let mut cumulative_ns_before: f64 = 0.0;
+    frame_durations_ms
+        .chunks(bucket_size)
+        .map(|bucket| {
+            let bucket_start_ns = cumulative_ns_before;
+            let mut bucket_duration_ns: f64 = 0.0;
+            // The *worst* frame in the bucket drives its color, not the
+            // average -- a profiler's whole point is surfacing jank, and
+            // averaging one slow frame in among many fast ones would smooth
+            // away exactly the thing worth still seeing when zoomed out.
+            let mut worst_ms: f32 = 0.0;
+            for &duration_ms in bucket {
+                bucket_duration_ns += (duration_ms as f64) * 1.0e6;
+                worst_ms = worst_ms.max(duration_ms);
+            }
+            cumulative_ns_before += bucket_duration_ns;
+            (bucket_start_ns, bucket_duration_ns, worst_ms)
+        })
+        .collect()
+}
+
+/// Appends one [`BarInstance`] per entry in `frame_durations_ms` (or, above
+/// [`FRAME_ROW_MAX_SEGMENTS`] frames, one per fixed-size bucket of
+/// consecutive frames — see [`bucket_frame_durations`]), colored by
 /// Chrome's own three-tier frame-time classification (see [`frame_class`]),
 /// laid out left-to-right along the Frames row using [`frame_x_range`].
+///
+/// The bucketing is a resolution limit, not a length limit, matching how
+/// [`super::data::OVERVIEW_BUCKET_COUNT`] already caps the CPU graph
+/// regardless of the capture's own length (see that constant's own doc
+/// comment). Without it, the Frames row was the one part of this strip that
+/// scaled with capture length rather than screen resolution: a ten-minute
+/// capture at 60fps is 36,000 frames, which used to mean 36,000
+/// `BarInstance`s rebuilt from scratch on every render (this function isn't
+/// cached — see `overview::render`'s own doc comment on why the strip as a
+/// whole doesn't need to be) — density the viewer can never actually
+/// resolve past a few hundred pixels wide, and paid for anyway.
 fn push_frame_row_segments(
     instances: &mut Vec<BarInstance>,
     frame_durations_ms: &[f32],
@@ -886,13 +1235,11 @@ fn push_frame_row_segments(
     }
     let row_top = FILMSTRIP_TOP + FILMSTRIP_HEIGHT + FRAME_ROW_GAP;
     let row_bottom = GRAPH_AREA_HEIGHT;
-    let mut cumulative_ns_before: f64 = 0.0;
-    for duration_ms in frame_durations_ms {
-        let duration_ns = (*duration_ms as f64) * 1.0e6;
-        let (x0, x1) = frame_x_range(cumulative_ns_before, duration_ns, domain_span_ns, chart_width);
-        cumulative_ns_before += duration_ns;
 
-        let rgba = frame_class(*duration_ms).color(cx).to_rgb();
+    for (bucket_start_ns, bucket_duration_ns, worst_ms) in bucket_frame_durations(frame_durations_ms) {
+        let (x0, x1) =
+            frame_x_range(bucket_start_ns, bucket_duration_ns, domain_span_ns, chart_width);
+        let rgba = frame_class(worst_ms).color(cx).to_rgb();
         // A hairline gap between adjacent frame rectangles when they're wide
         // enough to show one (sparse frames); at real frame-rate density
         // (hundreds of frames across a few hundred pixels) this rounds away
@@ -1342,6 +1689,144 @@ mod tests {
         let (top, bottom) = stack_segment_y(0, 100, 100, 40.0);
         assert_eq!(bottom, 40.0);
         assert_eq!(top, 0.0);
+    }
+
+    fn bucket_with(category_ns: [u64; OVERVIEW_CATEGORIES.len()]) -> OverviewBucket {
+        OverviewBucket {
+            total_ns: category_ns.iter().sum(),
+            category_ns,
+            has_long_task: false,
+        }
+    }
+
+    #[test]
+    fn build_stacked_area_bands_is_empty_for_no_buckets() {
+        assert!(build_stacked_area_bands(&[], 100, 10.0).is_empty());
+    }
+
+    #[test]
+    fn build_stacked_area_bands_skips_categories_with_no_contribution() {
+        let mut category_ns = [0u64; OVERVIEW_CATEGORIES.len()];
+        category_ns[0] = 50;
+        let buckets = vec![bucket_with(category_ns)];
+
+        let bands = build_stacked_area_bands(&buckets, 100, 10.0);
+
+        assert_eq!(bands.len(), 1);
+        assert_eq!(bands[0].0, 0);
+    }
+
+    #[test]
+    fn build_stacked_area_bands_samples_one_point_per_bucket_at_its_center() {
+        let mut category_ns = [0u64; OVERVIEW_CATEGORIES.len()];
+        category_ns[0] = 25;
+        let buckets = vec![bucket_with(category_ns), bucket_with(category_ns)];
+
+        let bands = build_stacked_area_bands(&buckets, 100, 10.0);
+        let (_, top_points, bottom_points) = &bands[0];
+
+        assert_eq!(top_points.len(), 2);
+        assert_eq!(bottom_points.len(), 2);
+        // Bucket 0 spans [0, 10), so its sample sits at its center, x = 5;
+        // bucket 1 spans [10, 20), center x = 15.
+        assert_eq!(top_points[0].x, px(5.0));
+        assert_eq!(top_points[1].x, px(15.0));
+    }
+
+    #[test]
+    fn build_stacked_area_bands_stacks_later_categories_above_earlier_ones() {
+        let mut category_ns = [0u64; OVERVIEW_CATEGORIES.len()];
+        category_ns[0] = 50;
+        category_ns[1] = 50;
+        let buckets = vec![bucket_with(category_ns)];
+
+        let bands = build_stacked_area_bands(&buckets, 100, 10.0);
+
+        assert_eq!(bands.len(), 2);
+        // Category 0 (pushed first, bottom of the stack) sits at the very
+        // bottom of a fully-utilized (50 + 50 == max_ns) graph.
+        assert_eq!(bands[0].2[0].y, px(CPU_GRAPH_HEIGHT));
+        // Category 1 stacks directly on top of it, reaching the very top.
+        assert_eq!(bands[1].1[0].y, px(0.0));
+        // And the two categories share a seam: category 0's top edge is
+        // exactly category 1's bottom edge, with no gap or overlap.
+        assert_eq!(bands[0].1[0].y, bands[1].2[0].y);
+    }
+
+    #[test]
+    fn trace_natural_curve_handles_fewer_than_two_points_without_panicking() {
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(0.0), px(0.0)));
+        trace_natural_curve(&mut builder, &[]);
+        trace_natural_curve(&mut builder, &[point(px(1.0), px(1.0))]);
+        // No assertion beyond "didn't panic" -- there's no meaningful curve
+        // to trace through 0 or 1 points, and callers (this file's own
+        // `paint_stacked_area_bands`) already guard the real degenerate
+        // case (an empty band) before ever reaching this function.
+    }
+
+    #[test]
+    fn frame_row_bucket_size_is_one_at_or_under_the_budget() {
+        assert_eq!(frame_row_bucket_size(0), 1);
+        assert_eq!(frame_row_bucket_size(1), 1);
+        assert_eq!(frame_row_bucket_size(FRAME_ROW_MAX_SEGMENTS), 1);
+    }
+
+    #[test]
+    fn frame_row_bucket_size_grows_only_once_over_the_budget() {
+        // One more frame than the budget still needs *some* bucket wider
+        // than one frame to fit within it.
+        assert!(frame_row_bucket_size(FRAME_ROW_MAX_SEGMENTS + 1) >= 2);
+        // An order of magnitude over budget: still capped to (about) the
+        // budget's own bucket count, not left to grow one-bucket-per-frame.
+        let huge = FRAME_ROW_MAX_SEGMENTS * 20;
+        let bucket_size = frame_row_bucket_size(huge);
+        let bucket_count = (huge + bucket_size - 1) / bucket_size;
+        assert!(bucket_count <= FRAME_ROW_MAX_SEGMENTS);
+    }
+
+    #[test]
+    fn bucket_frame_durations_is_one_bucket_per_frame_under_budget() {
+        let durations = vec![16.0_f32, 8.0, 33.0];
+        let buckets = bucket_frame_durations(&durations);
+        assert_eq!(buckets.len(), durations.len());
+        // Each single-frame bucket's "worst" is just that frame's own ms.
+        for (bucket, &expected_ms) in buckets.iter().zip(&durations) {
+            assert_eq!(bucket.2, expected_ms);
+        }
+    }
+
+    #[test]
+    fn bucket_frame_durations_never_produces_more_buckets_than_the_budget() {
+        let durations = vec![16.0_f32; FRAME_ROW_MAX_SEGMENTS * 5];
+        let buckets = bucket_frame_durations(&durations);
+        assert!(buckets.len() <= FRAME_ROW_MAX_SEGMENTS);
+    }
+
+    #[test]
+    fn bucket_frame_durations_keeps_the_worst_frame_in_a_bucket_not_the_average() {
+        // Well over budget, so frames actually get grouped -- one severe
+        // spike among many fast frames in the same bucket. Averaging would
+        // report a merely-Warn-looking duration for that bucket and hide
+        // the spike entirely; taking the worst frame doesn't.
+        let mut durations = vec![1.0_f32; FRAME_ROW_MAX_SEGMENTS * 3];
+        durations[1] = 200.0;
+        let buckets = bucket_frame_durations(&durations);
+        let bucket_size = frame_row_bucket_size(durations.len());
+        assert!(bucket_size > 1, "test needs bucketing to actually kick in");
+        // Frame index 1 falls in the very first bucket.
+        assert_eq!(buckets[0].2, 200.0);
+    }
+
+    #[test]
+    fn bucket_frame_durations_sums_to_the_total_duration() {
+        let durations = vec![16.0_f32; FRAME_ROW_MAX_SEGMENTS * 3];
+        let expected_total_ns: f64 = durations.iter().map(|d| *d as f64 * 1.0e6).sum();
+        let total_ns: f64 = bucket_frame_durations(&durations)
+            .iter()
+            .map(|(_, duration_ns, _)| duration_ns)
+            .sum();
+        assert!((total_ns - expected_total_ns).abs() < 1.0);
     }
 
     #[test]

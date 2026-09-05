@@ -26,6 +26,7 @@ use crate::{
     h_flex,
     input::{CompletionProvider, InputEvent, InputState, RopeExt, TabSize, TextInput},
     link::Link,
+    scroll::ScrollbarAxis,
     switch::Switch,
     tab::{Tab, TabBar},
     v_flex, ActiveTheme, Disableable, IconName, Selectable, Sizable, StyledExt, TITLE_BAR_HEIGHT,
@@ -684,13 +685,22 @@ fn render_tab_content(
             .child(content)
             .into_any_element()
     } else {
+        // A visible, draggable scrollbar thumb (rather than a bare
+        // `overflow_y_scroll()`, which scrolls fine but gives no on-screen
+        // affordance that there's more content below) — matches Chromium
+        // DevTools, where every scrollable pane shows its scrollbar.
         div()
             .flex_1()
             .w_full()
             .min_h(px(0.))
             .min_w(px(0.))
-            .overflow_y_scroll()
-            .child(content)
+            .overflow_hidden()
+            .child(
+                div()
+                    .size_full()
+                    .scrollable(ScrollbarAxis::Vertical)
+                    .child(content),
+            )
             .into_any_element()
     }
 }
@@ -714,10 +724,52 @@ fn render_elements_tab(
     flatten_rows(&tree, 0, inspector, &mut rows);
     let item_count = rows.len();
 
+    // Chromium's own Elements tree scrolls horizontally once a deeply nested
+    // node's indent + tag + attributes run past the panel's width, rather
+    // than wrapping or clipping the line. `uniform_list` virtualizes and
+    // scrolls vertically on its own, but horizontally it defaults to
+    // clipping every row to the container's own width regardless of a
+    // wider row's actual content -- `ListHorizontalSizingBehavior::FitList`,
+    // its default, forces `content_width = padded_bounds.size.width`
+    // outright (see `UniformList::compute` in gpui-ce), so a naive
+    // `.min_w()`/wrapper-div fix from outside has nothing to act on:
+    // every row still gets laid out (and clipped) at the container's width
+    // no matter how the element wrapping the list is styled.
+    // `ListHorizontalSizingBehavior::Unconstrained` is the real switch --
+    // it sizes the list (and every row) to the widest *measured* item and
+    // turns on the list's own horizontal scroll -- but it measures only
+    // one representative item (`with_width_from_item`, default index 0),
+    // not the widest across the whole tree. So this still picks the
+    // probably-widest row by the same rough per-character estimate as
+    // before, but only to choose *which single row* gets measured for
+    // real by layout; the actual width that comes out of that is exact,
+    // not a heuristic.
+    const INDENT_PX: f32 = 14.;
+    const TOGGLE_PX: f32 = 14.;
+    const CHAR_PX: f32 = 6.5;
+    let widest_row_index = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let estimate = INDENT_PX * row.depth as f32
+                + TOGGLE_PX
+                + row.element_type.chars().count() as f32 * CHAR_PX
+                + if row.display_label.is_empty() {
+                    0.
+                } else {
+                    4. + row.display_label.chars().count() as f32 * CHAR_PX
+                };
+            (i, estimate)
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
     let entity = cx.entity().clone();
     let rows_rc = Rc::new(rows);
+    let scroll_handle = elements_tree_scroll_handle();
 
-    uniform_list("inspector-tree", item_count, {
+    let list = uniform_list("inspector-tree", item_count, {
         let rows = rows_rc;
         let entity = entity.clone();
         move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
@@ -796,9 +848,31 @@ fn render_elements_tab(
                 .collect::<Vec<_>>()
         }
     })
+    .with_width_from_item(Some(widest_row_index))
+    .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
+    .track_scroll(&scroll_handle)
     .w_full()
-    .h_full()
-    .into_any_element()
+    .h_full();
+
+    list.into_any_element()
+}
+
+/// One process-wide scroll handle for the Elements tree, so its scroll
+/// position (and the smooth-scroll animation state `uniform_list` already
+/// carries per handle -- see `gpui::SmoothScrollState`) survives across
+/// `render_elements_tab`'s many calls instead of resetting to the top every
+/// render. `render_elements_tab` is a plain function over `&mut Inspector`
+/// (a `gpui-ce` type this crate doesn't own, so there's no struct field to
+/// put this on), not an `Entity` of this crate's own -- the same constraint
+/// `inspector.rs::init`'s `OnceCell`-cached `DivInspector` singleton already
+/// works around, and the same fix shape: there is only ever one Inspector
+/// panel per process, so a thread-local (GPUI itself is single-threaded for
+/// UI work) is exactly as sound as a real field would be here.
+fn elements_tree_scroll_handle() -> gpui::UniformListScrollHandle {
+    thread_local! {
+        static HANDLE: gpui::UniformListScrollHandle = gpui::UniformListScrollHandle::new();
+    }
+    HANDLE.with(|handle| handle.clone())
 }
 
 struct FlattenedRow {
