@@ -756,7 +756,19 @@ impl ProfilerPanel {
             // built from the old capture's data.
             self.capture_generation = self.capture_generation.wrapping_add(1);
         } else {
-            match gpui::start_capture(gpui::CaptureOptions::default()) {
+            // The Record tab's own "Screenshots" toggle (`record::toolbar`)
+            // is read directly here rather than threaded through this
+            // function's signature -- there is exactly one capture session
+            // shared across every tab (see this function's own comments
+            // elsewhere about starting/stopping from either tab populating
+            // both), so whatever the Record tab's toggle is set to applies
+            // regardless of which tab's Record/Stop button was actually
+            // clicked.
+            let options = gpui::CaptureOptions {
+                capture_screenshots: self.record.toolbar.capture_screenshots,
+                ..gpui::CaptureOptions::default()
+            };
+            match gpui::start_capture(options) {
                 Ok(handle) => {
                     self.capture_handle = Some(handle);
                     self.capture = None;

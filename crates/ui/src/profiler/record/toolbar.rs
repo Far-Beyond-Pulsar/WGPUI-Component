@@ -1,13 +1,22 @@
 //! The Record tab's own toolbar (§1 of `.agents/PROFILER_UI_SPEC.md`):
-//! record/stop, clear selection, the `☑ Memory` track toggle, and the
-//! pop-out-window button. Chrome's reference toolbar also has an import/
-//! export pair, a saved-recordings picker, a `☑ Screenshots` filmstrip
-//! toggle, `☐ Dim 3rd parties`, and settings/help icons — all deliberately
-//! left out rather than rendered as permanently-inert chrome: there's no
-//! capture serialization format, no filmstrip capability, and no "3rd
-//! party origin" concept in a UI framework's own profiler. Matches this
-//! spec's own build-order note ("stub what's honest, skip the rest") for
-//! the overview strip's Network/Timings/Interactions rows.
+//! record/stop, clear selection, the `☑ Memory` track toggle, the
+//! `☑ Screenshots` filmstrip toggle, and the pop-out-window button.
+//! Chrome's reference toolbar also has an import/export pair, a saved-
+//! recordings picker, `☐ Dim 3rd parties`, and settings/help icons —
+//! deliberately left out rather than rendered as permanently-inert chrome:
+//! there's no capture serialization format and no "3rd party origin"
+//! concept in a UI framework's own profiler. Matches this spec's own
+//! build-order note ("stub what's honest, skip the rest") for the overview
+//! strip's Network/Timings/Interactions rows.
+//!
+//! `☑ Screenshots` is real, unlike the earlier "no filmstrip capability"
+//! note this doc comment used to carry: it now gates
+//! `gpui::CaptureOptions::capture_screenshots` for the *next* capture
+//! (`ProfilerPanel::toggle_capture` reads `ToolbarState::capture_screenshots`
+//! directly when starting one — see that function's own comment for why),
+//! so it's disabled mid-recording (the option is fixed at `start_capture`
+//! time and flipping the checkbox then wouldn't retroactively apply to the
+//! session already running).
 
 use gpui::{
     div, prelude::FluentBuilder as _, AnyElement, AppContext as _, Context,
@@ -28,6 +37,13 @@ pub(crate) struct ToolbarState {
     /// Whether the memory step-line chart pane (§3, memory track) renders
     /// below the detail flame chart.
     pub(crate) show_memory: bool,
+    /// Whether the *next* capture should sample periodic screenshots
+    /// (`gpui::CaptureOptions::capture_screenshots`) — read directly by
+    /// `ProfilerPanel::toggle_capture` when it starts a session, not passed
+    /// as a parameter through this module's own `render`. Has no effect on
+    /// a capture already in progress (`pub(crate)` rather than private for
+    /// exactly that cross-module read).
+    pub(crate) capture_screenshots: bool,
 }
 
 pub(crate) fn render(
@@ -38,6 +54,7 @@ pub(crate) fn render(
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
     let show_memory = state.show_memory;
+    let capture_screenshots = state.capture_screenshots;
     let popped_out = false; // caller only renders this when docked and visible.
 
     h_flex()
@@ -83,6 +100,25 @@ pub(crate) fn render(
                 })),
         )
         .child(div().flex_1())
+        .child(
+            Button::new("record-toggle-screenshots")
+                .xsmall()
+                .ghost()
+                .selected(capture_screenshots)
+                .icon(IconName::Image)
+                .label("Screenshots")
+                .tooltip(if is_recording {
+                    "Applies to the next capture (fixed for one already running)"
+                } else {
+                    "Sample periodic screenshots on the next capture"
+                })
+                .disabled(is_recording)
+                .on_click(cx.listener(|panel, _, _window, cx| {
+                    panel.record.toolbar.capture_screenshots =
+                        !panel.record.toolbar.capture_screenshots;
+                    cx.notify();
+                })),
+        )
         .child(
             Button::new("record-toggle-memory")
                 .xsmall()

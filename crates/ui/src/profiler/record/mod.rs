@@ -255,6 +255,8 @@ pub(crate) fn render_content(
         selection,
         detail_visible,
         &frame_durations_ms,
+        panel.capture.as_ref(),
+        panel.capture_generation,
         window,
         cx,
     );

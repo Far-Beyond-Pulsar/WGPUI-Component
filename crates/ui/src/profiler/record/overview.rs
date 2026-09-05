@@ -24,23 +24,37 @@
 //! rectangle per entry in `frame_durations_ms`, Chrome's own 16.7ms/33ms
 //! thresholds), and the long-task hatch (§5,
 //! [`super::data::OverviewBucket::has_long_task`]) is preserved from v1.
+//!
+//! The screenshot filmstrip (§2.3) is real too, backed by `gpui::Capture`'s
+//! own periodic thumbnail capture (opt-in via the toolbar's `☑ Screenshots`
+//! toggle — see `record::toolbar`) — see [`render_filmstrip_row`] and
+//! [`render_hover_preview`]. It's the one visual element in this whole
+//! strip that isn't GPU-instanced: a thumbnail is decoded bitmap content,
+//! not a solid-color rectangle a shader can synthesize from a handful of
+//! numbers, so it goes through this crate's ordinary `img()` element
+//! (backed by the UI framework's own already-GPU-accelerated sprite atlas)
+//! instead of another [`BarInstance`]. Hovering — or dragging any of this
+//! strip's own gestures — anywhere on the strip live-scrubs a larger
+//! preview of the nearest sample, Chrome's own "drag to see a live replay"
+//! filmstrip behavior.
+//!
 //! Still not here, deliberately (`.agents/PROFILER_UI_SPEC.md`'s own
-//! build-order note flags these as lower value than the CPU graph + Frames
-//! row): a Network row (this profiler doesn't capture network activity), a
-//! Timings/Interactions row (no marker/interaction data model yet), and the
-//! screenshot filmstrip (no frame-image capture in this codebase at all —
-//! see the task boundary that shipped this file). The Frames row also has to
-//! *place* each frame along the time axis from `frame_durations_ms` alone
-//! (durations only, no per-frame start times cross this function's
-//! contract — see [`frame_x_range`]'s doc for the back-to-back-frames
-//! assumption that follows from that).
+//! build-order note flags these as lower value than the CPU graph/Frames
+//! row/filmstrip): a Network row (this profiler doesn't capture network
+//! activity) and a Timings/Interactions row (no marker/interaction data
+//! model yet). The Frames row also has to *place* each frame along the
+//! time axis from `frame_durations_ms` alone (durations only, no per-frame
+//! start times cross this function's contract — see [`frame_x_range`]'s
+//! doc for the back-to-back-frames assumption that follows from that).
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
-    canvas, div, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds, ClickEvent,
-    Context, DragMoveEvent, Entity, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, Render, StatefulInteractiveElement as _, Styled, Window,
+    canvas, div, img, prelude::FluentBuilder as _, px, AnyElement, AppContext as _, Bounds,
+    ClickEvent, Context, DragMoveEvent, Entity, Hsla, ImageSource, InteractiveElement as _,
+    IntoElement, MouseMoveEvent, ParentElement as _, Pixels, Render, RenderImage,
+    StatefulInteractiveElement as _, Styled, Thumbnail, Window,
 };
 
 use crate::{v_flex, ActiveTheme};
@@ -134,6 +148,33 @@ pub(crate) struct OverviewState {
     /// it), so the "GPU unavailable" notice doesn't flicker if creation
     /// transiently fails on exactly one render.
     gpu_unavailable: bool,
+    /// The domain position currently under the cursor, live during idle
+    /// hover *and* any of this strip's four drag gestures — the single
+    /// source of truth [`render_hover_preview`] reads to decide what to
+    /// show, so "hover to preview" and "drag to scrub the live preview"
+    /// are the same code path rather than two separate ones. `None` once
+    /// the pointer leaves the strip (see `render`'s `.on_hover`).
+    hover_ns: Option<u64>,
+    /// Every captured thumbnail this session, decoded into a GPUI-
+    /// displayable image exactly once and cached here — converting a
+    /// `Thumbnail`'s raw RGBA8 bytes into an `Arc<RenderImage>` on every
+    /// render (which can happen on every mouse-move tick while scrubbing)
+    /// would redo real decode/allocation work for image data that never
+    /// changes once a capture has stopped. Rebuilt only when
+    /// `capture_generation` changes (see [`render`]'s cache-hit check),
+    /// the same "computed once when the capture stops" treatment
+    /// `ProfilerPanel::counter_summary`/`record::data::RecordOverview`
+    /// already get. `None` before any thumbnails exist for the current
+    /// capture (screenshots weren't enabled, or none have landed yet).
+    thumbnail_images: Option<ThumbnailImageCache>,
+}
+
+/// [`OverviewState::thumbnail_images`]'s cached contents: every captured
+/// thumbnail, timestamp-ordered (same order `gpui::Capture::thumbnails()`
+/// already yields them in), each paired with its one-time-decoded image.
+struct ThumbnailImageCache {
+    capture_generation: u64,
+    images: Vec<(u64, Arc<RenderImage>)>,
 }
 
 // ── Layout constants ─────────────────────────────────────────────────────
@@ -150,7 +191,16 @@ pub(crate) struct OverviewState {
 const RULER_HEIGHT: f32 = 16.0;
 /// Height of the stacked CPU-activity area graph.
 const CPU_GRAPH_HEIGHT: f32 = 44.0;
-/// Vertical breathing room between the CPU graph and the Frames row —
+/// Vertical breathing room between the CPU graph and the filmstrip row below
+/// it — same spirit as `FRAME_ROW_GAP`.
+const FILMSTRIP_GAP: f32 = 3.0;
+/// Height of the filmstrip row (§2.3) — real `img()` elements, not GPU
+/// instances (see [`render_filmstrip_row`]'s doc comment for why bitmap
+/// thumbnails are the one thing in this strip that isn't shader-rendered),
+/// sized to leave a `FILMSTRIP_GAP`-tall gap of true-transparent, undrawn
+/// space in the shared GPU surface for them to sit over.
+const FILMSTRIP_HEIGHT: f32 = 28.0;
+/// Vertical breathing room between the filmstrip row and the Frames row —
 /// Chrome's own overview keeps its rows visually separate rather than
 /// butted directly together.
 const FRAME_ROW_GAP: f32 = 3.0;
@@ -159,11 +209,34 @@ const FRAME_ROW_GAP: f32 = 3.0;
 /// a second chart of equal visual weight).
 const FRAME_ROW_HEIGHT: f32 = 10.0;
 /// Height of the region the shared GPU surface actually draws into (CPU
-/// graph + gap + Frames row); the ruler sits above this, drawn as plain text
-/// elements, not GPU instances.
-const GRAPH_AREA_HEIGHT: f32 = CPU_GRAPH_HEIGHT + FRAME_ROW_GAP + FRAME_ROW_HEIGHT;
+/// graph + gap + filmstrip-sized gap + gap + Frames row -- the filmstrip
+/// row's own height counts toward this total even though the surface draws
+/// nothing there itself, so the Frames row below it lands in the right
+/// place); the ruler sits above this, drawn as plain text elements, not GPU
+/// instances.
+const GRAPH_AREA_HEIGHT: f32 =
+    CPU_GRAPH_HEIGHT + FILMSTRIP_GAP + FILMSTRIP_HEIGHT + FRAME_ROW_GAP + FRAME_ROW_HEIGHT;
+/// Top edge of the filmstrip row, in the same local-to-the-graph-area
+/// coordinate space every `push_*` function in this file uses.
+const FILMSTRIP_TOP: f32 = CPU_GRAPH_HEIGHT + FILMSTRIP_GAP;
 /// Total strip height: ruler + graph area.
 const STRIP_HEIGHT: f32 = RULER_HEIGHT + GRAPH_AREA_HEIGHT;
+/// Aspect ratio (`width / height`) every thumbnail is captured at — see
+/// `gpui::THUMBNAIL_WIDTH`/`THUMBNAIL_HEIGHT`. Used to size filmstrip slots
+/// and the hover preview without distorting the source image.
+const THUMBNAIL_ASPECT: f32 = gpui::THUMBNAIL_WIDTH as f32 / gpui::THUMBNAIL_HEIGHT as f32;
+/// Width of one filmstrip slot, derived from [`FILMSTRIP_HEIGHT`] and the
+/// thumbnail's own aspect ratio so slots are never stretched/squashed —
+/// Chrome's own filmstrip fills the strip's width edge-to-edge with
+/// however many same-size slots fit, rather than a fixed slot count, so
+/// this file does the same (see [`render_filmstrip_row`]).
+const FILMSTRIP_SLOT_WIDTH: f32 = FILMSTRIP_HEIGHT * THUMBNAIL_ASPECT;
+/// The hover/scrub preview popup's size — larger than one filmstrip slot
+/// (matching the reference screenshots' own "small filmstrip, bigger
+/// hover-preview" size relationship) so it's actually useful to look at,
+/// not just a magnified version of the same tiny thumbnail.
+const PREVIEW_HEIGHT: f32 = 150.0;
+const PREVIEW_WIDTH: f32 = PREVIEW_HEIGHT * THUMBNAIL_ASPECT;
 /// Height of the red long-task hatch mark drawn along the very top edge of
 /// the CPU graph — an orthogonal "is-a-problem" channel from category color
 /// (§5's own "never conflate what-kind with is-a-problem" rule).
@@ -195,6 +268,14 @@ pub(crate) fn render(
     // right back out to fit it, undoing the very zoom being reflected.
     detail_visible: Option<(u64, u64)>,
     frame_durations_ms: &[f32],
+    // The active/stopped capture, purely for its `.thumbnails()` — every
+    // other value this function needs (the overview buckets, the frame
+    // durations) is already precomputed and passed in separately above.
+    // `None` before any capture has ever completed, same as everywhere
+    // else in `record` that threads `Capture` through for one specific
+    // query rather than owning it.
+    capture: Option<&gpui::Capture>,
+    capture_generation: u64,
     window: &mut Window,
     cx: &mut Context<ProfilerPanel>,
 ) -> AnyElement {
@@ -205,6 +286,24 @@ pub(crate) fn render(
     // always passes both `Some` or both `None` together); this is the
     // range this strip actually shows and drags, per the doc comment above.
     let displayed_range = detail_visible.or(selection);
+
+    // Rebuild the decoded-thumbnail cache only when this is a genuinely
+    // different capture than the one it was last built from -- see
+    // `OverviewState::thumbnail_images`'s field doc for why this is a
+    // cache at all, not per-render decode work.
+    let cache_hit = state
+        .thumbnail_images
+        .as_ref()
+        .is_some_and(|cache| cache.capture_generation == capture_generation);
+    if !cache_hit {
+        state.thumbnail_images = capture.map(|capture| ThumbnailImageCache {
+            capture_generation,
+            images: capture
+                .thumbnails()
+                .filter_map(|(ns, thumbnail)| Some((*ns, thumbnail_to_render_image(thumbnail)?)))
+                .collect(),
+        });
+    }
 
     let measured_width = f32::from(state.bounds.size.width);
     let chart_width = if measured_width > 1.0 {
@@ -281,6 +380,22 @@ pub(crate) fn render(
             panel_entity.clone(),
         )
     });
+
+    let filmstrip_element = state
+        .thumbnail_images
+        .as_ref()
+        .and_then(|cache| render_filmstrip_row(&cache.images, domain_start_ns, domain_span_ns, chart_width));
+
+    // `deferred(..)` delays this popup's *painting* until after
+    // `#record-overview`'s own subtree finishes -- its layout/positioning
+    // still resolves against the same coordinate space a normal child
+    // would, but painting later is what lets it draw outside that
+    // container's `.overflow_hidden()` clip (the same escape-the-clip
+    // mechanism this crate's own popovers/context menus already use for
+    // exactly this "float above a scroll/clip container" need), since the
+    // preview intentionally sits *above* the strip's own top edge.
+    let hover_preview_element = render_hover_preview(state, domain_start_ns, domain_span_ns, chart_width, cx)
+        .map(|preview| gpui::deferred(preview).with_priority(1).into_any_element());
 
     v_flex()
         // `resizable_panel()`'s own wrapping div is a `display:flex` *row*
@@ -378,13 +493,36 @@ pub(crate) fn render(
                             .child("GPU overview graph unavailable on this platform/build"),
                     )
                 })
+                .children(filmstrip_element)
                 .children(selection_element)
+                .children(hover_preview_element)
+                .on_mouse_move(cx.listener(|panel, event: &MouseMoveEvent, _window, cx| {
+                    // Idle-hover half of `hover_ns`'s live-scrub contract
+                    // (see `OverviewState::hover_ns`'s field doc) -- the
+                    // four drag handlers below cover the other half.
+                    let ns = overview_x_to_ns(
+                        &panel.record.overview,
+                        panel.record.overview_data(),
+                        event.position.x,
+                    );
+                    if panel.record.overview.hover_ns != ns {
+                        panel.record.overview.hover_ns = ns;
+                        cx.notify();
+                    }
+                }))
+                .on_hover(cx.listener(|panel, hovered: &bool, _window, cx| {
+                    if !hovered && panel.record.overview.hover_ns.is_some() {
+                        panel.record.overview.hover_ns = None;
+                        cx.notify();
+                    }
+                }))
                 .on_drag(RangeSelectDrag, {
                     let panel_entity = panel_entity.clone();
                     move |_, start_position, _window, cx| {
                         panel_entity.update(cx, |panel, _cx| {
                             let ns = overview_x_to_ns(&panel.record.overview, panel.record.overview_data(), start_position.x);
                             panel.record.overview.drag_anchor_ns = ns;
+                            panel.record.overview.hover_ns = ns;
                             if ns.is_some() {
                                 panel.record.selection = None;
                             }
@@ -408,6 +546,7 @@ pub(crate) fn render(
                             anchor_ns.min(current_ns),
                             anchor_ns.max(current_ns).max(anchor_ns + 1),
                         ));
+                        panel.record.overview.hover_ns = Some(current_ns);
                         cx.notify();
                     },
                 ))
@@ -525,6 +664,7 @@ fn selection_body(
                     current_ns,
                     (domain_start, domain_end),
                 ));
+                panel.record.overview.hover_ns = Some(current_ns);
                 cx.notify();
             });
         })
@@ -612,6 +752,7 @@ fn left_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPanel
                 };
                 panel.record.selection =
                     Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
+                panel.record.overview.hover_ns = Some(current_ns);
                 cx.notify();
             });
         })
@@ -654,6 +795,7 @@ fn right_edge_grip(x: f32, other_edge_ns: u64, panel_entity: Entity<ProfilerPane
                 };
                 panel.record.selection =
                     Some((fixed_ns.min(current_ns), fixed_ns.max(current_ns).max(fixed_ns + 1)));
+                panel.record.overview.hover_ns = Some(current_ns);
                 cx.notify();
             });
         })
@@ -738,7 +880,7 @@ fn push_frame_row_segments(
     if frame_durations_ms.is_empty() {
         return;
     }
-    let row_top = CPU_GRAPH_HEIGHT + FRAME_ROW_GAP;
+    let row_top = FILMSTRIP_TOP + FILMSTRIP_HEIGHT + FRAME_ROW_GAP;
     let row_bottom = GRAPH_AREA_HEIGHT;
     let mut cumulative_ns_before: f64 = 0.0;
     for duration_ms in frame_durations_ms {
@@ -783,6 +925,169 @@ fn frame_x_range(cumulative_ns_before: f64, duration_ns: f64, domain_span_ns: f6
     let x0 = (cumulative_ns_before / domain_span_ns) as f32 * chart_width;
     let x1 = ((cumulative_ns_before + duration_ns) / domain_span_ns) as f32 * chart_width;
     (x0, x1.max(x0 + 0.5))
+}
+
+/// Decodes one captured [`Thumbnail`]'s raw RGBA8 bytes into a GPUI-
+/// displayable image, the same `image::RgbaImage::from_raw` ->
+/// `image::Frame` -> `RenderImage` pipeline
+/// `ProfilerPanel::render_deep_capture_preview` already uses for its own
+/// on-demand GPU-replay preview -- not a new image-decoding path, reusing
+/// the one this crate already has. Returns `None` only if `thumbnail`'s
+/// byte buffer doesn't actually match `width * height * 4` (would indicate
+/// a corrupt/mismatched sample from the capture engine; degrade to "no
+/// image for this sample" rather than panicking).
+fn thumbnail_to_render_image(thumbnail: &Thumbnail) -> Option<Arc<RenderImage>> {
+    let rgba = image::RgbaImage::from_raw(thumbnail.width, thumbnail.height, thumbnail.rgba.clone())?;
+    let frame = image::Frame::new(rgba);
+    Some(Arc::new(RenderImage::new(smallvec::smallvec![frame])))
+}
+
+/// The cached image whose timestamp is at-or-before `ns`, falling back to
+/// the earliest cached image when `ns` precedes every sample — the exact
+/// same "at-or-before, fall back to earliest" rule
+/// `gpui::Capture::thumbnail_near` uses over raw `Thumbnail`s, reimplemented
+/// here over the already-decoded `(timestamp, image)` cache instead so a
+/// filmstrip-slot or hover-preview lookup never has to re-decode an image
+/// `render`'s own cache-rebuild step already produced. `images` is
+/// timestamp-ordered (same order `Capture::thumbnails()` yields), so this
+/// is a binary search, not a scan.
+fn nearest_cached_image(images: &[(u64, Arc<RenderImage>)], ns: u64) -> Option<Arc<RenderImage>> {
+    if images.is_empty() {
+        return None;
+    }
+    // `partition_point` finds the first index whose timestamp is *after*
+    // `ns`; the sample at-or-before `ns` is one slot to the left of that,
+    // unless `ns` precedes every sample (index 0), which is exactly the
+    // "fall back to earliest" case.
+    let split = images.partition_point(|(timestamp, _)| *timestamp <= ns);
+    let index = split.saturating_sub(1).min(images.len() - 1);
+    Some(images[index].1.clone())
+}
+
+/// The filmstrip row (§2.3): a strip of small screenshots sampled across
+/// the whole capture, matching Chrome's own comic-strip-of-thumbnails
+/// overview row. The one part of this whole strip that *isn't*
+/// GPU-instanced — a thumbnail is real bitmap content decoded from a
+/// capture, not a solid-color rectangle a shader can synthesize from a
+/// handful of numbers, so it goes through this crate's ordinary `img()`
+/// element (backed by the UI framework's own sprite atlas, which is
+/// already GPU-accelerated for exactly this — image content, not shader-
+/// friendly instanced geometry) instead of another `BarInstance`. Slots are
+/// sized to [`FILMSTRIP_SLOT_WIDTH`] (thumbnail-aspect-correct, not
+/// stretched) and fill the strip edge-to-edge with however many fit, each
+/// showing [`nearest_cached_image`] for that slot's own timestamp — so a
+/// wide strip shows more, smaller-interval samples, not the same handful
+/// stretched wider.
+///
+/// Returns `None` (rendering nothing) when there's no capture, no
+/// thumbnails were ever sampled (`☑ Screenshots` was off), or the cache
+/// hasn't been decoded yet — `render`'s own "no filmstrip row at all"
+/// fallback for a capture that simply doesn't have this data, matching how
+/// the rest of this file omits rows it has no honest content for rather
+/// than rendering an empty placeholder band.
+fn render_filmstrip_row(
+    images: &[(u64, Arc<RenderImage>)],
+    domain_start_ns: u64,
+    domain_span_ns: f64,
+    chart_width: f32,
+) -> Option<AnyElement> {
+    if images.is_empty() {
+        return None;
+    }
+    let slot_count = ((chart_width / FILMSTRIP_SLOT_WIDTH).floor() as usize).max(1);
+
+    let mut slots: Vec<AnyElement> = Vec::with_capacity(slot_count);
+    for slot in 0..slot_count {
+        // The slot's *center* timestamp -- sampling at the center rather
+        // than the leading edge means the very first/last slot's thumbnail
+        // is representative of the middle of its own span, not biased
+        // toward the strip's outer edges.
+        let fraction = (slot as f64 + 0.5) / slot_count as f64;
+        let ns = domain_start_ns + (fraction * domain_span_ns) as u64;
+        let Some(image) = nearest_cached_image(images, ns) else {
+            continue;
+        };
+        let x = slot as f32 * FILMSTRIP_SLOT_WIDTH;
+        slots.push(
+            img(ImageSource::Render(image))
+                .id(("record-overview-filmstrip-slot", slot))
+                .absolute()
+                .top(px(0.))
+                .left(px(x))
+                .w(px(FILMSTRIP_SLOT_WIDTH))
+                .h(px(FILMSTRIP_HEIGHT))
+                .into_any_element(),
+        );
+    }
+
+    Some(
+        div()
+            .absolute()
+            .top(px(FILMSTRIP_TOP))
+            .left(px(0.))
+            .w(px(chart_width))
+            .h(px(FILMSTRIP_HEIGHT))
+            .overflow_hidden()
+            .children(slots)
+            .into_any_element(),
+    )
+}
+
+/// The hover/scrub preview popup (§2.3/§6): a larger re-showing of whatever
+/// thumbnail is nearest the cursor, labeled with the exact timestamp under
+/// it — Chrome's own "10459 ms 🔍" hover label. Live during *both* idle
+/// hover and any of this strip's drag gestures (`state.hover_ns` is updated
+/// from all of them, see `render`'s `.on_mouse_move`/`.on_drag_move`
+/// wiring), which is what makes dragging across the overview double as a
+/// live filmstrip scrub instead of only a selection-editing gesture.
+///
+/// Positioned just *above* the strip near the hovered x (not directly under
+/// the cursor, which would put the popup under the finger/pointer doing the
+/// hovering) and clamped so it never runs off either edge of the strip.
+fn render_hover_preview(
+    state: &OverviewState,
+    domain_start_ns: u64,
+    domain_span_ns: f64,
+    chart_width: f32,
+    cx: &Context<ProfilerPanel>,
+) -> Option<AnyElement> {
+    let hover_ns = state.hover_ns?;
+    let images = &state.thumbnail_images.as_ref()?.images;
+    let image = nearest_cached_image(images, hover_ns)?;
+
+    let fraction = ((hover_ns.saturating_sub(domain_start_ns)) as f64 / domain_span_ns) as f32;
+    let raw_x = fraction * chart_width;
+    let left = (raw_x - PREVIEW_WIDTH / 2.0).clamp(0.0, (chart_width - PREVIEW_WIDTH).max(0.0));
+    let relative_ms = (hover_ns.saturating_sub(domain_start_ns)) / 1_000_000;
+
+    Some(
+        div()
+            .absolute()
+            .top(px(-(PREVIEW_HEIGHT + RULER_HEIGHT + 6.0)))
+            .left(px(left))
+            .flex()
+            .flex_col()
+            .bg(cx.theme().popover)
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .overflow_hidden()
+            .shadow_lg()
+            .child(
+                img(ImageSource::Render(image))
+                    .w(px(PREVIEW_WIDTH))
+                    .h(px(PREVIEW_HEIGHT)),
+            )
+            .child(
+                div()
+                    .px_1()
+                    .py_0p5()
+                    .text_xs()
+                    .text_color(cx.theme().popover_foreground)
+                    .child(format!("{} ms \u{1F50D}", format_ms_with_commas(relative_ms))),
+            )
+            .into_any_element(),
+    )
 }
 
 /// Selection box fill/border + edge-grip marks, appended to the same
@@ -1085,5 +1390,69 @@ mod tests {
     fn pan_selection_preserves_width_regardless_of_direction() {
         let (start, end) = pan_selection((300, 450), 1_000, 700, (0, 10_000));
         assert_eq!(end - start, 150);
+    }
+
+    fn sample_thumbnail() -> Thumbnail {
+        Thumbnail {
+            width: 1,
+            height: 1,
+            rgba: vec![10, 20, 30, 255],
+        }
+    }
+
+    #[test]
+    fn thumbnail_to_render_image_decodes_a_well_formed_sample() {
+        assert!(thumbnail_to_render_image(&sample_thumbnail()).is_some());
+    }
+
+    #[test]
+    fn thumbnail_to_render_image_declines_a_mismatched_buffer() {
+        // 1x1 RGBA8 needs exactly 4 bytes; this has 3.
+        let malformed = Thumbnail {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3],
+        };
+        assert!(thumbnail_to_render_image(&malformed).is_none());
+    }
+
+    fn sample_images(timestamps: &[u64]) -> Vec<(u64, Arc<RenderImage>)> {
+        let image = thumbnail_to_render_image(&sample_thumbnail()).unwrap();
+        timestamps.iter().map(|ts| (*ts, image.clone())).collect()
+    }
+
+    #[test]
+    fn nearest_cached_image_returns_none_for_an_empty_cache() {
+        assert!(nearest_cached_image(&[], 1_000).is_none());
+    }
+
+    #[test]
+    fn nearest_cached_image_falls_back_to_earliest_before_the_first_sample() {
+        let images = sample_images(&[1_000, 2_000, 3_000]);
+        // Querying before the first sample can't find an at-or-before match,
+        // so it should fall back to the earliest one rather than `None`.
+        let found = nearest_cached_image(&images, 0).unwrap();
+        assert!(Arc::ptr_eq(&found, &images[0].1));
+    }
+
+    #[test]
+    fn nearest_cached_image_picks_the_at_or_before_sample() {
+        let images = sample_images(&[1_000, 2_000, 3_000]);
+        let found = nearest_cached_image(&images, 2_500).unwrap();
+        assert!(Arc::ptr_eq(&found, &images[1].1));
+    }
+
+    #[test]
+    fn nearest_cached_image_matches_an_exact_timestamp() {
+        let images = sample_images(&[1_000, 2_000, 3_000]);
+        let found = nearest_cached_image(&images, 2_000).unwrap();
+        assert!(Arc::ptr_eq(&found, &images[1].1));
+    }
+
+    #[test]
+    fn nearest_cached_image_returns_the_last_sample_past_the_end() {
+        let images = sample_images(&[1_000, 2_000, 3_000]);
+        let found = nearest_cached_image(&images, 999_999).unwrap();
+        assert!(Arc::ptr_eq(&found, &images[2].1));
     }
 }
