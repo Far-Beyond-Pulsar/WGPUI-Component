@@ -78,6 +78,21 @@ pub struct Theme {
     pub color_blind_mode: ColorBlindMode,
 }
 
+/// Semantic token view used by migrated upstream components.
+pub struct SemanticTokens<'a> {
+    pub colors: &'a ThemeColor,
+    pub radius: SemanticRadii,
+}
+pub struct SemanticRadii { pub none: Pixels, pub full: Pixels, pub two_xl: Pixels }
+
+impl Theme {
+    pub fn semantic_tokens(&self) -> SemanticTokens<'_> {
+        SemanticTokens { colors: &self.colors, radius: SemanticRadii { none: px(0.), full: self.radius_lg, two_xl: self.radius_lg } }
+    }
+    pub fn radius_full(&self) -> Pixels { self.radius_lg }
+    pub fn radius_2xl(&self) -> Pixels { self.radius_lg }
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self::from(ThemeColor::default())

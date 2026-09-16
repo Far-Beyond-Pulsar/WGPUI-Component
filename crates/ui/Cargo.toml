@@ -14,6 +14,11 @@ doctest = false
 [features]
 default = []
 
+# Complete upstream component surface. This is opt-in while the compatibility
+# layer is finalized; enabling it exposes every imported upstream component.
+upstream-components = ["dep:wgpui-base"]
+chat-components = ["dep:wgpui-base"]
+
 # Enable syntax highlighting support for the code editor.
 tree-sitter-languages = [
     "dep:tree-sitter-bash",    "dep:tree-sitter-c",         "dep:tree-sitter-c-sharp",
@@ -40,6 +45,7 @@ flamegraph = ["gpui-ce/flamegraph", "dep:wgpu", "dep:bytemuck"]
 
 [dependencies]
 gpui-ce.workspace = true
+wgpui-base = { workspace = true, optional = true }
 ui-macros = { path = "../ui-macros" }
 
 anyhow = "1"

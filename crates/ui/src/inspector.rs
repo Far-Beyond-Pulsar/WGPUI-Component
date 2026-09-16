@@ -660,7 +660,6 @@ fn render_tab_content(
         InspectorTab::Styles => render_styles_tab(inspector, window, cx),
         InspectorTab::Layout => render_layout_tab(inspector, window, cx),
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
-        #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
         InspectorTab::Utilities => render_utilities_tab(window, cx),
     };

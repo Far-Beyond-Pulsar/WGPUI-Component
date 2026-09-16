@@ -348,7 +348,7 @@ pub(crate) fn render(
             capture_generation,
             images: capture
                 .thumbnails()
-                .filter_map(|(ns, thumbnail)| Some((*ns, thumbnail_to_render_image(thumbnail)?)))
+                .filter_map(|(ns, thumbnail)| Some((ns, thumbnail_to_render_image(thumbnail)?)))
                 .collect(),
         });
     }

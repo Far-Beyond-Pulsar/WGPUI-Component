@@ -22,6 +22,17 @@ mod kbd;
 pub mod menu;
 #[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
 mod profiler;
+#[cfg(all(any(feature = "inspector", debug_assertions), not(feature = "flamegraph"), not(target_family = "wasm")))]
+mod profiler {
+    use gpui::{div, AnyElement, Context, Inspector, IntoElement, ParentElement, Window};
+
+    pub(crate) fn render_profiler_tab(
+        _window: &mut Window,
+        _cx: &mut Context<Inspector>,
+    ) -> AnyElement {
+        div().child("Profiler requires the flamegraph feature").into_any_element()
+    }
+}
 mod root;
 pub mod states;
 mod styled;
@@ -95,14 +106,17 @@ pub mod plot;
 pub mod popover;
 pub mod progress;
 pub mod radio;
+pub mod rating;
 pub mod replication; // Multi-user editing and state replication
 pub mod resizable;
 pub mod scroll;
 pub mod sidebar;
 pub mod skeleton;
+pub mod separator;
 pub mod slider;
 pub mod speed_graph;
 pub mod spinner;
+pub mod status_bar;
 pub mod switch;
 pub mod tab;
 pub mod table;
@@ -110,6 +124,27 @@ pub mod tag;
 pub mod text;
 pub mod theme;
 pub mod tooltip;
+pub mod empty;
+// Upstream component surface. These modules are kept public so downstream
+// applications can opt into each component independently.
+#[cfg(feature = "chat-components")] pub mod bubble;
+#[cfg(feature = "upstream-components")] pub mod carousel;
+#[cfg(feature = "upstream-components")] pub mod collapsible;
+#[cfg(feature = "upstream-components")] pub mod combobox;
+#[cfg(feature = "upstream-components")] pub mod command;
+#[cfg(feature = "upstream-components")] pub mod dialog;
+#[cfg(feature = "upstream-components")] pub mod hover_card;
+#[cfg(feature = "upstream-components")] pub mod marker;
+#[cfg(feature = "chat-components")] pub mod message;
+#[cfg(feature = "chat-components")] pub mod message_scroller;
+#[cfg(feature = "upstream-components")] pub mod native_menu;
+#[cfg(feature = "upstream-components")] pub mod pagination;
+#[cfg(feature = "upstream-components")] pub mod searchable_list;
+#[cfg(feature = "upstream-components")] pub mod select;
+#[cfg(feature = "upstream-components")] pub mod sheet;
+#[cfg(feature = "upstream-components")] pub mod shimmer;
+#[cfg(feature = "upstream-components")] pub mod stepper;
+#[cfg(feature = "upstream-components")] pub mod tree;
 #[cfg(feature = "webview")]
 pub mod webview;
 pub mod workspace;

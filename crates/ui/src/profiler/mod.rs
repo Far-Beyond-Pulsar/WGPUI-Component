@@ -3494,8 +3494,7 @@ pub(crate) fn span_name_label(name: gpui::SpanName) -> SharedString {
 pub(crate) fn span_name_label_resolved(capture: &gpui::Capture, name: gpui::SpanName) -> SharedString {
     capture
         .span_name(name)
-        .map(SharedString::from)
-        .unwrap_or_else(|| span_name_label(name))
+        
 }
 
 pub(crate) fn build_flame_lanes_with_resolver<F>(frame: &gpui::FrameCapture, resolve: F) -> Vec<FlameLane>
