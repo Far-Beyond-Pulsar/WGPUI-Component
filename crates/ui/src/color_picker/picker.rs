@@ -449,8 +449,8 @@ impl ColorPicker {
                                             return;
                                         };
 
-                                        paint_hue_wheel(window, geometry);
-                                        paint_sv_triangle(window, geometry, hue);
+                                        paint_hue_wheel(window, bounds, geometry);
+                                        paint_sv_triangle(window, bounds, geometry, hue);
 
                                         let ring_angle = hue * std::f32::consts::TAU
                                             - std::f32::consts::FRAC_PI_2;
