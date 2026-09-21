@@ -33,6 +33,12 @@ impl BlinkCursor {
     }
 
     pub fn stop(&mut self, cx: &mut Context<Self>) {
+        // Already stopped: don't notify. The owning input observes this entity
+        // and stops it when it isn't focused, so an unconditional notify here
+        // would bounce between the two forever.
+        if self.epoch == 0 {
+            return;
+        }
         self.epoch = 0;
         cx.notify();
     }

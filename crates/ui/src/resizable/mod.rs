@@ -90,6 +90,16 @@ impl ResizableState {
         cx: &mut Context<Self>,
     ) {
         let size = bounds.size.along(self.axis);
+        // This runs from every frame's layout. Notifying unconditionally marks
+        // the state's ancestor views dirty each frame (and schedules a follow-up
+        // frame, since it happens during draw), so only notify on a real change.
+        let unchanged = self.sizes[panel_ix] == size
+            && self.panels[panel_ix].size == Some(size)
+            && self.panels[panel_ix].bounds == bounds
+            && self.panels[panel_ix].size_range == size_range;
+        if unchanged {
+            return;
+        }
         self.sizes[panel_ix] = size;
         self.panels[panel_ix].size = Some(size);
         self.panels[panel_ix].bounds = bounds;

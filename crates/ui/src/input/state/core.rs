@@ -399,7 +399,19 @@ impl InputState {
 
         let _subscriptions = vec![
             // Observe the blink cursor to repaint the view when it changes.
-            cx.observe(&blink_cursor, |_, _, cx| cx.notify()),
+            // Only a focused input has a visible cursor to repaint. `focus()`
+            // starts a blink chain even when the handle never ends up focused,
+            // and only a blur stops one, so such inputs blinked forever and each
+            // tick (`notify`) dirtied every ancestor view -- with dozens of
+            // fields that rebuilt the whole panel tree. An unfocused input now
+            // ignores the tick and shuts its own chain down.
+            cx.observe_in(&blink_cursor, window, |input, blink_cursor, window, cx| {
+                if input.focus_handle.is_focused(window) {
+                    cx.notify();
+                } else {
+                    blink_cursor.update(cx, |blink_cursor, cx| blink_cursor.stop(cx));
+                }
+            }),
             // Blink the cursor when the window is active, pause when it's not.
             cx.observe_window_activation(window, |input, window, cx| {
                 if window.is_window_active() {
