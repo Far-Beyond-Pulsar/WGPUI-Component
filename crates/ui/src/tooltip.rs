@@ -305,13 +305,19 @@ impl Element for HoverTooltip {
             element.paint(window, cx);
         }
 
+        // Invalidate only the view that owns this tooltip. `window.refresh()`
+        // discards every cached view in the window, so hovering any
+        // tooltip-bearing control rebuilt the whole editor UI (~10 ms+) on each
+        // pointer move, even with no keyboard or panel interaction.
+        let owner_view = window.current_view();
+
         {
             let mut state = request_layout.hover_state.borrow_mut();
             if state.hovered && !state.visible {
                 if let Some(hover_started_at) = state.hover_started_at {
                     if hover_started_at.elapsed() >= TOOLTIP_STATIONARY_DELAY {
                         state.visible = true;
-                        window.refresh();
+                        cx.notify(owner_view);
                     } else {
                         window.request_animation_frame();
                     }
@@ -321,7 +327,7 @@ impl Element for HoverTooltip {
 
         let hitbox = prepaint.hitbox.clone();
         let hover_state = request_layout.hover_state.clone();
-        window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, _cx| {
+        window.on_mouse_event(move |event: &gpui::MouseMoveEvent, phase, window, cx| {
             if !phase.bubble() {
                 return;
             }
@@ -339,7 +345,7 @@ impl Element for HoverTooltip {
                     state.hover_started_at = Some(Instant::now());
 
                     // Kick the next paint so the delay loop can run in paint context.
-                    window.refresh();
+                    cx.notify(owner_view);
                 }
                 return;
             }
@@ -350,7 +356,7 @@ impl Element for HoverTooltip {
                 state.visible = false;
                 state.hover_started_at = None;
                 if was_visible {
-                    window.refresh();
+                    cx.notify(owner_view);
                 }
             }
         });
