@@ -1522,6 +1522,11 @@ impl Element for TextElement {
             // downstream reads from it — bounds, scroll size, scroll offset —
             // are compared directly.
             let cursor = state.cursor();
+            // Captured before `last_bounds` is overwritten below.
+            let was_same_size = state
+                .last_bounds
+                .is_some_and(|previous| previous.size == bounds.size);
+            let single_line = state.mode.is_single_line();
             let bounds_changed = state.last_bounds != Some(bounds);
             let cursor_changed = state.last_cursor != Some(cursor);
             let selection_changed = state.last_selected_range != Some(selected_range);
@@ -1569,7 +1574,28 @@ impl Element for TextElement {
                 .set_offset(prepaint.cursor_scroll_offset);
             state.deferred_scroll_offset = None;
 
-            if changed {
+            // A plain single-line field that merely moved on screen (same size,
+            // same text/selection/scroll) has nothing to tell its observers: the
+            // popovers and menus that read its bounds only exist while open, and
+            // they read the fresh `last_bounds` stored above when they render.
+            // Without this, scrolling a panel of N inputs notified all N every
+            // frame (46 inputs x ~120 notifies in one capture), each dirtying
+            // every ancestor view and forcing 10-15 ms rebuilds.
+            let only_moved = bounds_changed
+                && !cursor_changed
+                && !selection_changed
+                && !scroll_size_changed
+                && !scroll_offset_changed
+                && !deferred_scroll
+                && was_same_size;
+            let has_bounds_dependents = state.search_panel.is_some()
+                || state.hover_popover.is_some()
+                || state.diagnostic_popover.is_some()
+                || state.ime_marked_range.is_some()
+                || state.is_context_menu_open(cx);
+            let skip_notify = only_moved && single_line && !has_bounds_dependents;
+
+            if changed && !skip_notify {
                 cx.notify();
             }
         });
