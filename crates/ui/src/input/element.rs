@@ -1522,12 +1522,40 @@ impl Element for TextElement {
             // downstream reads from it — bounds, scroll size, scroll offset —
             // are compared directly.
             let cursor = state.cursor();
-            let changed = state.last_bounds != Some(bounds)
-                || state.last_cursor != Some(cursor)
-                || state.last_selected_range != Some(selected_range)
-                || state.scroll_size != prepaint.scroll_size
-                || state.scroll_handle.offset() != prepaint.cursor_scroll_offset
-                || state.deferred_scroll_offset.is_some();
+            let bounds_changed = state.last_bounds != Some(bounds);
+            let cursor_changed = state.last_cursor != Some(cursor);
+            let selection_changed = state.last_selected_range != Some(selected_range);
+            let scroll_size_changed = state.scroll_size != prepaint.scroll_size;
+            let scroll_offset_changed = state.scroll_handle.offset() != prepaint.cursor_scroll_offset;
+            let deferred_scroll = state.deferred_scroll_offset.is_some();
+            let changed = bounds_changed
+                || cursor_changed
+                || selection_changed
+                || scroll_size_changed
+                || scroll_offset_changed
+                || deferred_scroll;
+            if changed && gpui::render_stats::external_enabled() {
+                // Profiler marker only: which comparison keeps firing, so an
+                // input that repaints (and dirties its ancestors) every frame
+                // can be pinned to one cause.
+                gpui::render_stats::external_record_if_slow(
+                    Some(std::time::Instant::now()),
+                    std::time::Duration::ZERO,
+                    || {
+                        format!(
+                            "input paint changed [{}{}{}{}{}{}] mode={} bounds={:?}",
+                            if bounds_changed { "bounds " } else { "" },
+                            if cursor_changed { "cursor " } else { "" },
+                            if selection_changed { "selection " } else { "" },
+                            if scroll_size_changed { "scroll_size " } else { "" },
+                            if scroll_offset_changed { "scroll_offset " } else { "" },
+                            if deferred_scroll { "deferred_scroll" } else { "" },
+                            if state.mode.is_single_line() { "single_line" } else { "multi_line/editor" },
+                            bounds.size,
+                        )
+                    },
+                );
+            }
 
             state.last_layout = Some(prepaint.last_layout.clone());
             state.last_bounds = Some(bounds);
