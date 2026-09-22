@@ -2,8 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{button::Button, popup_menu::PopupMenu};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, IntoElement, Render, SharedString, WeakEntity, Window,
+    AnyElement, AnyView, App, AppContext as _, ElementArenaScope, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, Hsla, IntoElement, Render, SharedString, WeakEntity, Window,
 };
 
 use rust_i18n::t;
@@ -253,10 +253,24 @@ impl<T: Panel> PanelView for Entity<T> {
     }
 
     fn title(&self, window: &Window, cx: &App) -> AnyElement {
+        // `Entity<T>: PanelView` is monomorphized wherever `T: Panel` is
+        // satisfied — for a plugin-defined `T`, that's inside the plugin's
+        // own DLL, which links its own separate copy of `gpui`/`ui` and
+        // therefore has its own separate `CURRENT_ELEMENT_ARENA`
+        // thread-local. Unlike `Render::render`, `PanelView::title` is
+        // called directly through this vtable rather than through the
+        // `Entity<V>: Element` path that enters the scope automatically, so
+        // any panel whose `title()` builds an element (most do) would
+        // otherwise panic with "element arena not active" the moment a
+        // plugin-implemented panel's tab gets a title bar. Entering it here,
+        // once, protects every `Panel` impl — host or plugin — without each
+        // one needing to remember to do it itself.
+        let _arena_scope = ElementArenaScope::enter(cx.element_arena());
         self.read(cx).title(window, cx)
     }
 
     fn title_suffix(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let _arena_scope = ElementArenaScope::enter(cx.element_arena());
         self.update(cx, |this, cx| this.title_suffix(window, cx))
     }
 
