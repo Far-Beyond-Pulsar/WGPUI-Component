@@ -18,7 +18,7 @@ use crate::{
     ActiveTheme as _, Colorize, PixelsExt, Root,
 };
 
-use super::{mode::InputMode, InputState, LastLayout};
+use super::{mode::InputMode, CachedLineLayout, InputState, LastLayout};
 
 const BOTTOM_MARGIN_ROWS: usize = 3;
 pub(super) const RIGHT_MARGIN: Pixels = px(10.);
@@ -472,7 +472,7 @@ impl TextElement {
             return (0..1, px(0.));
         }
 
-        let total_lines = state.text_wrapper.len();
+        let total_lines = state.text_wrapper.lines.len();
         if total_lines == 0 {
             return (0..0, px(0.));
         }
@@ -485,6 +485,22 @@ impl TextElement {
 
         // Calculate how many lines can fit in viewport + small buffer
         let visible_lines_count = (input_height / line_height).ceil() as usize + 1;
+
+        // The overwhelmingly common code-editor path has one visual row per
+        // buffer line. Resolve its viewport arithmetically instead of walking
+        // every line above the viewport on every scroll frame.
+        if !state.soft_wrap {
+            const BUFFER_LINES: usize = 4;
+            const MAX_VISIBLE_LINES: usize = 200;
+
+            let first_visible = ((-scroll_top).max(px(0.)) / line_height).floor() as usize;
+            let start = first_visible
+                .min(total_lines.saturating_sub(1))
+                .saturating_sub(BUFFER_LINES);
+            let count = (visible_lines_count + BUFFER_LINES * 2).min(MAX_VISIBLE_LINES);
+            let end = (start + count).min(total_lines);
+            return (start..end, line_height * start as f32);
+        }
 
         // Studio-quality optimization: Use stride-based binary search for large files
         // This is O(log n) instead of O(n), critical for files with 100k+ lines
@@ -670,7 +686,7 @@ impl TextElement {
                 .collect();
         }
 
-        // Optimize for large files: Use line cache to avoid redundant text shaping
+        // Shape only visible rows and reuse them while scrolling or repainting.
         let visible_text = display_text
             .slice_lines(visible_range.start..visible_range.end)
             .to_string();
@@ -679,20 +695,33 @@ impl TextElement {
         let mut offset = 0;
         for (ix, line) in visible_text.split("\n").enumerate() {
             let line_number = visible_range.start + ix;
-            let line_item = text_wrapper
-                .lines
-                .get(line_number)
-                .expect("line should exists in text_wrapper");
+            let Some(line_item) = text_wrapper.lines.get(line_number) else {
+                break;
+            };
 
             debug_assert_eq!(line_item.len(), line.len());
 
-            let mut line_layout = LineLayout::new();
+            let source_text: SharedString = line.to_string().into();
+            let line_runs = runs_for_range(runs, offset, &(0..line.len()));
+            let cached_lines = state
+                .line_cache
+                .borrow_mut()
+                .get_matching(
+                    line_number,
+                    line,
+                    &line_runs,
+                    &line_item.wrapped_lines,
+                    font_size,
+                )
+                .map(|cached| cached.shaped_lines.clone());
 
-            // TODO: PERFORMANCE FIX - Use line cache here
-            // The cache exists and stores ShapedLine objects but requires &mut
-            // Solution: Wrap line_cache in RefCell or change layout_lines to take &mut InputState
-            // This will eliminate 60fps text reshaping lag
-            let mut wrapped_lines = SmallVec::with_capacity(1);
+            if let Some(shaped_lines) = cached_lines {
+                lines.push(LineLayout::new().lines(shaped_lines));
+                offset += line.len() + 1;
+                continue;
+            }
+
+            let mut wrapped_lines: SmallVec<[ShapedLine; 1]> = SmallVec::with_capacity(1);
 
             for range in &line_item.wrapped_lines {
                 let line_runs = runs_for_range(runs, offset, &range);
@@ -704,8 +733,21 @@ impl TextElement {
                 wrapped_lines.push(shaped_line);
             }
 
-            line_layout.set_wrapped_lines(wrapped_lines);
-            lines.push(line_layout);
+            let width = wrapped_lines
+                .iter()
+                .map(|line| line.width)
+                .fold(px(0.), Pixels::max);
+            state.line_cache.borrow_mut().insert(CachedLineLayout {
+                shaped_lines: wrapped_lines.clone(),
+                size: size(width, font_size * wrapped_lines.len() as f32),
+                version: 0,
+                line_number,
+                source_text,
+                runs: line_runs,
+                wrapped_ranges: line_item.wrapped_lines.clone(),
+                font_size,
+            });
+            lines.push(LineLayout::new().lines(wrapped_lines));
 
             // +1 for the `\n`
             offset += line.len() + 1;
@@ -1531,7 +1573,8 @@ impl Element for TextElement {
             let cursor_changed = state.last_cursor != Some(cursor);
             let selection_changed = state.last_selected_range != Some(selected_range);
             let scroll_size_changed = state.scroll_size != prepaint.scroll_size;
-            let scroll_offset_changed = state.scroll_handle.offset() != prepaint.cursor_scroll_offset;
+            let scroll_offset_changed =
+                state.scroll_handle.offset() != prepaint.cursor_scroll_offset;
             let deferred_scroll = state.deferred_scroll_offset.is_some();
             let changed = bounds_changed
                 || cursor_changed
@@ -1552,10 +1595,26 @@ impl Element for TextElement {
                             if bounds_changed { "bounds " } else { "" },
                             if cursor_changed { "cursor " } else { "" },
                             if selection_changed { "selection " } else { "" },
-                            if scroll_size_changed { "scroll_size " } else { "" },
-                            if scroll_offset_changed { "scroll_offset " } else { "" },
-                            if deferred_scroll { "deferred_scroll" } else { "" },
-                            if state.mode.is_single_line() { "single_line" } else { "multi_line/editor" },
+                            if scroll_size_changed {
+                                "scroll_size "
+                            } else {
+                                ""
+                            },
+                            if scroll_offset_changed {
+                                "scroll_offset "
+                            } else {
+                                ""
+                            },
+                            if deferred_scroll {
+                                "deferred_scroll"
+                            } else {
+                                ""
+                            },
+                            if state.mode.is_single_line() {
+                                "single_line"
+                            } else {
+                                "multi_line/editor"
+                            },
                             bounds.size,
                         )
                     },

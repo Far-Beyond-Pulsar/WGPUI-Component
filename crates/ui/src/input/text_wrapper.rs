@@ -92,26 +92,28 @@ impl TextWrapper {
     /// Get the line item by row index.
     #[inline]
     pub(super) fn line(&self, row: usize) -> Option<&LineItem> {
-        self.lines.iter().skip(row).next()
+        self.lines.get(row)
     }
 
-    pub(super) fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut App) {
+    pub(super) fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut App) -> bool {
         if wrap_width == self.wrap_width {
-            return;
+            return false;
         }
 
         self.wrap_width = wrap_width;
         self.update_all(&self.text.clone(), cx);
+        true
     }
 
-    pub(super) fn set_font(&mut self, font: Font, font_size: Pixels, cx: &mut App) {
+    pub(super) fn set_font(&mut self, font: Font, font_size: Pixels, cx: &mut App) -> bool {
         if self.font.eq(&font) && self.font_size == font_size {
-            return;
+            return false;
         }
 
         self.font = font;
         self.font_size = font_size;
         self.update_all(&self.text.clone(), cx);
+        true
     }
 
     /// Update the text wrapper and recalculate the wrapped lines.
@@ -154,26 +156,31 @@ impl TextWrapper {
     ) where
         F: FnMut(&str, Pixels) -> Vec<gpui::Boundary>,
     {
-        // Performance optimization: For very large files, avoid recalculating everything
-        let total_lines = changed_text.lines_len();
-        let is_large_file = total_lines > 10000;
-
         // Remove the old changed lines.
         let start_row = self.text.offset_to_point(range.start).row;
         let start_row = start_row.min(self.lines.len().saturating_sub(1));
         let end_row = self.text.offset_to_point(range.end).row;
         let end_row = end_row.min(self.lines.len().saturating_sub(1));
         let rows_range = start_row..=end_row;
+        let replaced_line_count = if self.lines.is_empty() {
+            0
+        } else {
+            rows_range.clone().count()
+        };
+        let removed_soft_lines = if self.lines.is_empty() {
+            0
+        } else {
+            self.lines[rows_range.clone()]
+                .iter()
+                .map(LineItem::lines_len)
+                .sum()
+        };
 
-        if rows_range.contains(&self.longest_row.row) {
-            // Only reset longest row if we're modifying it
-            // For large files, avoid recalculating longest row
-            if !is_large_file {
-                self.longest_row = LongestRow::default();
-            }
-        }
+        let rescan_longest_row =
+            !self.lines.is_empty() && rows_range.contains(&self.longest_row.row);
 
-        let mut longest_row_ix = self.longest_row.row;
+        let previous_longest_row = self.longest_row.row;
+        let mut longest_row_ix = previous_longest_row;
         let mut longest_row_len = self.longest_row.len;
 
         // To add the new lines.
@@ -197,17 +204,15 @@ impl TextWrapper {
             let mut wrapped_lines = vec![];
             let mut prev_boundary_ix = 0;
 
-            // Only update longest row if this line is longer
-            if !is_large_file && line_str.len() > longest_row_len {
+            if line_str.len() > longest_row_len {
                 longest_row_ix = new_start_row + ix;
                 longest_row_len = line_str.len();
             }
 
             // If wrap_width is Pixels::MAX, skip wrapping to disable word wrap
             if let Some(wrap_width) = wrap_width {
-                // For very large files, limit wrapping calculation
-                // Only wrap if line is shorter than a threshold to avoid performance issues
-                if !is_large_file || line_str.len() < 10000 {
+                // Avoid pathological shaping work for generated single-line data.
+                if line_str.len() < 10000 {
                     // Here only have wrapped line, if there is no wrap meet, the `line_wraps` result will empty.
                     for boundary in wrap_line(&line_str, wrap_width) {
                         wrapped_lines.push(prev_boundary_ix..boundary.ix);
@@ -227,26 +232,46 @@ impl TextWrapper {
             });
         }
 
-        if self.lines.len() == 0 {
+        let inserted_soft_lines = new_lines.iter().map(LineItem::lines_len).sum::<usize>();
+        let inserted_line_count = new_lines.len();
+        if !rescan_longest_row
+            && longest_row_ix == previous_longest_row
+            && previous_longest_row > end_row
+        {
+            longest_row_ix = if inserted_line_count >= replaced_line_count {
+                previous_longest_row + inserted_line_count - replaced_line_count
+            } else {
+                previous_longest_row.saturating_sub(replaced_line_count - inserted_line_count)
+            };
+        }
+        if self.lines.is_empty() {
             self.lines = new_lines;
         } else {
             self.lines.splice(rows_range, new_lines);
         }
 
         self.text = changed_text.clone();
+        self.soft_lines = self
+            .soft_lines
+            .saturating_sub(removed_soft_lines)
+            .saturating_add(inserted_soft_lines);
 
-        // Performance optimization: For large files, calculate soft_lines incrementally
-        if is_large_file {
-            // Only recalculate the changed portion
-            self.soft_lines = self.lines.iter().map(|l| l.lines_len()).sum();
+        self.longest_row = if rescan_longest_row {
+            self.lines
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, line)| line.len())
+                .map(|(row, line)| LongestRow {
+                    row,
+                    len: line.len(),
+                })
+                .unwrap_or_default()
         } else {
-            self.soft_lines = self.lines.iter().map(|l| l.lines_len()).sum();
-        }
-
-        self.longest_row = LongestRow {
-            row: longest_row_ix,
-            len: longest_row_len,
-        }
+            LongestRow {
+                row: longest_row_ix,
+                len: longest_row_len,
+            }
+        };
     }
 
     /// Update the text wrapper and recalculate the wrapped lines.
@@ -263,6 +288,10 @@ impl TextWrapper {
         let row = self.text.offset_to_point(offset).row;
         let start = self.text.line_start_offset(row);
         let line = &self.lines[row];
+
+        if self.wrap_width.is_none() && self.soft_lines == self.lines.len() {
+            return DisplayPoint::new(row, 0, offset.saturating_sub(start).min(line.len()));
+        }
 
         let mut wrapped_row = self
             .lines
@@ -292,6 +321,14 @@ impl TextWrapper {
     ///
     /// Panics if the `point.row` is out of bounds.
     pub(crate) fn display_point_to_offset(&self, point: DisplayPoint) -> usize {
+        if self.wrap_width.is_none() && self.soft_lines == self.lines.len() {
+            let row = point.row.min(self.lines.len().saturating_sub(1));
+            let Some(line) = self.lines.get(row) else {
+                return self.text.len();
+            };
+            return self.text.line_start_offset(row) + point.column.min(line.len());
+        }
+
         let mut wrapped_row = 0;
         for (row, line) in self.lines.iter().enumerate() {
             if wrapped_row + line.lines_len() > point.row {

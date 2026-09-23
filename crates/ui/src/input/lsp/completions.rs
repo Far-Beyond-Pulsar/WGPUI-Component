@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::{Context, Entity, EntityInputHandler, Task, Window};
 use lsp_types::{request::Completion, CompletionContext, CompletionItem, CompletionResponse};
 use ropey::Rope;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
 
 use crate::input::{
     popovers::{CompletionMenu, ContextMenu},
@@ -151,10 +151,33 @@ impl InputState {
         let request_id = self.completion_request_id.wrapping_add(1);
         self.completion_request_id = request_id;
 
-        let provider_responses =
-            provider.completions(&text, new_offset, completion_context, window, cx);
-
         self._context_menu_task = cx.spawn_in(window, async move |editor, cx| {
+            // Coalesce key-repeat bursts. The task is replaced on every edit,
+            // so only the latest stable cursor position reaches the language
+            // server and the provider never runs on the input event stack.
+            cx.background_executor()
+                .timer(Duration::from_millis(75))
+                .await;
+
+            let Some(provider_responses) = editor
+                .update_in(cx, |editor, window, cx| {
+                    if editor.completion_request_id != request_id {
+                        return None;
+                    }
+                    Some(provider.completions(
+                        &text,
+                        new_offset,
+                        completion_context,
+                        window,
+                        cx,
+                    ))
+                })
+                .ok()
+                .flatten()
+            else {
+                return Ok(());
+            };
+
             let response = provider_responses.await;
 
             editor

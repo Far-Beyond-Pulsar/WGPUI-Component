@@ -192,6 +192,13 @@ impl InputState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_search(false, window, cx);
+    }
+
+    /// Open the editor's search surface, optionally exposing replacement
+    /// controls. This gives host IDEs the same behavior as the keyboard action
+    /// without synthesizing a focus event or key press.
+    pub fn open_search(&mut self, replace_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.searchable {
             return;
         }
@@ -207,7 +214,7 @@ impl InputState {
         search_panel.update(cx, |this, cx| {
             this.editor = editor;
             this.matcher.update(&text);
-            this.show(&selected_text, window, cx);
+            this.show(&selected_text, replace_mode, window, cx);
         });
         self.search_panel = Some(search_panel);
         cx.notify();
@@ -250,10 +257,12 @@ impl SearchPanel {
     pub(super) fn show(
         &mut self,
         selected_text: &Rope,
+        replace_mode: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.open = true;
+        self.replace_mode = replace_mode;
         let focus_handle = self.search_input.read(cx).focus_handle.clone();
         focus_handle.focus(window, cx);
 

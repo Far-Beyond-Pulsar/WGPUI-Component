@@ -13,7 +13,6 @@ use gpui::{
 use gpui_sum_tree::Bias;
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
-#[cfg(not(target_family = "wasm"))]
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -328,7 +327,7 @@ pub struct InputState {
     pub(in crate::input) placeholder: SharedString,
 
     /// Optimized line cache for improved rendering performance
-    pub(in crate::input) line_cache: crate::input::line_cache::OptimizedLineCache,
+    pub(in crate::input) line_cache: RefCell<crate::input::line_cache::OptimizedLineCache>,
 
     /// Whether to show VSCode-style minimap scrollbar
     pub(in crate::input) show_minimap: bool,
@@ -467,7 +466,7 @@ impl InputState {
             preferred_column: None,
             placeholder: SharedString::default(),
             mask_pattern: MaskPattern::default(),
-            line_cache: crate::input::line_cache::OptimizedLineCache::default(),
+            line_cache: RefCell::new(crate::input::line_cache::OptimizedLineCache::default()),
             show_minimap: false,
             minimap_drag: crate::input::minimap::MinimapState::new(),
             editor_scrollbar_drag: crate::input::editor_scrollbar::EditorScrollbarState::new(),
@@ -569,6 +568,19 @@ impl InputState {
     pub fn minimap(mut self, show_minimap: bool) -> Self {
         self.show_minimap = show_minimap;
         self
+    }
+
+    /// Show or hide the code-editor minimap at runtime.
+    pub fn set_minimap(&mut self, show_minimap: bool, cx: &mut Context<Self>) {
+        if self.show_minimap == show_minimap {
+            return;
+        }
+        self.show_minimap = show_minimap;
+        cx.notify();
+    }
+
+    pub fn minimap_enabled(&self) -> bool {
+        self.show_minimap
     }
 
     /// Set line number, only for [`InputMode::CodeEditor`] mode.
@@ -721,11 +733,14 @@ impl InputState {
         cx.notify();
     }
 
-    /// Get a reference to the line cache for performance monitoring.
-    ///
-    /// This allows external code to check cache statistics and performance.
-    pub fn line_cache(&self) -> &crate::input::line_cache::OptimizedLineCache {
-        &self.line_cache
+    /// Snapshot line-cache statistics for performance monitoring.
+    pub fn line_cache_stats(&self) -> crate::input::CacheStats {
+        self.line_cache.borrow().stats().clone()
+    }
+
+    /// Number of shaped lines currently retained by the editor.
+    pub fn line_cache_len(&self) -> usize {
+        self.line_cache.borrow().len()
     }
 
     /// Get the current scroll offset
@@ -734,8 +749,8 @@ impl InputState {
     }
 
     /// Set the scroll offset
-    pub fn set_scroll_offset(&mut self, offset: Point<Pixels>) {
-        self.scroll_handle.set_offset(offset);
+    pub fn set_scroll_offset(&mut self, offset: Point<Pixels>, cx: &mut Context<Self>) {
+        self.update_scroll_offset(Some(offset), cx);
     }
 
     /// Insert text at the current cursor position.
@@ -843,6 +858,10 @@ impl InputState {
             self.text_wrapper.set_wrap_width(None, cx);
         }
         cx.notify();
+    }
+
+    pub fn soft_wrap_enabled(&self) -> bool {
+        self.soft_wrap
     }
 
     /// Set the regular expression pattern of the input field.
@@ -1072,7 +1091,9 @@ impl InputState {
                     last_layout.wrap_width
                 };
 
-                self.text_wrapper.set_wrap_width(wrap_width, cx);
+                if self.text_wrapper.set_wrap_width(wrap_width, cx) {
+                    self.line_cache.borrow_mut().clear();
+                }
                 self.mode.update_auto_grow(&self.text_wrapper);
                 cx.notify();
             }

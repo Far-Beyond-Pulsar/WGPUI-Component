@@ -14,8 +14,8 @@ doctest = false
 [features]
 default = []
 
-# Complete upstream component surface. This is opt-in while the compatibility
-# layer is finalized; enabling it exposes every imported upstream component.
+# Complete upstream component surface. Keep these feature names stable because
+# engine crates select them even when the compatibility widgets are not used.
 upstream-components = ["dep:wgpui-base"]
 chat-components = ["dep:wgpui-base"]
 
@@ -45,7 +45,7 @@ flamegraph = ["gpui-ce/flamegraph", "dep:wgpu", "dep:bytemuck"]
 
 [dependencies]
 gpui-ce.workspace = true
-wgpui-base = { workspace = true, optional = true }
+wgpui-base = { path = "../../../wgpui-base", optional = true, features = ["editor-core"] }
 ui-macros = { path = "../ui-macros" }
 
 anyhow = "1"

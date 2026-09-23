@@ -154,7 +154,11 @@ impl InputState {
         self.diagnostic_popover = None;
     }
 
-    fn update_scroll_offset(&mut self, offset: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+    pub(crate) fn update_scroll_offset(
+        &mut self,
+        offset: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
         let mut offset = offset.unwrap_or(self.scroll_handle.offset());
 
         let safe_y_range =
@@ -186,14 +190,18 @@ impl InputState {
         let point = self.text.offset_to_point(offset);
         let row = point.row;
 
-        let mut row_offset_y = px(0.);
-        for (ix, wrap_line) in self.text_wrapper.lines.iter().enumerate() {
-            if ix == row {
-                break;
-            }
-
-            row_offset_y += wrap_line.height(line_height);
-        }
+        // Unwrapped documents have a constant-height display map. Keep cursor
+        // reveal O(1) so navigation in a large file never walks from line 0.
+        let row_offset_y = if !self.soft_wrap {
+            row as f32 * line_height
+        } else {
+            self.text_wrapper
+                .lines
+                .iter()
+                .take(row)
+                .map(|line| line.height(line_height))
+                .fold(Pixels::ZERO, |offset, height| offset + height)
+        };
 
         if let Some(line) = last_layout
             .lines

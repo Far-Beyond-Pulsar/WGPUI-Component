@@ -25,7 +25,7 @@ mod virtual_editor_utils;
 pub(crate) use clear_button::*;
 pub use cursor::*;
 pub use editor_scrollbar::{EditorScrollbar, EditorScrollbarDrag, EditorScrollbarState};
-pub use line_cache::{CachedLineLayout, OptimizedLineCache};
+pub use line_cache::{CacheStats, CachedLineLayout, OptimizedLineCache};
 pub use lsp::*;
 pub use mask_pattern::MaskPattern;
 #[cfg(not(target_family = "wasm"))]

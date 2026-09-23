@@ -3,9 +3,9 @@
 //! This module provides an LRU cache for shaped text lines to avoid redundant
 //! layout calculations during scrolling.
 
-use gpui::{Pixels, ShapedLine, Size};
+use gpui::{Pixels, ShapedLine, SharedString, Size, TextRun};
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
 /// A single cached line with layout information.
 #[derive(Clone)]
@@ -21,6 +21,18 @@ pub struct CachedLineLayout {
 
     /// The line number this cache entry is for.
     pub line_number: usize,
+
+    /// Source text used to shape this line.
+    pub source_text: SharedString,
+
+    /// Styling runs used to shape this line.
+    pub runs: Vec<TextRun>,
+
+    /// Soft-wrap ranges used to split the source line.
+    pub wrapped_ranges: Vec<Range<usize>>,
+
+    /// Font size used by the text shaper.
+    pub font_size: Pixels,
 }
 
 /// LRU cache for shaped lines to avoid redundant layout calculations.
@@ -122,6 +134,40 @@ impl OptimizedLineCache {
         self.stats.hits += 1;
 
         // Return the cached line
+        self.cache.get(&line_number)
+    }
+
+    /// Gets a cached line only when every shaping input still matches.
+    ///
+    /// Line number alone is not a valid cache key: edits can shift lines, a
+    /// theme change can replace syntax colours, and resizing can change wrap
+    /// boundaries without changing the document. Keeping those inputs on the
+    /// entry makes cache reuse safe across all three cases.
+    pub fn get_matching(
+        &mut self,
+        line_number: usize,
+        source_text: &str,
+        runs: &[TextRun],
+        wrapped_ranges: &[Range<usize>],
+        font_size: Pixels,
+    ) -> Option<&CachedLineLayout> {
+        let matches = self.cache.get(&line_number).is_some_and(|cached| {
+            cached.version == self.version
+                && cached.source_text.as_ref() == source_text
+                && cached.runs == runs
+                && cached.wrapped_ranges == wrapped_ranges
+                && cached.font_size == font_size
+        });
+
+        if !matches {
+            self.cache.remove(&line_number);
+            self.remove_from_access_order(line_number);
+            self.stats.misses += 1;
+            return None;
+        }
+
+        self.update_access_order(line_number);
+        self.stats.hits += 1;
         self.cache.get(&line_number)
     }
 
@@ -259,6 +305,10 @@ mod tests {
             size: size(px(100.0), px(20.0)),
             version: 0,
             line_number,
+            source_text: SharedString::default(),
+            runs: Vec::new(),
+            wrapped_ranges: Vec::new(),
+            font_size: px(14.0),
         }
     }
 
@@ -363,6 +413,21 @@ mod tests {
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 2);
         assert_eq!(stats.hit_rate(), 0.5);
+    }
+
+    #[test]
+    fn test_matching_cache_rejects_stale_shaping_inputs() {
+        let mut cache = OptimizedLineCache::new(4);
+        let mut line = create_test_line(7);
+        line.source_text = "let value = 1;".into();
+        cache.insert(line);
+
+        assert!(cache
+            .get_matching(7, "let value = 1;", &[], &[], px(14.0))
+            .is_some());
+        assert!(cache
+            .get_matching(7, "let value = 2;", &[], &[], px(14.0))
+            .is_none());
     }
 
     #[test]

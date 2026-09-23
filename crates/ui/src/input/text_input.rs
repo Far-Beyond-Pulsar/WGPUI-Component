@@ -14,7 +14,7 @@ use crate::{h_flex, StyledExt};
 use crate::{v_flex, ActiveTheme};
 use crate::{IconName, Size};
 use crate::{Sizable, StyleSized};
-use std::cmp::{max, min};
+use std::cmp::min;
 
 use super::InputState;
 
@@ -278,27 +278,14 @@ impl TextInput {
         base_scroll_size: &gpui::Size<Pixels>,
         left_offset: Pixels,
         right_padding: Pixels,
-        last_layout: &super::LastLayout,
+        _last_layout: &super::LastLayout,
     ) -> gpui::Size<Pixels> {
-        // Use last layout information to avoid recalculating the entire scroll size
-        // when only a small portion is visible
-        let visible_height_ratio = if last_layout.visible_range.len() > 0 {
-            let total_lines = last_layout.visible_range.end;
-            let visible_lines = last_layout.visible_range.len();
-            (visible_lines as f32 / max(total_lines, 1) as f32).min(1.0)
-        } else {
-            1.0
-        };
-
         gpui::Size {
             width: base_scroll_size.width - left_offset + right_padding + RIGHT_MARGIN,
-            height: if visible_height_ratio < 0.1 {
-                // For very large documents, estimate height more efficiently
-                base_scroll_size.height * 0.1
-                    + (base_scroll_size.height * 0.9 * visible_height_ratio)
-            } else {
-                base_scroll_size.height
-            },
+            // Virtualization changes what is painted, never the document's
+            // scroll extent. Scaling this by the visible range made the thumb
+            // and wheel clamp jump as the viewport moved through large files.
+            height: base_scroll_size.height,
         }
     }
 
@@ -338,7 +325,9 @@ impl RenderOnce for TextInput {
         let font_size = window.text_style().font_size.to_pixels(window.rem_size());
 
         self.state.update(cx, |state, cx| {
-            state.text_wrapper.set_font(font, font_size, cx);
+            if state.text_wrapper.set_font(font, font_size, cx) {
+                state.line_cache.borrow_mut().clear();
+            }
             state.disabled = self.disabled;
         });
 
