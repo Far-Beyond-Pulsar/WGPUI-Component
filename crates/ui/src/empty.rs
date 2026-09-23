@@ -1,9 +1,9 @@
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, RenderOnce, StyleRefinement, Styled, Window, div,
-    prelude::FluentBuilder as _, relative, rems,
+    div, prelude::FluentBuilder as _, relative, rems, AnyElement, App, IntoElement, ParentElement,
+    RenderOnce, StyleRefinement, Styled, Window,
 };
 
-use crate::{ActiveTheme as _, StyledExt as _, v_flex};
+use crate::{v_flex, ActiveTheme as _, StyledExt as _};
 
 /// A presentational empty state with independently styled header and content slots.
 ///
@@ -376,10 +376,10 @@ impl RenderOnce for EmptyContent {
 mod tests {
     use super::*;
     use crate::{
-        Sizable as _,
         avatar::{Avatar, AvatarGroup},
+        Sizable as _,
     };
-    use gpui::{Context, InteractiveElement as _, Render, TestAppContext, px};
+    use gpui::{px, Context, InteractiveElement as _, Render, TestAppContext};
 
     struct MediaLayout {
         grouped: bool,
@@ -436,7 +436,7 @@ mod tests {
                 for rem in [14., 20.] {
                     cx.update(|window, cx| {
                         window.set_rem_size(px(rem));
-                        window.draw(cx).clear(cx);
+                        window.draw(cx).clear();
                     });
                     let media = cx.debug_bounds("media-content").unwrap();
                     let title = cx.debug_bounds("title").unwrap();
@@ -462,68 +462,71 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_empty_builder() {
-        let root_style = StyleRefinement::default().p_4().border_1();
-        let header_style = StyleRefinement::default().items_start();
-        let media_style = StyleRefinement::default().size_10();
-        let title_style = StyleRefinement::default().text_base();
-        let description_style = StyleRefinement::default().text_left();
-        let content_style = StyleRefinement::default().flex_row().flex_wrap().gap_2();
+    #[gpui::test]
+    fn test_empty_builder(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let _arena_scope = gpui::ElementArenaScope::enter(cx.element_arena());
+            let root_style = StyleRefinement::default().p_4().border_1();
+            let header_style = StyleRefinement::default().items_start();
+            let media_style = StyleRefinement::default().size_10();
+            let title_style = StyleRefinement::default().text_base();
+            let description_style = StyleRefinement::default().text_left();
+            let content_style = StyleRefinement::default().flex_row().flex_wrap().gap_2();
 
-        let empty = Empty::new()
-            .refine_style(&root_style)
-            .child("Before the named setters, still after the slots")
-            .header(EmptyHeader::new().media(EmptyMedia::new()))
-            .content(EmptyContent::new().child("Replaced content"))
-            .header(
-                EmptyHeader::new()
-                    .refine_style(&header_style)
-                    .title(EmptyTitle::new().child("Replaced title"))
-                    .description(EmptyDescription::new().child("Replaced description"))
-                    .media(EmptyMedia::new().child("Replaced media"))
-                    .description(
-                        EmptyDescription::new()
-                            .refine_style(&description_style)
-                            .children(["Description", "Custom content"]),
-                    )
-                    .title(EmptyTitle::new().refine_style(&title_style).child("Title"))
-                    .media(
-                        EmptyMedia::new()
-                            .with_variant(EmptyMediaVariant::Icon)
-                            .refine_style(&media_style)
-                            .child(crate::Icon::new(crate::IconName::Search)),
-                    ),
-            )
-            .content(
-                EmptyContent::new()
-                    .refine_style(&content_style)
-                    .children(["First action", "Second action"]),
-            )
-            .child("Trailing content");
+            let empty = Empty::new()
+                .refine_style(&root_style)
+                .child("Before the named setters, still after the slots")
+                .header(EmptyHeader::new().media(EmptyMedia::new()))
+                .content(EmptyContent::new().child("Replaced content"))
+                .header(
+                    EmptyHeader::new()
+                        .refine_style(&header_style)
+                        .title(EmptyTitle::new().child("Replaced title"))
+                        .description(EmptyDescription::new().child("Replaced description"))
+                        .media(EmptyMedia::new().child("Replaced media"))
+                        .description(
+                            EmptyDescription::new()
+                                .refine_style(&description_style)
+                                .children(["Description", "Custom content"]),
+                        )
+                        .title(EmptyTitle::new().refine_style(&title_style).child("Title"))
+                        .media(
+                            EmptyMedia::new()
+                                .with_variant(EmptyMediaVariant::Icon)
+                                .refine_style(&media_style)
+                                .child(crate::Icon::new(crate::IconName::Search)),
+                        ),
+                )
+                .content(
+                    EmptyContent::new()
+                        .refine_style(&content_style)
+                        .children(["First action", "Second action"]),
+                )
+                .child("Trailing content");
 
-        assert_eq!(empty.style, root_style);
-        assert_eq!(empty.children.len(), 2);
-        let header = empty.header.unwrap();
-        assert_eq!(header.style, header_style);
-        let media = header.media.unwrap();
-        assert_eq!(media.variant, EmptyMediaVariant::Icon);
-        assert_eq!(media.style, media_style);
-        assert_eq!(media.children.len(), 1);
-        let title = header.title.unwrap();
-        assert_eq!(title.style, title_style);
-        assert_eq!(title.children.len(), 1);
-        let description = header.description.unwrap();
-        assert_eq!(description.style, description_style);
-        assert_eq!(description.children.len(), 2);
-        let content = empty.content.unwrap();
-        assert_eq!(content.style, content_style);
-        assert_eq!(content.children.len(), 2);
+            assert_eq!(empty.style, root_style);
+            assert_eq!(empty.children.len(), 2);
+            let header = empty.header.unwrap();
+            assert_eq!(header.style, header_style);
+            let media = header.media.unwrap();
+            assert_eq!(media.variant, EmptyMediaVariant::Icon);
+            assert_eq!(media.style, media_style);
+            assert_eq!(media.children.len(), 1);
+            let title = header.title.unwrap();
+            assert_eq!(title.style, title_style);
+            assert_eq!(title.children.len(), 1);
+            let description = header.description.unwrap();
+            assert_eq!(description.style, description_style);
+            assert_eq!(description.children.len(), 2);
+            let content = empty.content.unwrap();
+            assert_eq!(content.style, content_style);
+            assert_eq!(content.children.len(), 2);
 
-        let empty = Empty::default();
-        assert!(empty.header.is_none());
-        assert!(empty.content.is_none());
-        assert!(empty.children.is_empty());
-        assert_eq!(EmptyMedia::default().variant, EmptyMediaVariant::Default);
+            let empty = Empty::default();
+            assert!(empty.header.is_none());
+            assert!(empty.content.is_none());
+            assert!(empty.children.is_empty());
+            assert_eq!(EmptyMedia::default().variant, EmptyMediaVariant::Default);
+        });
     }
 }
