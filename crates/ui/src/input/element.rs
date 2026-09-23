@@ -91,6 +91,12 @@ impl TextElement {
         let lines = &last_layout.lines;
         let text_wrapper = &state.text_wrapper;
         let line_number_width = last_layout.line_number_width;
+        let native_editor_scroll = state.uses_native_editor_scroll();
+        let viewport_bounds = if native_editor_scroll {
+            state.scroll_handle.bounds()
+        } else {
+            *bounds
+        };
 
         let mut selected_range = state.selected_range;
         if let Some(ime_marked_range) = &state.ime_marked_range {
@@ -117,65 +123,90 @@ impl TextElement {
         let mut cursor_start = None;
         let mut cursor_end = None;
 
-        let mut prev_lines_offset = 0;
-        let mut offset_y = px(0.);
-        for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
-            let row = ix;
-            let line_origin = point(px(0.), offset_y);
+        // The normal code-editor path has no soft wrapping. Resolve cursor and
+        // selection positions directly from the rope's line index instead of
+        // walking every document line on every prepaint. The old loop made a
+        // scroll frame O(document-size), which is exactly the opposite of a
+        // virtualized editor.
+        if !state.soft_wrap {
+            let resolve = |offset: usize| {
+                let offset = offset.min(state.text.len());
+                let row = state.text.offset_to_point(offset).row;
+                let local_offset = offset.saturating_sub(state.text.line_start_offset(row));
+                let line = lines.get(row.saturating_sub(visible_range.start));
+                let x = line
+                    .and_then(|line| line.position_for_index(local_offset, line_height))
+                    .map(|position| position.x)
+                    .unwrap_or(px(0.));
+                point(x, line_height * row as f32)
+            };
 
-            // break loop if all cursor positions are found
-            if cursor_pos.is_some() && cursor_start.is_some() && cursor_end.is_some() {
-                break;
-            }
+            let cursor_point = resolve(cursor);
+            current_row = Some(state.text.offset_to_point(cursor.min(state.text.len())).row);
+            cursor_pos = Some(cursor_point);
+            cursor_start = Some(resolve(selected_range.start));
+            cursor_end = Some(resolve(selected_range.end));
+        } else {
+            let mut prev_lines_offset = 0;
+            let mut offset_y = px(0.);
+            for (ix, wrap_line) in text_wrapper.lines.iter().enumerate() {
+                let row = ix;
+                let line_origin = point(px(0.), offset_y);
 
-            let in_visible_range = ix >= visible_range.start;
-            if let Some(line) = in_visible_range
-                .then(|| lines.get(ix.saturating_sub(visible_range.start)))
-                .flatten()
-            {
-                // If in visible range lines
-                if cursor_pos.is_none() {
-                    let offset = cursor.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
+                // break loop if all cursor positions are found
+                if cursor_pos.is_some() && cursor_start.is_some() && cursor_end.is_some() {
+                    break;
+                }
+
+                let in_visible_range = ix >= visible_range.start;
+                if let Some(line) = in_visible_range
+                    .then(|| lines.get(ix.saturating_sub(visible_range.start)))
+                    .flatten()
+                {
+                    // If in visible range lines
+                    if cursor_pos.is_none() {
+                        let offset = cursor.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            current_row = Some(row);
+                            cursor_pos = Some(line_origin + pos);
+                        }
+                    }
+                    if cursor_start.is_none() {
+                        let offset = selected_range.start.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            cursor_start = Some(line_origin + pos);
+                        }
+                    }
+                    if cursor_end.is_none() {
+                        let offset = selected_range.end.saturating_sub(prev_lines_offset);
+                        if let Some(pos) = line.position_for_index(offset, line_height) {
+                            cursor_end = Some(line_origin + pos);
+                        }
+                    }
+
+                    offset_y += line.size(line_height).height;
+                    // +1 for the last `\n`
+                    prev_lines_offset += line.len() + 1;
+                } else {
+                    // If not in the visible range.
+
+                    // Just increase the offset_y and prev_lines_offset.
+                    // This will let the scroll_offset to track the cursor position correctly.
+                    if prev_lines_offset >= cursor && cursor_pos.is_none() {
                         current_row = Some(row);
-                        cursor_pos = Some(line_origin + pos);
+                        cursor_pos = Some(line_origin);
                     }
-                }
-                if cursor_start.is_none() {
-                    let offset = selected_range.start.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
-                        cursor_start = Some(line_origin + pos);
+                    if prev_lines_offset >= selected_range.start && cursor_start.is_none() {
+                        cursor_start = Some(line_origin);
                     }
-                }
-                if cursor_end.is_none() {
-                    let offset = selected_range.end.saturating_sub(prev_lines_offset);
-                    if let Some(pos) = line.position_for_index(offset, line_height) {
-                        cursor_end = Some(line_origin + pos);
+                    if prev_lines_offset >= selected_range.end && cursor_end.is_none() {
+                        cursor_end = Some(line_origin);
                     }
-                }
 
-                offset_y += line.size(line_height).height;
-                // +1 for the last `\n`
-                prev_lines_offset += line.len() + 1;
-            } else {
-                // If not in the visible range.
-
-                // Just increase the offset_y and prev_lines_offset.
-                // This will let the scroll_offset to track the cursor position correctly.
-                if prev_lines_offset >= cursor && cursor_pos.is_none() {
-                    current_row = Some(row);
-                    cursor_pos = Some(line_origin);
+                    offset_y += wrap_line.height(line_height);
+                    // +1 for the last `\n`
+                    prev_lines_offset += wrap_line.len() + 1;
                 }
-                if prev_lines_offset >= selected_range.start && cursor_start.is_none() {
-                    cursor_start = Some(line_origin);
-                }
-                if prev_lines_offset >= selected_range.end && cursor_end.is_none() {
-                    cursor_end = Some(line_origin);
-                }
-
-                offset_y += wrap_line.height(line_height);
-                // +1 for the last `\n`
-                prev_lines_offset += wrap_line.len() + 1;
             }
         }
 
@@ -185,10 +216,10 @@ impl TextElement {
             let selection_changed = state.last_selected_range != Some(selected_range);
             if selection_changed && !is_selected_all {
                 scroll_offset.x = if scroll_offset.x + cursor_pos.x
-                    > (bounds.size.width - line_number_width - RIGHT_MARGIN)
+                    > (viewport_bounds.size.width - line_number_width - RIGHT_MARGIN)
                 {
                     // cursor is out of right
-                    bounds.size.width - line_number_width - RIGHT_MARGIN - cursor_pos.x
+                    viewport_bounds.size.width - line_number_width - RIGHT_MARGIN - cursor_pos.x
                 } else if scroll_offset.x + cursor_pos.x < px(0.) {
                     // cursor is out of left
                     scroll_offset.x - cursor_pos.x
@@ -198,16 +229,17 @@ impl TextElement {
 
                 // If we change the scroll_offset.y, GPUI will render and trigger the next run loop.
                 // So, here we just adjust offset by `line_height` for move smooth.
-                scroll_offset.y =
-                    if scroll_offset.y + cursor_pos.y > bounds.size.height - top_bottom_margin {
-                        // cursor is out of bottom
-                        scroll_offset.y - line_height
-                    } else if scroll_offset.y + cursor_pos.y < top_bottom_margin {
-                        // cursor is out of top
-                        (scroll_offset.y + line_height).min(px(0.))
-                    } else {
-                        scroll_offset.y
-                    };
+                scroll_offset.y = if scroll_offset.y + cursor_pos.y
+                    > viewport_bounds.size.height - top_bottom_margin
+                {
+                    // cursor is out of bottom
+                    scroll_offset.y - line_height
+                } else if scroll_offset.y + cursor_pos.y < top_bottom_margin {
+                    // cursor is out of top
+                    (scroll_offset.y + line_height).min(px(0.))
+                } else {
+                    scroll_offset.y
+                };
 
                 if state.selection_reversed {
                     if scroll_offset.x + cursor_start.x < px(0.) {
@@ -232,9 +264,14 @@ impl TextElement {
 
             // cursor bounds
             let cursor_height = line_height;
+            let cursor_scroll_x = if native_editor_scroll {
+                px(0.)
+            } else {
+                scroll_offset.x
+            };
             cursor_bounds = Some(Bounds::new(
                 point(
-                    bounds.left() + cursor_pos.x + line_number_width + scroll_offset.x,
+                    bounds.left() + cursor_pos.x + line_number_width + cursor_scroll_x,
                     bounds.top() + cursor_pos.y + ((line_height - cursor_height) / 2.),
                 ),
                 size(CURSOR_WIDTH, cursor_height),
@@ -245,7 +282,12 @@ impl TextElement {
             scroll_offset = deferred_scroll_offset;
         }
 
-        bounds.origin = bounds.origin + scroll_offset;
+        // Native scrolling is the transform applied by the parent scroll
+        // container. Applying it here as well would move the text twice and,
+        // more importantly, force every row to be re-recorded per wheel tick.
+        if !native_editor_scroll {
+            bounds.origin = bounds.origin + scroll_offset;
+        }
 
         (cursor_bounds, scroll_offset, current_row)
     }
@@ -896,7 +938,22 @@ impl Element for TextElement {
 
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        if state.mode.is_multi_line() {
+        if state.uses_native_editor_scroll() {
+            // The parent is the real scroll container. Give it the document
+            // extent while this element remains virtual in prepaint: only the
+            // viewport plus the retained-layer overdraw margin is shaped.
+            let rows = state.text_wrapper.len().max(1);
+            style.size.height =
+                (line_height * rows as f32 + BOTTOM_MARGIN_ROWS * line_height).into();
+            style.min_size.height = line_height.into();
+            // Preserve a true horizontal scroll extent. The first frame has
+            // no measured longest line yet, so retain the parent-relative
+            // width until prepaint publishes a concrete document width.
+            if state.scroll_size.width > px(0.) {
+                style.size.width = state.scroll_size.width.into();
+                style.min_size.width = relative(1.).into();
+            }
+        } else if state.mode.is_multi_line() {
             style.flex_grow = 1.0;
             style.size.height = relative(1.).into();
             if state.mode.is_auto_grow() {
@@ -925,9 +982,19 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let state = self.state.read(cx);
         let line_height = window.line_height();
+        let native_editor_scroll = state.uses_native_editor_scroll();
+        // In native-scroll mode `bounds` is the virtual document child (and
+        // can be thousands of pixels tall). The handle belongs to its parent
+        // scroll viewport, which is the only height that must participate in
+        // visible-range selection.
+        let viewport_bounds = if native_editor_scroll {
+            state.scroll_handle.bounds()
+        } else {
+            bounds
+        };
 
         let (visible_range, visible_top) =
-            self.calculate_visible_range(&state, line_height, bounds.size.height);
+            self.calculate_visible_range(&state, line_height, viewport_bounds.size.height);
         let visible_start_offset = state.text.line_start_offset(visible_range.start);
         let visible_end_offset = state
             .text
@@ -1233,6 +1300,14 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let input_bounds = {
+            let state = self.state.read(cx);
+            if state.uses_native_editor_scroll() {
+                state.scroll_handle.bounds()
+            } else {
+                input_bounds
+            }
+        };
         let focus_handle = self.state.read(cx).focus_handle.clone();
         let show_cursor = self.state.read(cx).show_cursor(window, cx);
         let focused = focus_handle.is_focused(window);
