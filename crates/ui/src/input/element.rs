@@ -765,7 +765,6 @@ impl TextElement {
         cx: &mut App,
     ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
         let state = self.state.read(cx);
-        let text = &state.text;
 
         let (highlighter, diagnostics) = match &state.mode {
             InputMode::CodeEditor {
@@ -792,23 +791,12 @@ impl TextElement {
             return Some(styles);
         }
 
-        let mut offset = visible_byte_range.start;
-        let mut styles = vec![];
-
-        // Optimize: Use iterator instead of collecting into vec first
-        for line in text
-            .iter_lines()
-            .skip(visible_range.start)
-            .take(visible_range.len())
-        {
-            // +1 for `\n`
-            let line_len = line.len() + 1;
-            let range = offset..offset + line_len;
-            let line_styles = highlighter.styles(&range, &cx.theme().highlight_theme);
-            styles = gpui::combine_highlights(styles, line_styles).collect();
-
-            offset = range.end;
-        }
+        // Query the syntax tree once for the complete visible byte range.
+        // The previous implementation queried and merged once per line, which
+        // repeatedly reallocated and re-sorted the accumulated highlight list
+        // during every scroll frame. That made syntax-coloured files much more
+        // expensive to scroll than plain text.
+        let mut styles = highlighter.styles(&visible_byte_range, &cx.theme().highlight_theme);
 
         let diagnostic_styles = diagnostics.styles_for_range(&visible_byte_range, cx);
 
