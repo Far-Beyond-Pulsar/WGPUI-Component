@@ -16,7 +16,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        repository: Far-Beyond-Pulsar/Pulsar-Native
+        ref: 5841880a3a2a371ec4975d601c72188835b48849
+        submodules: recursive
+        path: pulsar
+    - uses: actions/checkout@v4
+      with:
+        path: pulsar/crates/ui/wgpui-component
     - name: Build
-      run: cargo build --verbose
+      run: cargo build -p ui --verbose
+      working-directory: pulsar
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test -p ui --verbose
+      working-directory: pulsar
