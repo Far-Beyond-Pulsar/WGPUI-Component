@@ -367,6 +367,12 @@ pub struct InputState {
 
     /// Line highlights for diff views (one per line)
     pub(in crate::input) line_highlights: Vec<LineHighlight>,
+    /// Changes only when the pixels representing the document can change.
+    ///
+    /// The code-editor viewport deliberately does *not* advance this for a
+    /// scroll.  Its retained texture is shifted by the compositor for scroll
+    /// frames and is rebuilt only for document/style changes.
+    pub(in crate::input) render_revision: u64,
 }
 
 impl EventEmitter<InputEvent> for InputState {}
@@ -482,6 +488,7 @@ impl InputState {
             _subscriptions,
             _context_menu_task: Task::ready(Ok(())),
             line_highlights: Vec::new(),
+            render_revision: 0,
         }
     }
 
@@ -646,6 +653,7 @@ impl InputState {
             }
             _ => {}
         }
+        self.render_revision = self.render_revision.wrapping_add(1);
         cx.notify();
     }
 
@@ -657,6 +665,7 @@ impl InputState {
             }
             _ => {}
         }
+        self.render_revision = self.render_revision.wrapping_add(1);
         cx.notify();
     }
 
@@ -684,6 +693,22 @@ impl InputState {
     /// Set line highlights for diff views
     pub fn set_line_highlights(&mut self, highlights: Vec<LineHighlight>) {
         self.line_highlights = highlights;
+        self.render_revision = self.render_revision.wrapping_add(1);
+    }
+
+    /// Stable revision used by the compositor-backed code-editor surface.
+    #[inline]
+    pub(in crate::input) fn render_revision(&self) -> u64 {
+        self.render_revision
+    }
+
+    /// Code editor documents with a one-row-per-buffer-line display map can
+    /// use GPUI's native scrolling and texture buffer. Wrapped documents keep
+    /// the legacy path until the display-map migration covers variable-height
+    /// rows as well.
+    #[inline]
+    pub(in crate::input) fn uses_native_editor_scroll(&self) -> bool {
+        self.mode.is_code_editor() && !self.soft_wrap
     }
 
     /// Set the text of the input field.
@@ -857,6 +882,7 @@ impl InputState {
         } else {
             self.text_wrapper.set_wrap_width(None, cx);
         }
+        self.render_revision = self.render_revision.wrapping_add(1);
         cx.notify();
     }
 
@@ -1119,12 +1145,21 @@ impl Render for InputState {
         self.mode
             .update_highlighter(&(0..0), &self.text, "", false, cx);
 
+        let native_editor_scroll = self.uses_native_editor_scroll();
+
         div()
             .id("input-state")
-            .flex_1()
-            .when(self.mode.is_multi_line(), |this| this.h_full())
-            .flex_grow()
-            .overflow_x_hidden()
+            // A retained editor surface is a document-sized child of a real
+            // scroll viewport.  It must not flex back to the viewport's
+            // height, otherwise the scroll container has no extent and the
+            // compositor cannot shift its texture.
+            .when(!native_editor_scroll, |this| {
+                this.flex_1()
+                    .when(self.mode.is_multi_line(), |this| this.h_full())
+                    .flex_grow()
+            })
+            .when(native_editor_scroll, |this| this.h_auto())
+            .when(!native_editor_scroll, |this| this.overflow_x_hidden())
             .child(TextElement::new(cx.entity().clone()).placeholder(self.placeholder.clone()))
             .children(self.diagnostic_popover.clone())
             .children(self.context_menu.as_ref().map(|menu| menu.render()))

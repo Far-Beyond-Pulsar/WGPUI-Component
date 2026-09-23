@@ -16,7 +16,7 @@ pub struct CachedLineLayout {
     /// Total size of the line (including wrapping).
     pub size: Size<Pixels>,
 
-    /// Version number for cache invalidation.
+    /// Revision of the line's shaping inputs.
     pub version: u64,
 
     /// The line number this cache entry is for.
@@ -35,20 +35,17 @@ pub struct CachedLineLayout {
     pub font_size: Pixels,
 }
 
-/// LRU cache for shaped lines to avoid redundant layout calculations.
+/// Bounded cache for shaped lines to avoid redundant layout calculations.
 ///
 /// This cache stores shaped text lines and automatically evicts the least
-/// recently used entries when the cache is full. It uses version numbers
-/// for efficient invalidation when the document changes.
+/// recently used entries when the cache is full. Invalidations remove only
+/// the affected rows so scrolling and small edits preserve unrelated rows.
 pub struct OptimizedLineCache {
     /// Cached lines indexed by line number.
     cache: HashMap<usize, CachedLineLayout>,
 
-    /// Access order for LRU eviction (most recent at end).
+    /// Insertion/access order used to evict old viewport rows first.
     access_order: Vec<usize>,
-
-    /// Current document version for cache invalidation.
-    version: u64,
 
     /// Maximum number of cached lines.
     max_size: usize,
@@ -84,7 +81,6 @@ impl OptimizedLineCache {
         Self {
             cache: HashMap::with_capacity(max_size),
             access_order: Vec::with_capacity(max_size),
-            version: 0,
             max_size,
             stats: CacheStats::default(),
         }
@@ -104,33 +100,17 @@ impl OptimizedLineCache {
         Self::new(cache_size)
     }
 
-    /// Gets a cached line if available and valid.
+    /// Gets a cached line if available.
     ///
-    /// Returns Some if the line is in cache and has the current version.
-    /// Updates the access order for LRU tracking.
+    /// Hits do not reshuffle the backing `Vec`: doing so for every visible
+    /// row makes scrolling O(visible²). Sequential inserts still evict old
+    /// viewport rows first.
     pub fn get(&mut self, line_number: usize) -> Option<&CachedLineLayout> {
-        // Check if exists and version matches
-        let (exists, version_match) = if let Some(cached) = self.cache.get(&line_number) {
-            (true, cached.version == self.version)
-        } else {
-            (false, false)
-        };
-
-        if !exists {
+        if !self.cache.contains_key(&line_number) {
             self.stats.misses += 1;
             return None;
         }
 
-        if !version_match {
-            // Stale entry, remove it
-            self.cache.remove(&line_number);
-            self.remove_from_access_order(line_number);
-            self.stats.misses += 1;
-            return None;
-        }
-
-        // Update access order (move to end as most recently used)
-        self.update_access_order(line_number);
         self.stats.hits += 1;
 
         // Return the cached line
@@ -152,8 +132,7 @@ impl OptimizedLineCache {
         font_size: Pixels,
     ) -> Option<&CachedLineLayout> {
         let matches = self.cache.get(&line_number).is_some_and(|cached| {
-            cached.version == self.version
-                && cached.source_text.as_ref() == source_text
+            cached.source_text.as_ref() == source_text
                 && cached.runs == runs
                 && cached.wrapped_ranges == wrapped_ranges
                 && cached.font_size == font_size
@@ -166,16 +145,14 @@ impl OptimizedLineCache {
             return None;
         }
 
-        self.update_access_order(line_number);
         self.stats.hits += 1;
         self.cache.get(&line_number)
     }
 
     /// Inserts a line into the cache.
     ///
-    /// If the cache is full, evicts the least recently used entry.
-    pub fn insert(&mut self, mut line: CachedLineLayout) {
-        line.version = self.version;
+    /// If the cache is full, evicts the oldest retained row.
+    pub fn insert(&mut self, line: CachedLineLayout) {
         let line_number = line.line_number;
 
         // If already at capacity and this is a new line, evict oldest
@@ -206,7 +183,6 @@ impl OptimizedLineCache {
         }
 
         if invalidated > 0 {
-            self.version += 1;
             self.stats.invalidations += 1;
         }
     }
@@ -230,7 +206,6 @@ impl OptimizedLineCache {
         }
 
         if removed_count > 0 {
-            self.version += 1;
             self.stats.invalidations += 1;
         }
     }
@@ -239,7 +214,6 @@ impl OptimizedLineCache {
     pub fn clear(&mut self) {
         self.cache.clear();
         self.access_order.clear();
-        self.version += 1;
         self.stats.invalidations += 1;
     }
 
@@ -269,14 +243,6 @@ impl OptimizedLineCache {
             self.cache.remove(&oldest);
             self.access_order.remove(0);
             self.stats.evictions += 1;
-        }
-    }
-
-    /// Updates the access order by moving the line to the end (most recent).
-    fn update_access_order(&mut self, line_number: usize) {
-        if let Some(pos) = self.access_order.iter().position(|&n| n == line_number) {
-            self.access_order.remove(pos);
-            self.access_order.push(line_number);
         }
     }
 
@@ -334,10 +300,11 @@ mod tests {
 
         assert_eq!(cache.len(), 3);
 
-        // Access line 0 to make it most recent
+        // A hit does not reshuffle the order; keeping it FIFO avoids an
+        // O(visible²) Vec walk on every scroll frame.
         let _ = cache.get(0);
 
-        // Insert line 3, should evict line 1 (least recently used)
+        // Insert line 3, evicting the oldest row.
         cache.insert(create_test_line(3));
 
         assert_eq!(cache.len(), 3);
@@ -346,8 +313,8 @@ mod tests {
         let has_2 = cache.get(2).is_some();
         let has_3 = cache.get(3).is_some();
 
-        assert!(has_0);
-        assert!(!has_1); // Evicted
+        assert!(!has_0); // Evicted
+        assert!(has_1);
         assert!(has_2);
         assert!(has_3);
     }
@@ -366,14 +333,10 @@ mod tests {
         // Invalidate lines 1-3
         cache.invalidate_range(1..4);
 
-        // After invalidation, the version increments, so ALL lines with old version are stale
-        // This is correct behavior - invalidation marks a checkpoint
         let len_after = cache.len();
         assert_eq!(len_after, 2, "Should have 2 lines remaining in cache");
-
-        // Lines 0 and 4 still physically exist but will be considered stale due to version mismatch
-        // They will be removed on first access
-        // This is correct - after text modification, we need to re-validate all cached lines
+        assert!(cache.get(0).is_some());
+        assert!(cache.get(4).is_some());
     }
 
     #[test]
@@ -390,8 +353,8 @@ mod tests {
         let len_after = cache.len();
         assert_eq!(len_after, 2, "Should have 2 lines remaining");
 
-        // Lines 0 and 1 remain but with old version
-        // On next access, they'll be checked against new version
+        assert!(cache.get(0).is_some());
+        assert!(cache.get(1).is_some());
     }
 
     #[test]
@@ -431,26 +394,21 @@ mod tests {
     }
 
     #[test]
-    fn test_version_invalidation() {
+    fn test_range_invalidation() {
         let mut cache = OptimizedLineCache::new(10);
 
         let line = create_test_line(0);
         cache.insert(line);
 
-        // Should hit with matching version
         assert!(cache.get(0).is_some());
 
-        // Invalidate and increment version
         cache.invalidate_range(0..1);
 
-        // After invalidation, line should be gone
         assert!(cache.get(0).is_none());
 
-        // Re-insert with new version
         let new_line = create_test_line(0);
         cache.insert(new_line);
 
-        // Should hit with new version
         assert!(cache.get(0).is_some());
     }
 }

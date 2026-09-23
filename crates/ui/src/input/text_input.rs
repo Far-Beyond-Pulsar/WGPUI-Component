@@ -1,8 +1,8 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, relative, AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity,
-    InteractiveElement as _, IntoElement, IsZero, MouseButton, ParentElement as _, Pixels, Rems,
-    RenderOnce, StyleRefinement, Styled, Window,
+    div, px, relative, size, AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity,
+    InteractiveElement as _, IntoElement, IsZero, LayerPolicy, MouseButton, ParentElement as _,
+    Pixels, Rems, RenderOnce, StatefulInteractiveElement as _, StyleRefinement, Styled, Window,
 };
 
 use crate::button::{Button, ButtonVariants as _};
@@ -184,12 +184,43 @@ impl TextInput {
         const MIN_SCROLL_PADDING: Pixels = px(2.0);
 
         let is_code_editor = state.mode.is_code_editor();
+        let native_editor_scroll = state.uses_native_editor_scroll();
         let show_minimap = state.show_minimap && is_code_editor;
+
+        // The old editor translated each visible row itself. That made a
+        // wheel tick invalidate, prepaint and record every text primitive.
+        // For the one-row-per-line code-editor path the scroll container owns
+        // the transform instead: GPUI keeps a texture of the virtual surface
+        // and shifts it until its overdraw margin needs a refill.
+        let editor_surface: AnyElement = if native_editor_scroll {
+            div()
+                .id(("code-editor-viewport", input_state.entity_id()))
+                .relative()
+                .size_full()
+                .overflow_scroll()
+                .track_scroll(&state.scroll_handle)
+                .layer_keyed((
+                    "code-editor-document",
+                    input_state.entity_id(),
+                    state.render_revision(),
+                ))
+                .layer_with_policy(LayerPolicy {
+                    // Enough rows for a normal wheel burst; the virtual text
+                    // element still lays out only this bounded range on a
+                    // refill, never the whole document.
+                    overdraw_margin: size(px(0.), px(320.)),
+                    ..Default::default()
+                })
+                .child(input_state.clone())
+                .into_any_element()
+        } else {
+            input_state.clone().into_any_element()
+        };
 
         v_flex()
             .size_full()
             .children(state.search_panel.clone())
-            .child(div().flex_1().child(input_state.clone()).map(|this| {
+            .child(div().flex_1().child(editor_surface).map(|this| {
                 if let Some(last_layout) = state.last_layout.as_ref() {
                     let left = if last_layout.line_number_width.is_zero() {
                         px(0.)
@@ -327,11 +358,13 @@ impl RenderOnce for TextInput {
         self.state.update(cx, |state, cx| {
             if state.text_wrapper.set_font(font, font_size, cx) {
                 state.line_cache.borrow_mut().clear();
+                state.render_revision = state.render_revision.wrapping_add(1);
             }
             state.disabled = self.disabled;
         });
 
         let state = self.state.read(cx);
+        let native_editor_scroll = state.uses_native_editor_scroll();
         let focused = state.focus_handle.is_focused(window);
         let gap_x = match self.size {
             Size::Small => px(4.),
@@ -439,7 +472,12 @@ impl RenderOnce for TextInput {
                 window.listener_for(&self.state, InputState::on_mouse_up),
             )
             .on_mouse_move(window.listener_for(&self.state, InputState::on_mouse_move))
-            .on_scroll_wheel(window.listener_for(&self.state, InputState::on_scroll_wheel))
+            // The compositor-backed editor viewport owns wheel input. Keeping
+            // the legacy handler here as well would apply every delta twice
+            // and would notify the entire editor view on every tick.
+            .when(!native_editor_scroll, |this| {
+                this.on_scroll_wheel(window.listener_for(&self.state, InputState::on_scroll_wheel))
+            })
             .size_full()
             .line_height(LINE_HEIGHT)
             .input_px(self.size)

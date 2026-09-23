@@ -176,6 +176,10 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
+        // A document edit invalidates the retained editor surface. Scrolling
+        // intentionally does not touch this revision; it is a compositor
+        // translation, not a new text scene.
+        self.render_revision = self.render_revision.wrapping_add(1);
         #[cfg(not(target_family = "wasm"))]
         self.mode
             .update_highlighter(&range, &self.text, &new_text, true, cx);
@@ -230,6 +234,7 @@ impl EntityInputHandler for InputState {
         }
         self.text_wrapper
             .update(&self.text, &range, &Rope::from(new_text), cx);
+        self.render_revision = self.render_revision.wrapping_add(1);
         #[cfg(not(target_family = "wasm"))]
         self.mode
             .update_highlighter(&range, &self.text, &new_text, true, cx);
