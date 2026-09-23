@@ -480,6 +480,9 @@ mod tests {
 
     #[test]
     fn test_message_builder() {
+        let test_context = gpui::TestAppContext::single();
+        let test_app = test_context.app.borrow();
+        let _arena_scope = gpui::ElementArenaScope::enter(test_app.element_arena());
         let stack_style = StyleRefinement::default().gap_1();
         let message = Message::new()
             .alignment(MessageAlignment::End)
@@ -510,6 +513,9 @@ mod tests {
 
     #[test]
     fn test_ghost_bubble_inherits_message_slot_insets() {
+        let test_context = gpui::TestAppContext::single();
+        let test_app = test_context.app.borrow();
+        let _arena_scope = gpui::ElementArenaScope::enter(test_app.element_arena());
         let content = MessageContent::new()
             .bubble(Bubble::new())
             .bubble(Bubble::new().with_variant(crate::bubble::BubbleVariant::Ghost));

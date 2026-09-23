@@ -422,6 +422,9 @@ mod tests {
 
     #[test]
     fn test_bubble_builder() {
+        let test_context = gpui::TestAppContext::single();
+        let test_app = test_context.app.borrow();
+        let _arena_scope = gpui::ElementArenaScope::enter(test_app.element_arena());
         let bubble = Bubble::new()
             .alignment(MessageAlignment::End)
             .with_variant(BubbleVariant::Outline)
