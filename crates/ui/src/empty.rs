@@ -436,7 +436,7 @@ mod tests {
                 for rem in [14., 20.] {
                     cx.update(|window, cx| {
                         window.set_rem_size(px(rem));
-                        window.draw(cx).clear(cx);
+                        window.draw(cx).clear();
                     });
                     let media = cx.debug_bounds("media-content").unwrap();
                     let title = cx.debug_bounds("title").unwrap();

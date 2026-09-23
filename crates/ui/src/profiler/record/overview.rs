@@ -1887,6 +1887,7 @@ mod tests {
 
     fn sample_thumbnail() -> Thumbnail {
         Thumbnail {
+            timestamp_ns: 0,
             width: 1,
             height: 1,
             rgba: vec![10, 20, 30, 255],
@@ -1902,6 +1903,7 @@ mod tests {
     fn thumbnail_to_render_image_declines_a_mismatched_buffer() {
         // 1x1 RGBA8 needs exactly 4 bytes; this has 3.
         let malformed = Thumbnail {
+            timestamp_ns: 0,
             width: 1,
             height: 1,
             rgba: vec![1, 2, 3],
