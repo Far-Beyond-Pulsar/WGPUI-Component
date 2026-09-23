@@ -90,6 +90,7 @@ pub mod dropdown;
 pub mod form;
 pub mod group_box;
 pub mod hierarchical_list_view;
+pub use hierarchical_list_view::deduplicate_hierarchy_ids;
 pub mod hierarchical_tree;
 pub mod highlighter;
 pub mod history;

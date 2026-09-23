@@ -28,6 +28,17 @@ use gpui::{prelude::*, *};
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// Keeps the first occurrence of each hierarchy ID.
+pub fn deduplicate_hierarchy_ids<Id: PartialEq>(ids: impl IntoIterator<Item = Id>) -> Vec<Id> {
+    let mut unique = Vec::new();
+    for id in ids {
+        if !unique.contains(&id) {
+            unique.push(id);
+        }
+    }
+    unique
+}
+
 /// Trait for items that can be displayed in a hierarchical tree
 pub trait HierarchyItem: Clone + 'static {
     type Id: Clone + PartialEq + std::fmt::Display + 'static;
@@ -182,7 +193,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         if let Some(item) = self.config.items.get(item_index) {
             let is_expanded = (self.config.is_expanded)(&item.id());
             if is_expanded {
-                for child_id in item.children_ids() {
+                for child_id in deduplicate_hierarchy_ids(item.children_ids()) {
                     if let Some(child_idx) = self.find_item_index(&child_id) {
                         self.flatten_node(child_idx, depth + 1, entries);
                     }
