@@ -13,11 +13,12 @@ pub struct PrefabAsset {
 /// Single serialized component instance in a prefab.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComponentInstance {
-    /// Stable id of this component slot within the class. Placed instances
-    /// key their overrides and generated child objects by it, and
-    /// `get_component_ref` nodes resolve through it. Files written before
-    /// slot ids existed have none; readers assign `<Class>_<n>` (the n-th
-    /// component of that class), as `pulsar_class::PrefabAsset` does.
+    /// UUID of this component slot, unique within its class. The class's
+    /// compiled script names the component by it and levels key
+    /// per-instance overrides by it; placing the class resolves it once into
+    /// a handle to the instance's real component. Files without one get a
+    /// fresh UUID from their reader (`pulsar_class::PrefabAsset`, the
+    /// Blueprint editor), saved back once.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub slot_id: String,
     pub component_type: String,
