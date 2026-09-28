@@ -686,7 +686,6 @@ fn inspector_tab_icon(tab: InspectorTab) -> IconName {
         InspectorTab::Styles => IconName::ControlSlider,
         InspectorTab::Layout => IconName::Box,
         InspectorTab::EventListeners => IconName::Activity,
-        #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => IconName::Activity,
         InspectorTab::Utilities => IconName::Settings,
     }
