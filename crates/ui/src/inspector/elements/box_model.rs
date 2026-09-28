@@ -1,7 +1,7 @@
 use super::*;
 
-/// A schematic, not a scaled preview: labels remain readable for zero spacing
-/// and very large elements, and the diagram follows the detail pane's width.
+/// A box-model diagram with fixed visual spacing so labels remain legible even
+/// when the element has zero spacing or unusually large dimensions.
 pub(super) fn render(layout: &InspectorLayoutInfo, cx: &App) -> AnyElement {
     let content_width = (layout.bounds.size.width
         - layout.border.left
@@ -15,11 +15,12 @@ pub(super) fn render(layout: &InspectorLayoutInfo, cx: &App) -> AnyElement {
         - layout.padding.top
         - layout.padding.bottom)
         .max(px(0.));
-    let content = div()
-        .flex_1()
+    let content = h_flex()
+        .h(px(62.))
+        .w_full()
         .min_w_0()
-        .py_2()
-        .text_center()
+        .items_center()
+        .justify_center()
         .rounded_md()
         .bg(gpui::rgba(0x43658b99))
         .text_color(cx.theme().foreground)
@@ -47,11 +48,12 @@ fn layer(
     inner: AnyElement,
     cx: &App,
 ) -> AnyElement {
+    let value_color = cx.theme().muted_foreground;
     v_flex()
         .w_full()
         .min_w_0()
-        .px_1()
-        .py_1()
+        .px_3()
+        .py_2()
         .rounded_sm()
         .border_1()
         .border_color(cx.theme().border)
@@ -66,7 +68,7 @@ fn layer(
                     div()
                         .absolute()
                         .left_1()
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(value_color)
                         .child(label),
                 )
                 .child(format!("{:.0}", edges.top.value())),

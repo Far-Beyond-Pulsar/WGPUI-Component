@@ -673,9 +673,23 @@ fn render_inspector_tabs(
         })
         .build_tabs(tab_count, tab_labels, {
             let tabs = tabs_arc.clone();
-            move |ix, _, _| Tab::new(tabs[ix].label())
+            move |ix, _, _| {
+                Tab::new(tabs[ix].label()).with_icon(inspector_tab_icon(tabs[ix]))
+            }
         })
         .into_any_element()
+}
+
+fn inspector_tab_icon(tab: InspectorTab) -> IconName {
+    match tab {
+        InspectorTab::Elements => IconName::FrameSelect,
+        InspectorTab::Styles => IconName::ControlSlider,
+        InspectorTab::Layout => IconName::Box,
+        InspectorTab::EventListeners => IconName::Activity,
+        #[cfg(feature = "flamegraph")]
+        InspectorTab::Profiler => IconName::Activity,
+        InspectorTab::Utilities => IconName::Settings,
+    }
 }
 
 fn render_tab_content(
