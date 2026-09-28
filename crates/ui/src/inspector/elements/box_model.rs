@@ -3,18 +3,8 @@ use super::*;
 /// A box-model diagram with fixed visual spacing so labels remain legible even
 /// when the element has zero spacing or unusually large dimensions.
 pub(super) fn render(layout: &InspectorLayoutInfo, cx: &App) -> AnyElement {
-    let content_width = (layout.bounds.size.width
-        - layout.border.left
-        - layout.border.right
-        - layout.padding.left
-        - layout.padding.right)
-        .max(px(0.));
-    let content_height = (layout.bounds.size.height
-        - layout.border.top
-        - layout.border.bottom
-        - layout.padding.top
-        - layout.padding.bottom)
-        .max(px(0.));
+    let content_width = layout.content_size.width.max(px(0.));
+    let content_height = layout.content_size.height.max(px(0.));
     let content = h_flex()
         .h(px(62.))
         .w_full()
@@ -79,25 +69,28 @@ fn layer(
                 .min_w_0()
                 .gap_1()
                 .child(
-                    div()
-                        .w(px(22.))
-                        .flex_shrink_0()
-                        .text_center()
-                        .child(format!("{:.0}", edges.left.value())),
+                div()
+                    .w(px(22.))
+                    .flex_shrink_0()
+                    .text_center()
+                    .text_color(value_color)
+                    .child(format!("{:.0}", edges.left.value())),
                 )
                 .child(div().flex_1().min_w_0().child(inner))
                 .child(
-                    div()
-                        .w(px(22.))
-                        .flex_shrink_0()
-                        .text_center()
-                        .child(format!("{:.0}", edges.right.value())),
+                div()
+                    .w(px(22.))
+                    .flex_shrink_0()
+                    .text_center()
+                    .text_color(value_color)
+                    .child(format!("{:.0}", edges.right.value())),
                 ),
         )
         .child(
             div()
                 .h(px(20.))
                 .text_center()
+                .text_color(value_color)
                 .child(format!("{:.0}", edges.bottom.value())),
         )
         .into_any_element()
