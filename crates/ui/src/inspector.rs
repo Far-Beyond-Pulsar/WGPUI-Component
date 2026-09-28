@@ -1,7 +1,4 @@
-use std::{
-    cell::OnceCell, collections::HashMap, fmt::Write as _, ops::Range, rc::Rc, sync::Arc,
-    sync::OnceLock,
-};
+use std::{collections::HashMap, fmt::Write as _, rc::Rc, sync::Arc, sync::OnceLock};
 
 use anyhow::Result;
 use gpui::{
@@ -32,6 +29,8 @@ use crate::{
     v_flex, ActiveTheme, Disableable, IconName, Selectable, Sizable, StyledExt, TITLE_BAR_HEIGHT,
 };
 
+mod elements;
+
 actions!(inspector, [ToggleInspector]);
 
 /// Initialize the inspector and register the action to toggle it.
@@ -55,13 +54,12 @@ pub(crate) fn init(cx: &mut App) {
         });
     });
 
-    let inspector_el = OnceCell::new();
     cx.register_inspector_element(move |id, state: &DivInspectorState, window, cx| {
-        let el = inspector_el.get_or_init(|| cx.new(|cx| DivInspector::new(window, cx)));
+        let el = window.use_keyed_state("div-inspector-editor", cx, DivInspector::new);
         el.update(cx, |this, cx| {
             this.update_inspected_element(id, state.clone(), window, cx);
-            this.render(window, cx).into_any_element()
-        })
+        });
+        el.into_any_element()
     });
 
     cx.set_inspector_renderer(Box::new(render_inspector));
@@ -85,6 +83,9 @@ pub struct DivInspector {
     initial_style: StyleRefinement,
     /// Part of the initial style that could not be converted to Rust code
     unconvertible_style: StyleRefinement,
+    property_scroll: gpui::UniformListScrollHandle,
+    property_error: Option<SharedString>,
+    show_code: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -155,6 +156,9 @@ impl DivInspector {
             json_state,
             initial_style: Default::default(),
             unconvertible_style: Default::default(),
+            property_scroll: gpui::UniformListScrollHandle::new(),
+            property_error: None,
+            show_code: false,
             _subscriptions,
         }
     }
@@ -168,6 +172,13 @@ impl DivInspector {
     ) {
         // Skip updating if the inspector ID hasn't changed
         if self.inspector_id.as_ref() == Some(&inspector_id) {
+            let changed = self.inspector_state.as_ref().is_none_or(|previous| {
+                previous.base_style != state.base_style || previous.bounds != state.bounds
+            });
+            self.inspector_state = Some(state);
+            if changed {
+                cx.notify();
+            }
             return;
         }
 
@@ -178,6 +189,9 @@ impl DivInspector {
         self.rust_state.editing = false;
         let rust_style = self.update_rust_from_style(initial_style, window, cx);
         self.unconvertible_style = initial_style.subtract(&rust_style);
+        self.property_error = None;
+        self.property_scroll
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
         self.inspector_id = Some(inspector_id);
         self.inspector_state = Some(state);
         cx.notify();
@@ -226,11 +240,14 @@ impl DivInspector {
     }
 
     fn update_element_style(
-        &self,
+        &mut self,
         style: StyleRefinement,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(state) = self.inspector_state.as_mut() {
+            *state.base_style = style.clone();
+        }
         window.with_inspector_state::<DivInspectorState, _>(
             self.inspector_id.as_ref(),
             cx,
@@ -252,6 +269,8 @@ impl DivInspector {
         if let Some(state) = self.inspector_state.as_mut() {
             *state.base_style = self.initial_style.clone();
         }
+        self.property_error = None;
+        self.update_element_style(self.initial_style.clone(), window, cx);
     }
 
     fn update_json_from_style(
@@ -405,7 +424,17 @@ fn rust_to_style(mut style: StyleRefinement, source: &str) -> (StyleRefinement, 
 }
 
 impl Render for DivInspector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        elements::properties::render(self, window, cx)
+    }
+}
+
+impl DivInspector {
+    fn render_code_editors(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         v_flex().size_full().gap_y_4().text_sm().when_some(
             self.inspector_state.as_ref(),
             |this, state| {
@@ -594,7 +623,7 @@ fn render_inspector_title_bar(
                             window.refresh();
                         })),
                 )
-                .child("Inspector"),
+                .child("Pick"),
         )
         .child(
             Button::new("close")
@@ -656,7 +685,7 @@ fn render_tab_content(
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
     let content = match tab {
-        InspectorTab::Elements => render_elements_tab(inspector, window, cx),
+        InspectorTab::Elements => elements::render(inspector, window, cx),
         InspectorTab::Styles => render_styles_tab(inspector, window, cx),
         InspectorTab::Layout => render_layout_tab(inspector, window, cx),
         InspectorTab::EventListeners => render_listeners_tab(inspector, window, cx),
@@ -701,214 +730,6 @@ fn render_tab_content(
                     .child(content),
             )
             .into_any_element()
-    }
-}
-
-fn render_elements_tab(
-    inspector: &mut Inspector,
-    _window: &mut Window,
-    cx: &mut Context<Inspector>,
-) -> AnyElement {
-    let tree = inspector.element_tree().to_vec();
-    if tree.is_empty() {
-        return div()
-            .p(px(8.))
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child("No elements available.")
-            .into_any_element();
-    }
-
-    let mut rows: Vec<FlattenedRow> = Vec::new();
-    flatten_rows(&tree, 0, inspector, &mut rows);
-    let item_count = rows.len();
-
-    // Chromium's own Elements tree scrolls horizontally once a deeply nested
-    // node's indent + tag + attributes run past the panel's width, rather
-    // than wrapping or clipping the line. `uniform_list` virtualizes and
-    // scrolls vertically on its own, but horizontally it defaults to
-    // clipping every row to the container's own width regardless of a
-    // wider row's actual content -- `ListHorizontalSizingBehavior::FitList`,
-    // its default, forces `content_width = padded_bounds.size.width`
-    // outright (see `UniformList::compute` in gpui-ce), so a naive
-    // `.min_w()`/wrapper-div fix from outside has nothing to act on:
-    // every row still gets laid out (and clipped) at the container's width
-    // no matter how the element wrapping the list is styled.
-    // `ListHorizontalSizingBehavior::Unconstrained` is the real switch --
-    // it sizes the list (and every row) to the widest *measured* item and
-    // turns on the list's own horizontal scroll -- but it measures only
-    // one representative item (`with_width_from_item`, default index 0),
-    // not the widest across the whole tree. So this still picks the
-    // probably-widest row by the same rough per-character estimate as
-    // before, but only to choose *which single row* gets measured for
-    // real by layout; the actual width that comes out of that is exact,
-    // not a heuristic.
-    const INDENT_PX: f32 = 14.;
-    const TOGGLE_PX: f32 = 14.;
-    const CHAR_PX: f32 = 6.5;
-    let widest_row_index = rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let estimate = INDENT_PX * row.depth as f32
-                + TOGGLE_PX
-                + row.element_type.chars().count() as f32 * CHAR_PX
-                + if row.display_label.is_empty() {
-                    0.
-                } else {
-                    4. + row.display_label.chars().count() as f32 * CHAR_PX
-                };
-            (i, estimate)
-        })
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-
-    let entity = cx.entity().clone();
-    let rows_rc = Rc::new(rows);
-    let scroll_handle = elements_tree_scroll_handle();
-
-    let list = uniform_list("inspector-tree", item_count, {
-        let rows = rows_rc;
-        let entity = entity.clone();
-        move |range: Range<usize>, _window: &mut Window, cx: &mut App| {
-            range
-                .map(|i| {
-                    let row = &rows[i];
-                    let indent = row.depth * 14;
-                    let entity = entity.clone();
-                    let mut el = div()
-                        .id(SharedString::from(format!("tree-{}", i)))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .h(px(22.))
-                        .pl(px(indent as f32))
-                        .cursor_pointer()
-                        .rounded_sm()
-                        .text_xs()
-                        .when(row.is_selected, |s| s.bg(gpui::rgba(0x00000033)));
-
-                    if row.has_children {
-                        let entity_for_toggle = entity.clone();
-                        let nid = row.node_id.clone();
-                        el = el.child(
-                            div()
-                                .w(px(14.))
-                                .text_color(gpui::rgba(0x888888ff))
-                                .child(if row.is_expanded { "▼" } else { "▶" })
-                                .on_mouse_down(gpui::MouseButton::Left, move |_, _window, cx| {
-                                    if let Some(ref id) = nid {
-                                        entity_for_toggle.update(cx, |i, cx| {
-                                            i.toggle_collapsed(id.clone());
-                                            cx.notify();
-                                        });
-                                    }
-                                }),
-                        );
-                    } else {
-                        el = el.child(div().w(px(14.)));
-                    }
-
-                    el = el.child(
-                        div()
-                            .text_color(gpui::rgba(0x8888ffff))
-                            .child(row.element_type.clone()),
-                    );
-                    if !row.display_label.is_empty() {
-                        el = el.child(
-                            div()
-                                .text_color(gpui::rgba(0x888888ff))
-                                .ml(px(4.))
-                                .child(row.display_label.clone()),
-                        );
-                    }
-
-                    if row.node_id.is_some() {
-                        let entity_for_click = entity.clone();
-                        let nid = row.node_id.clone();
-                        let has_ch = row.has_children;
-                        el = el.on_click(move |_, window, cx| {
-                            if let Some(ref id) = nid {
-                                entity_for_click.update(cx, |i, cx| {
-                                    if i.active_element_id() == Some(id) && has_ch {
-                                        i.toggle_collapsed(id.clone());
-                                    } else {
-                                        i.set_active_element_id(id.clone(), window);
-                                    }
-                                    cx.notify();
-                                });
-                            }
-                        });
-                    }
-
-                    el.into_any_element()
-                })
-                .collect::<Vec<_>>()
-        }
-    })
-    .with_width_from_item(Some(widest_row_index))
-    .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
-    .track_scroll(&scroll_handle)
-    .w_full()
-    .h_full();
-
-    list.into_any_element()
-}
-
-/// One process-wide scroll handle for the Elements tree, so its scroll
-/// position (and the smooth-scroll animation state `uniform_list` already
-/// carries per handle -- see `gpui::SmoothScrollState`) survives across
-/// `render_elements_tab`'s many calls instead of resetting to the top every
-/// render. `render_elements_tab` is a plain function over `&mut Inspector`
-/// (a `gpui-ce` type this crate doesn't own, so there's no struct field to
-/// put this on), not an `Entity` of this crate's own -- the same constraint
-/// `inspector.rs::init`'s `OnceCell`-cached `DivInspector` singleton already
-/// works around, and the same fix shape: there is only ever one Inspector
-/// panel per process, so a thread-local (GPUI itself is single-threaded for
-/// UI work) is exactly as sound as a real field would be here.
-fn elements_tree_scroll_handle() -> gpui::UniformListScrollHandle {
-    thread_local! {
-        static HANDLE: gpui::UniformListScrollHandle = gpui::UniformListScrollHandle::new();
-    }
-    HANDLE.with(|handle| handle.clone())
-}
-
-struct FlattenedRow {
-    depth: usize,
-    has_children: bool,
-    is_expanded: bool,
-    is_selected: bool,
-    node_id: Option<InspectorElementId>,
-    element_type: SharedString,
-    display_label: SharedString,
-}
-
-fn flatten_rows(
-    nodes: &[InspectorTreeNode],
-    depth: usize,
-    inspector: &mut Inspector,
-    out: &mut Vec<FlattenedRow>,
-) {
-    for node in nodes {
-        let is_collapsed = node
-            .inspector_id
-            .as_ref()
-            .map_or(false, |id| inspector.is_collapsed(id));
-
-        out.push(FlattenedRow {
-            depth,
-            has_children: !node.children.is_empty(),
-            is_expanded: !is_collapsed,
-            is_selected: node.is_selected,
-            node_id: node.inspector_id.clone(),
-            element_type: node.element_type.clone(),
-            display_label: node.display_label.clone(),
-        });
-
-        if !is_collapsed && !node.children.is_empty() {
-            flatten_rows(&node.children, depth + 1, inspector, out);
-        }
     }
 }
 
