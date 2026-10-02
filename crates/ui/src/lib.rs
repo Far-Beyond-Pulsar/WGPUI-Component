@@ -5,7 +5,6 @@ pub mod assets;
 
 // Diagnostic, graph, and replication types — always available, no engine deps.
 pub mod diagnostics;
-pub mod graph;
 pub mod settings;
 pub mod themes;
 
@@ -190,7 +189,6 @@ pub use theme::*;
 
 // Re-export engine types for UI crates
 pub use assets::Assets;
-pub use graph::*;
 pub use setting::*;
 pub use settings::*;
 pub use themes::*;
