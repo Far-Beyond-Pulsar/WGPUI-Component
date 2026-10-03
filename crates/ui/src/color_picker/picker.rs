@@ -186,15 +186,44 @@ impl ColorPicker {
                     let (_, _, v_b, _) = hsla_to_hsva(*b);
                     v_a.partial_cmp(&v_b).unwrap_or(std::cmp::Ordering::Equal)
                 });
-                let row_colors: Vec<Hsla> =
-                    palette_colors.into_iter().take(ALL_COLORS_COLS).collect();
-                h_flex()
-                    .gap_1()
-                    .children(row_colors.into_iter().map(|color| {
-                        render_color_swatch("all-color", color, true, self.state.clone(), window)
-                    }))
+                palette_colors
+                    .into_iter()
+                    .take(ALL_COLORS_COLS)
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
+
+        let cell = window.rem_size().as_f32() * 1.25;
+        let gap = window.rem_size().as_f32() * 0.25;
+        let rows = color_rows
+            .iter()
+            .map(|row| {
+                h_flex().gap_1().children(
+                    row.iter()
+                        .copied()
+                        .map(|color| render_cached_color_swatch(color, self.state.clone(), window))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grid = v_flex()
+            .relative()
+            .w(px(
+                ALL_COLORS_COLS as f32 * cell + (ALL_COLORS_COLS - 1) as f32 * gap
+            ))
+            .gap_px()
+            .child(
+                canvas(
+                    |bounds, _, _| bounds,
+                    move |bounds, _, window, _| {
+                        paint_swatch_grid(window, bounds, cell, gap, &color_rows)
+                    },
+                )
+                .absolute()
+                .inset_0()
+                .size_full(),
+            )
+            .children(rows);
 
         v_flex()
             .gap_px()
@@ -206,7 +235,7 @@ impl ColorPicker {
                     .text_color(cx.theme().muted_foreground)
                     .child("All Colors"),
             )
-            .children(color_rows)
+            .child(grid)
     }
 
     fn render_rgba_slider(
@@ -387,6 +416,8 @@ impl ColorPicker {
             alpha_value,
         );
 
+        let triangle_cache = self.state.read(cx).triangle_cache.clone();
+        let hue_dragging = self.state.read(cx).active_drag == Some(PickerDragTarget::HueRing);
         let state_entity = self.state.clone();
         let hue = hue_value;
         let sat = sat_value;
@@ -450,7 +481,14 @@ impl ColorPicker {
                                         };
 
                                         paint_hue_wheel(window, bounds, geometry);
-                                        paint_sv_triangle(window, bounds, geometry, hue);
+                                        let displayed_hue = paint_sv_triangle(
+                                            window,
+                                            bounds,
+                                            geometry,
+                                            hue,
+                                            hue_dragging,
+                                            &mut triangle_cache.borrow_mut(),
+                                        );
 
                                         let ring_angle = hue * std::f32::consts::TAU
                                             - std::f32::consts::FRAC_PI_2;
@@ -465,7 +503,7 @@ impl ColorPicker {
                                         };
                                         window.paint_quad(fill(ring_marker, gpui::white()));
 
-                                        let [a, b, c] = triangle_vertices(geometry, hue);
+                                        let [a, b, c] = triangle_vertices(geometry, displayed_hue);
                                         let w_h = sat * val;
                                         let w_w = (1.0 - sat) * val;
                                         let w_b = 1.0 - val;

@@ -2,6 +2,7 @@ use super::*;
 
 /// State of the [`ColorPicker`].
 pub struct ColorPickerState {
+    pub(crate) triangle_cache: std::rc::Rc<std::cell::RefCell<TriangleCache>>,
     pub(crate) focus_handle: FocusHandle,
     pub(crate) value: Option<Hsla>,
     pub(crate) hovered_color: Option<Hsla>,
@@ -82,6 +83,7 @@ impl ColorPickerState {
         }
 
         Self {
+            triangle_cache: Default::default(),
             focus_handle: cx.focus_handle(),
             value: None,
             hovered_color: None,
