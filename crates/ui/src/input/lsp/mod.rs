@@ -128,12 +128,28 @@ impl InputState {
         window: &mut Window,
         cx: &mut Context<InputState>,
     ) {
-        if event.modifiers.secondary() {
+        // Every `cx.notify()` on an `InputState` invalidates every view that
+        // read it, and a cached ancestor view (a whole inspector panel full of
+        // inputs) rebuilds, re-lays-out and re-prepaints in full. A mouse move
+        // is by far the most frequent event, so only notify when it changed
+        // something the input actually draws: the hover popover, the
+        // definition underline, or (while the secondary modifier is held) the
+        // definition lookup, which may repaint on every move.
+        let secondary = event.modifiers.secondary();
+        let had_hover_definition = !self.hover_definition.is_empty();
+        let hover_popover_before = self.hover_popover.as_ref().map(|popover| popover.entity_id());
+        if secondary {
             self.handle_hover_definition(offset, window, cx);
         } else {
             self.hover_definition.clear();
             self.handle_hover_popover(offset, event.position, window, cx);
         }
-        cx.notify();
+        let hover_popover_after = self.hover_popover.as_ref().map(|popover| popover.entity_id());
+        if secondary
+            || had_hover_definition
+            || hover_popover_before != hover_popover_after
+        {
+            cx.notify();
+        }
     }
 }

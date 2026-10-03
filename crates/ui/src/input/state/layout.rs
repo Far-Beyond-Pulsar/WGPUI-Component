@@ -172,6 +172,13 @@ impl InputState {
             offset.y.clamp(safe_y_range.start, safe_y_range.end)
         };
         offset.x = offset.x.clamp(safe_x_range.start, safe_x_range.end);
+        // A single-line input clamps to a zero offset, so a wheel event over
+        // one (e.g. scrolling an inspector with the pointer on a field) used
+        // to notify for nothing -- and a notify rebuilds every cached view
+        // that read this input.
+        if self.scroll_handle.offset() == offset {
+            return;
+        }
         self.scroll_handle.set_offset(offset);
         cx.notify();
     }
