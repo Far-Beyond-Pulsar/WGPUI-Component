@@ -499,6 +499,11 @@ impl Element for Scrollbar {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.position = Position::Absolute;
+        // Explicit zero insets. With auto insets an absolute element is placed
+        // at its "static position", which does not follow the scroll offset of
+        // a scrolled ancestor: a scrollbar inside a scrolling panel (a list in
+        // a scrolling form) was drawn displaced by that scroll distance.
+        style.inset = Edges::all(px(0.).into());
         style.flex_grow = 1.0;
         style.flex_shrink = 1.0;
         style.size.width = relative(1.).into();
