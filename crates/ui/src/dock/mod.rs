@@ -566,11 +566,16 @@ impl DockArea {
                         walk(child.clone(), placement, out, cx);
                     }
                 }
-                Err(view) => {
-                    if let Ok(tabs) = view.downcast::<TabPanel>() {
-                        out.push((placement, tabs));
+                Err(view) => match view.downcast::<TabPanel>() {
+                    Ok(tabs) => out.push((placement, tabs)),
+                    Err(view) => {
+                        if let Ok(tiles) = view.downcast::<Tiles>() {
+                            for item in tiles.read(cx).panels.iter() {
+                                walk(item.panel.clone(), placement, out, cx);
+                            }
+                        }
                     }
-                }
+                },
             }
         }
 
