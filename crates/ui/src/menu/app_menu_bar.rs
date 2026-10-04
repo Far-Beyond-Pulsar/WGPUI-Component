@@ -32,7 +32,8 @@ pub fn init(cx: &mut App) {
 pub struct AppMenuBar {
     menus: Vec<Entity<AppMenu>>,
     selected_ix: Option<usize>,
-    logo: Option<Arc<RenderImage>>,
+    /// The first (app) menu is rendered elsewhere, as a logo; skip it here.
+    app_menu_hosted: bool,
 }
 
 impl AppMenuBar {
@@ -65,16 +66,28 @@ impl AppMenuBar {
             Self {
                 selected_ix: None,
                 menus,
-                logo: None,
+                app_menu_hosted: false,
             }
         })
     }
 
-    /// Show `logo` in place of the first menu's text label. The menu still
-    /// opens from it exactly as before.
+    /// Show the first (app) menu as `logo` and stop rendering it in this bar.
+    /// The caller places [`Self::app_menu_view`] wherever the logo should sit;
+    /// it opens the same menu as before.
     pub fn set_logo(&mut self, logo: Option<Arc<RenderImage>>, cx: &mut Context<Self>) {
-        self.logo = logo;
+        self.app_menu_hosted = logo.is_some();
+        if let Some(first) = self.menus.first() {
+            first.update(cx, |menu, cx| {
+                menu.logo = logo;
+                cx.notify();
+            });
+        }
         cx.notify();
+    }
+
+    /// The first menu as a standalone view, for hosting outside the bar.
+    pub fn app_menu_view(&self) -> Option<gpui::AnyView> {
+        self.menus.first().map(|menu| menu.clone().into())
     }
 
     fn move_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
@@ -129,12 +142,18 @@ impl Render for AppMenuBar {
             .size_full()
             .gap_x_1()
             .overflow_x_scroll()
-            .children(self.menus.clone())
+            .children(
+                self.menus
+                    .iter()
+                    .skip(usize::from(self.app_menu_hosted))
+                    .cloned(),
+            )
     }
 }
 
 /// A menu in the menu bar.
-pub(super) struct AppMenu {
+pub struct AppMenu {
+    logo: Option<Arc<RenderImage>>,
     menu_bar: Entity<AppMenuBar>,
     ix: usize,
     name: SharedString,
@@ -154,6 +173,7 @@ impl AppMenu {
     ) -> Entity<Self> {
         let name = menu.name.clone();
         cx.new(|_| Self {
+            logo: None,
             ix,
             menu_bar,
             name,
@@ -247,7 +267,6 @@ impl Render for AppMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_bar = self.menu_bar.read(cx);
         let is_selected = menu_bar.selected_ix == Some(self.ix);
-        let logo = menu_bar.logo.clone();
 
         div()
             .id(self.ix)
@@ -258,10 +277,10 @@ impl Render for AppMenu {
                     .py_0p5()
                     .compact()
                     .ghost()
-                    .map(|this| match logo {
-                        Some(logo) if self.ix == 0 => this.child(
+                    .map(|this| match self.logo.clone() {
+                        Some(logo) => this.child(
                             img(ImageSource::Render(logo))
-                                .size(px(20.))
+                                .size(px(44.))
                                 .object_fit(ObjectFit::Contain),
                         ),
                         _ => this.label(self.name.clone()),

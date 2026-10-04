@@ -178,7 +178,9 @@ impl RenderOnce for TabBar {
         let selected_index = self.selected_index;
         let tab_item_top_offset = self.tab_item_top_offset;
         let item_labels = self.item_labels.clone();
-        let bar_height = variant.height(size);
+        // A few px above the tabs so their top borders are never clipped.
+        let top_gap = if variant == TabVariant::Tab { px(4.) } else { px(0.) };
+        let bar_height = variant.height(size) + top_gap;
 
         // Tab bars contain only a handful of controls. Keep their labels in a
         // normal natural-width row instead of routing them through `h_list`.
@@ -254,6 +256,7 @@ impl RenderOnce for TabBar {
                     .flex_1()
                     .min_w(px(0.))
                     .h(bar_height)
+                    .items_end()
                     .overflow_x_scroll()
                     .flex_nowrap()
                     .children(tab_elements),

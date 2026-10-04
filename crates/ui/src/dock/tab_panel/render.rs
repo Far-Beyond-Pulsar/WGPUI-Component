@@ -189,7 +189,7 @@ impl TabPanel {
 
         let is_bottom_dock = bottom_dock_button.is_some();
 
-        if self.panels.len() == 1 && panel_style == PanelStyle::Default {
+        if self.panels.len() == 1 && panel_style == PanelStyle::Default && !self.persistent_tabs {
             let panel = self.panels.get(0).unwrap();
 
             if !panel.visible(cx) {
@@ -296,6 +296,8 @@ impl TabPanel {
             .map(|(ix, p)| (ix, p.clone()))
             .collect();
         let visible_count = visible_panels.len();
+        // The last tab of a persistent strip has no close button.
+        let lock_close = self.persistent_tabs && visible_count == 1;
 
         let view_for_build = view.clone();
         let clicked_index = clicked_tab_index.clone();
@@ -316,7 +318,7 @@ impl TabPanel {
         }
 
         let tab_bar = TabBar::new("tab-bar")
-            .tab_item_top_offset(-px(1.))
+            .tab_item_top_offset(px(0.))
             .track_scroll(&self.tab_bar_scroll_handle)
             .when(
                 left_dock_button.is_some() || bottom_dock_button.is_some(),
@@ -324,13 +326,8 @@ impl TabPanel {
                     this.prefix(
                         h_flex()
                             .items_center()
-                            .top_0()
-                            .right(-px(1.))
-                            .border_r_1()
-                            .border_b_1()
                             .h_full()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().tab_bar)
+                            .bg(cx.theme().background)
                             .px_2()
                             .children(left_dock_button)
                             .children(bottom_dock_button),
@@ -448,7 +445,7 @@ impl TabPanel {
                         })
                     });
 
-                    tab = tab.suffix(
+                    tab = tab.when(!lock_close, |tab| tab.suffix(
                         h_flex()
                             .gap_1()
                             .child(
@@ -467,7 +464,7 @@ impl TabPanel {
                                     }),
                             )
                             .into_any_element(),
-                    );
+                    ));
 
                     tab
                 }
@@ -510,11 +507,8 @@ impl TabPanel {
                         .items_center()
                         .top_0()
                         .right_0()
-                        .border_l_1()
-                        .border_b_1()
                         .h_full()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().tab_bar)
+                        .bg(cx.theme().background)
                         .px_2()
                         .gap_1()
                         .children(
@@ -548,7 +542,7 @@ impl TabPanel {
 
                         let can_close = panels_for_menu
                             .get(tab_index)
-                            .map(|p| p.closable(cx) && p.panel_name(cx) != "Level Editor")
+                            .map(|p| p.closable(cx) && p.panel_name(cx) != "Level Editor" && !lock_close)
                             .unwrap_or(false);
 
                         let mut result = menu;

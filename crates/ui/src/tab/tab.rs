@@ -221,7 +221,7 @@ impl TabVariant {
                     cx.theme().tab_foreground.opacity(0.85) // Brighten on hover
                 },
                 bg: if selected {
-                    cx.theme().foreground.opacity(0.14)
+                    cx.theme().foreground.opacity(0.07)
                 } else {
                     cx.theme().foreground.opacity(0.05) // Barely-there hover wash
                 },
@@ -280,7 +280,7 @@ impl TabVariant {
         match self {
             TabVariant::Tab => TabStyle {
                 fg: cx.theme().tab_active_foreground,
-                bg: cx.theme().foreground.opacity(0.14), // lighter than the black bar
+                bg: cx.theme().foreground.opacity(0.07), // lighter than the black bar
                 borders: Edges {
                     top: px(1.),
                     left: px(1.),

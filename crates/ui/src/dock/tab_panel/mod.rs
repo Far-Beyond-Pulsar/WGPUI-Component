@@ -158,6 +158,10 @@ pub struct TabPanel {
     /// Handle of the extracted floating window, set inside the creation defer.
     /// None means extraction was requested but the defer hasn't run yet.
     pub(crate) extracted_window: Option<AnyWindowHandle>,
+    /// Always draw the tab strip, even with a single tab, and never let the
+    /// last remaining tab be closed. Used by the editor's center area so going
+    /// between one tab and many does not change how the bar looks.
+    pub(crate) persistent_tabs: bool,
 }
 
 impl TabPanel {
@@ -187,7 +191,14 @@ impl TabPanel {
             last_drag_screen_pos: None,
             extraction_in_flight: false,
             extracted_window: None,
+            persistent_tabs: false,
         }
+    }
+
+    /// Keep the tab strip (and the last tab) permanently; see the field docs.
+    pub fn set_persistent_tabs(&mut self, persistent: bool, cx: &mut Context<Self>) {
+        self.persistent_tabs = persistent;
+        cx.notify();
     }
 
     /// Returns the index of the panel with the given entity_id, or None if not found.
