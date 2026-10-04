@@ -549,6 +549,45 @@ impl DockArea {
         &self.items
     }
 
+    /// Every [`TabPanel`] currently in the center and the docks, each with the
+    /// placement it lives in, found by walking the live panel tree (so it
+    /// reflects splits made by dragging, unlike a cached [`DockItem`]).
+    pub fn tab_panels(&self, cx: &App) -> Vec<(DockPlacement, Entity<TabPanel>)> {
+        fn walk(
+            view: Arc<dyn PanelView>,
+            placement: DockPlacement,
+            out: &mut Vec<(DockPlacement, Entity<TabPanel>)>,
+            cx: &App,
+        ) {
+            let view = view.view();
+            match view.downcast::<StackPanel>() {
+                Ok(stack) => {
+                    for child in stack.read(cx).panels.iter() {
+                        walk(child.clone(), placement, out, cx);
+                    }
+                }
+                Err(view) => {
+                    if let Ok(tabs) = view.downcast::<TabPanel>() {
+                        out.push((placement, tabs));
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        walk(self.items.view(), DockPlacement::Center, &mut out, cx);
+        for (placement, dock) in [
+            (DockPlacement::Left, &self.left_dock),
+            (DockPlacement::Bottom, &self.bottom_dock),
+            (DockPlacement::Right, &self.right_dock),
+        ] {
+            if let Some(dock) = dock {
+                walk(dock.read(cx).panel.view(), placement, &mut out, cx);
+            }
+        }
+        out
+    }
+
     /// Subscribe to the tiles item drag item drop event
     fn subscribe_tiles_item_drop(
         &mut self,

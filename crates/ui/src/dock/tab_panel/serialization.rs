@@ -46,9 +46,17 @@ impl Panel for TabPanel {
     fn dump(&self, cx: &App) -> PanelState {
         let mut state = PanelState::new(self);
         for panel in self.panels.iter() {
-            state.add_child(panel.dump(cx));
-            state.info = PanelInfo::tabs(self.active_ix);
+            let mut child = panel.dump(cx);
+            // A panel that records nothing of its own still tells us which
+            // file it edits, so a saved layout can reopen it.
+            if child.file().is_none() {
+                if let Some(path) = panel.panel_file_path(cx) {
+                    child = child.with_file(path.to_string_lossy().into_owned());
+                }
+            }
+            state.add_child(child);
         }
+        state.info = PanelInfo::tabs(self.active_ix);
         state
     }
 

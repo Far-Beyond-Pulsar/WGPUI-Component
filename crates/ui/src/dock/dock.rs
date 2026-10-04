@@ -14,7 +14,7 @@ use crate::{
     StyledExt,
 };
 
-use super::{DockArea, DockItem, PanelView, TabPanel};
+use super::{DockArea, DockEvent, DockItem, PanelView, TabPanel};
 
 #[derive(Clone)]
 struct ResizePanel;
@@ -261,6 +261,7 @@ impl Dock {
     /// Set the open state of the Dock.
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.open = open;
+        self.notify_layout_changed(cx);
         let item = self.panel.clone();
         cx.defer_in(window, move |_, window, cx| {
             item.set_collapsed(!open, window, cx);
@@ -369,8 +370,18 @@ impl Dock {
         cx.notify();
     }
 
-    fn done_resizing(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn done_resizing(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.resizing = false;
+        self.notify_layout_changed(cx);
+    }
+
+    /// Tell the [`DockArea`] this dock's size or open state changed, so layout
+    /// persistence sees it. Deferred: callers may be inside a `DockArea` update.
+    fn notify_layout_changed(&self, cx: &mut Context<Self>) {
+        let dock_area = self.dock_area.clone();
+        cx.defer(move |cx| {
+            _ = dock_area.update(cx, |_, cx| cx.emit(DockEvent::LayoutChanged));
+        });
     }
 }
 

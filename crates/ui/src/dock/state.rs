@@ -31,6 +31,24 @@ pub struct DockState {
 }
 
 impl DockState {
+    /// The dock's panel tree.
+    pub fn panel(&self) -> &PanelState {
+        &self.panel
+    }
+
+    pub fn placement(&self) -> DockPlacement {
+        self.placement
+    }
+
+    /// Width (left / right) or height (bottom) of the dock.
+    pub fn size(&self) -> Pixels {
+        self.size
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
     pub fn new(dock: Entity<Dock>, cx: &App) -> Self {
         let dock = dock.read(cx);
 
@@ -177,6 +195,28 @@ impl PanelState {
 
     pub fn add_child(&mut self, panel: PanelState) {
         self.children.push(panel);
+    }
+
+    /// Mark this leaf as editing `file`, so it can be reopened on restore.
+    pub fn with_file(mut self, file: impl Into<String>) -> Self {
+        self.info = PanelInfo::Panel(serde_json::json!({ "file": file.into() }));
+        self
+    }
+
+    /// The file a leaf panel was editing, if it recorded one (see [`Self::with_file`]).
+    pub fn file(&self) -> Option<&str> {
+        match &self.info {
+            PanelInfo::Panel(value) => value.get("file").and_then(|f| f.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Mutable access to the recorded file, for rewriting paths on save / load.
+    pub fn file_mut(&mut self) -> Option<&mut serde_json::Value> {
+        match &mut self.info {
+            PanelInfo::Panel(value) => value.get_mut("file"),
+            _ => None,
+        }
     }
 
     pub fn to_item(
