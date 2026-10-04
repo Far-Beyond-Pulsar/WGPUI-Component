@@ -5,10 +5,12 @@ use crate::{
     popup_menu::PopupMenu,
     Selectable, Sizable,
 };
+use std::sync::Arc;
+
 use gpui::{
-    anchored, deferred, div, prelude::FluentBuilder, px, App, AppContext as _, ClickEvent, Context,
-    DismissEvent, Entity, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
-    OwnedMenu, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
+    anchored, deferred, div, img, prelude::FluentBuilder, px, App, AppContext as _, ClickEvent,
+    Context, DismissEvent, ImageSource, ObjectFit, StyledImage as _, Entity, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
+    OwnedMenu, ParentElement, Render, RenderImage, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window,
 };
 
@@ -30,6 +32,7 @@ pub fn init(cx: &mut App) {
 pub struct AppMenuBar {
     menus: Vec<Entity<AppMenu>>,
     selected_ix: Option<usize>,
+    logo: Option<Arc<RenderImage>>,
 }
 
 impl AppMenuBar {
@@ -62,8 +65,16 @@ impl AppMenuBar {
             Self {
                 selected_ix: None,
                 menus,
+                logo: None,
             }
         })
+    }
+
+    /// Show `logo` in place of the first menu's text label. The menu still
+    /// opens from it exactly as before.
+    pub fn set_logo(&mut self, logo: Option<Arc<RenderImage>>, cx: &mut Context<Self>) {
+        self.logo = logo;
+        cx.notify();
     }
 
     fn move_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
@@ -236,6 +247,7 @@ impl Render for AppMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_bar = self.menu_bar.read(cx);
         let is_selected = menu_bar.selected_ix == Some(self.ix);
+        let logo = menu_bar.logo.clone();
 
         div()
             .id(self.ix)
@@ -246,7 +258,14 @@ impl Render for AppMenu {
                     .py_0p5()
                     .compact()
                     .ghost()
-                    .label(self.name.clone())
+                    .map(|this| match logo {
+                        Some(logo) if self.ix == 0 => this.child(
+                            img(ImageSource::Render(logo))
+                                .size(px(20.))
+                                .object_fit(ObjectFit::Contain),
+                        ),
+                        _ => this.label(self.name.clone()),
+                    })
                     .selected(is_selected)
                     .on_click(cx.listener(Self::handle_trigger_click)),
             )

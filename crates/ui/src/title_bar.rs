@@ -22,6 +22,7 @@ pub struct TitleBar {
     base: Stateful<Div>,
     children: Vec<AnyElement>,
     on_close_window: Option<Rc<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>>,
+    background: Option<Hsla>,
 }
 
 impl TitleBar {
@@ -30,10 +31,18 @@ impl TitleBar {
             base: div().id("title-bar").pl(TITLE_BAR_LEFT_PADDING),
             children: Vec::new(),
             on_close_window: None,
+            background: None,
         }
     }
 
     /// Returns the default title bar options for compatible with the [`crate::TitleBar`].
+    /// Paint the bar with `color` and drop its bottom border, so it reads as one
+    /// surface with whatever sits directly below it.
+    pub fn unified_background(mut self, color: Hsla) -> Self {
+        self.background = Some(color);
+        self
+    }
+
     pub fn title_bar_options() -> TitlebarOptions {
         TitlebarOptions {
             title: None,
@@ -256,9 +265,11 @@ impl RenderOnce for TitleBar {
                 .items_center()
                 .justify_between()
                 .h(TITLE_BAR_HEIGHT)
-                .border_b_1()
-                .border_color(cx.theme().title_bar_border)
-                .bg(cx.theme().title_bar)
+                .when(self.background.is_none(), |this| {
+                    this.border_b_1()
+                        .border_color(cx.theme().title_bar_border)
+                })
+                .bg(self.background.unwrap_or(cx.theme().title_bar))
                 .child(
                     h_flex()
                         .id("bar")

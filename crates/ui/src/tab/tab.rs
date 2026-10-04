@@ -164,13 +164,13 @@ impl TabVariant {
     fn normal(&self, cx: &App) -> TabStyle {
         match self {
             TabVariant::Tab => TabStyle {
-                fg: cx.theme().tab_foreground.opacity(0.65), // Dimmer when inactive
+                fg: cx.theme().tab_foreground.opacity(0.55), // Quiet when inactive
                 bg: cx.theme().transparent,
                 borders: Edges {
                     top: px(1.),
                     left: px(1.),
                     right: px(1.),
-                    bottom: px(0.), // NO BOTTOM BORDER - ready to connect
+                    bottom: px(0.),
                 },
                 border_color: cx.theme().transparent,
                 radius: px(0.),
@@ -223,18 +223,18 @@ impl TabVariant {
                 bg: if selected {
                     cx.theme().tab_active
                 } else {
-                    cx.theme().tab_active.opacity(0.2) // Subtle preview of active state
+                    cx.theme().foreground.opacity(0.05) // Barely-there hover wash
                 },
                 borders: Edges {
-                    top: if selected { px(2.) } else { px(1.) },
+                    top: px(1.),
                     left: px(1.),
                     right: px(1.),
-                    bottom: px(0.), // NO BOTTOM BORDER
+                    bottom: px(0.),
                 },
                 border_color: if selected {
-                    cx.theme().border
+                    cx.theme().border.opacity(0.6)
                 } else {
-                    cx.theme().border.opacity(0.4)
+                    cx.theme().transparent
                 },
                 radius: px(0.),
                 ..Default::default()
@@ -286,14 +286,14 @@ impl TabVariant {
                 fg: cx.theme().tab_active_foreground,
                 bg: cx.theme().tab_active,
                 borders: Edges {
-                    top: px(2.), // Thicker top border for emphasis
+                    top: px(1.),
                     left: px(1.),
                     right: px(1.),
-                    bottom: px(0.), // NO BOTTOM BORDER - connects with content
+                    bottom: px(0.), // open at the bottom: merges with the content
                 },
-                border_color: cx.theme().border.opacity(0.8),
+                border_color: cx.theme().border.opacity(0.6),
                 radius: px(0.),
-                shadow: false, // Remove shadow, use border emphasis instead
+                shadow: false,
                 ..Default::default()
             },
             TabVariant::Outline => TabStyle {

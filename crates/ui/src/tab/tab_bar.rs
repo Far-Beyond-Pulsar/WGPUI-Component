@@ -237,7 +237,7 @@ impl RenderOnce for TabBar {
                             .bottom_0()
                             .size_full()
                             .border_b_1()
-                            .border_color(cx.theme().border),
+                            .border_color(cx.theme().border.opacity(0.5)),
                     )
                 },
             )
