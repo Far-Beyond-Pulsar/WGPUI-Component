@@ -148,7 +148,7 @@ impl Sizable for TabBar {
 impl RenderOnce for TabBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (bg, paddings) = match self.variant {
-            TabVariant::Tab => (cx.theme().tab_bar, Edges::all(px(0.))),
+            TabVariant::Tab => (cx.theme().background, Edges::all(px(0.))),
             TabVariant::Outline => (cx.theme().transparent, Edges::all(px(0.))),
             TabVariant::Pill => (cx.theme().transparent, Edges::all(px(0.))),
             TabVariant::Segmented => {
@@ -237,7 +237,7 @@ impl RenderOnce for TabBar {
                             .bottom_0()
                             .size_full()
                             .border_b_1()
-                            .border_color(cx.theme().border.opacity(0.5)),
+                            .border_color(cx.theme().border),
                     )
                 },
             )

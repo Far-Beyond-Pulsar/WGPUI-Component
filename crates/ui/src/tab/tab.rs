@@ -172,7 +172,7 @@ impl TabVariant {
                     right: px(1.),
                     bottom: px(0.),
                 },
-                border_color: cx.theme().transparent,
+                border_color: cx.theme().border,
                 radius: px(0.),
                 ..Default::default()
             },
@@ -221,7 +221,7 @@ impl TabVariant {
                     cx.theme().tab_foreground.opacity(0.85) // Brighten on hover
                 },
                 bg: if selected {
-                    cx.theme().tab_active
+                    cx.theme().foreground.opacity(0.14)
                 } else {
                     cx.theme().foreground.opacity(0.05) // Barely-there hover wash
                 },
@@ -231,11 +231,7 @@ impl TabVariant {
                     right: px(1.),
                     bottom: px(0.),
                 },
-                border_color: if selected {
-                    cx.theme().border.opacity(0.6)
-                } else {
-                    cx.theme().transparent
-                },
+                border_color: cx.theme().border,
                 radius: px(0.),
                 ..Default::default()
             },
@@ -284,14 +280,14 @@ impl TabVariant {
         match self {
             TabVariant::Tab => TabStyle {
                 fg: cx.theme().tab_active_foreground,
-                bg: cx.theme().tab_active,
+                bg: cx.theme().foreground.opacity(0.14), // lighter than the black bar
                 borders: Edges {
                     top: px(1.),
                     left: px(1.),
                     right: px(1.),
                     bottom: px(0.), // open at the bottom: merges with the content
                 },
-                border_color: cx.theme().border.opacity(0.6),
+                border_color: cx.theme().border,
                 radius: px(0.),
                 shadow: false,
                 ..Default::default()
