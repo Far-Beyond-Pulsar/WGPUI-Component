@@ -10,19 +10,18 @@
 //! frame the first presents must match the second, including idle viewport
 //! frames that re-present the last scene. Skips without a GPU adapter.
 
-use gpui::headless::{HeadlessWindow, compare_frames};
+use gpui::headless::{compare_frames, HeadlessWindow};
 use gpui::{
-    AnyView, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StyleRefinement, Styled as _, TestAppContext, Window,
-    WindowHandle, div, point, px, size,
+    div, point, px, size, AnyView, AppContext as _, Context, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, StyleRefinement, Styled as _, TestAppContext, Window,
+    WindowHandle,
 };
 use ui::{
-    ActiveTheme as _, StyledExt as _,
     button::Button,
     h_flex,
     input::{InputState, NumberInput},
     scroll::ScrollbarAxis,
-    v_flex,
+    v_flex, ActiveTheme as _, StyledExt as _,
 };
 
 const SECTIONS: usize = 4;
@@ -40,7 +39,11 @@ impl Render for Toolbar {
             .children((0..3usize).map(|index| {
                 div()
                     .debug_selector(move || format!("toolbar-{index}"))
-                    .child(Button::new(("toolbar", index)).label(format!("Tool {index}")).on_click(|_, _, _| {}))
+                    .child(
+                        Button::new(("toolbar", index))
+                            .label(format!("Tool {index}"))
+                            .on_click(|_, _, _| {}),
+                    )
             }))
     }
 }
@@ -81,23 +84,29 @@ impl Render for Properties {
             .child(
                 div().flex_1().overflow_hidden().child(
                     div().size_full().scrollable(ScrollbarAxis::Vertical).child(
-                        v_flex().w_full().p_3().gap_4().children((0..SECTIONS).map(|section| {
-                            v_flex()
-                                .gap_2()
-                                .child(format!("Section {section}"))
-                                .children((0..ROWS).map(|row| {
-                                    let index = section * ROWS + row;
-                                    h_flex()
-                                        .gap_2()
-                                        .child(div().w(px(90.)).child(format!("Field {index}")))
-                                        .child(
-                                            div()
-                                                .w(px(140.))
-                                                .debug_selector(move || format!("input-{index}"))
-                                                .child(NumberInput::new(&self.inputs[index])),
-                                        )
-                                }))
-                        })),
+                        v_flex()
+                            .w_full()
+                            .p_3()
+                            .gap_4()
+                            .children((0..SECTIONS).map(|section| {
+                                v_flex()
+                                    .gap_2()
+                                    .child(format!("Section {section}"))
+                                    .children((0..ROWS).map(|row| {
+                                        let index = section * ROWS + row;
+                                        h_flex()
+                                            .gap_2()
+                                            .child(div().w(px(90.)).child(format!("Field {index}")))
+                                            .child(
+                                                div()
+                                                    .w(px(140.))
+                                                    .debug_selector(move || {
+                                                        format!("input-{index}")
+                                                    })
+                                                    .child(NumberInput::new(&self.inputs[index])),
+                                            )
+                                    }))
+                            })),
                     ),
                 ),
             )
@@ -121,8 +130,18 @@ impl Render for Workspace {
                 v_flex()
                     .w(px(360.))
                     .h_full()
-                    .child(div().h(px(40.)).w_full().child(AnyView::from(self.toolbar.clone()).cached(fill())))
-                    .child(div().flex_1().w_full().child(AnyView::from(self.hierarchy.clone()).cached(fill()))),
+                    .child(
+                        div()
+                            .h(px(40.))
+                            .w_full()
+                            .child(AnyView::from(self.toolbar.clone()).cached(fill())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .w_full()
+                            .child(AnyView::from(self.hierarchy.clone()).cached(fill())),
+                    ),
             )
             .child(
                 div()
@@ -158,10 +177,10 @@ impl Render for AppWindow {
                     ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .w_full()
-                    .child(AnyView::from(self.workspace.clone()).cached(StyleRefinement::default().size_full())),
+                div().flex_1().w_full().child(
+                    AnyView::from(self.workspace.clone())
+                        .cached(StyleRefinement::default().size_full()),
+                ),
             )
     }
 }
@@ -255,7 +274,14 @@ fn scrollable_panels_keep_their_content_when_sibling_layers_update() {
                 eprintln!("TEMP-STEP {label}: drawn");
                 let truth_pixels = truth.presented();
                 let check = |frame: Vec<u8>, when: &str| {
-                    compare_frames(&frame, &truth_pixels, width, height, &format!("{label}, {when}"), &output)
+                    compare_frames(
+                        &frame,
+                        &truth_pixels,
+                        width,
+                        height,
+                        &format!("{label}, {when}"),
+                        &output,
+                    )
                 };
                 failures.extend(check(live.presented(), "interaction frame").err());
                 if let Err(error) = live.settle(&mut cx) {
@@ -264,7 +290,9 @@ fn scrollable_panels_keep_their_content_when_sibling_layers_update() {
                 failures.extend(check(live.presented(), "after the renderer's wake-ups").err());
                 // Idle viewport frames re-present the last scene.
                 for index in 0..3 {
-                    failures.extend(check(live.idle_frame(&mut cx), &format!("idle frame {index}")).err());
+                    failures.extend(
+                        check(live.idle_frame(&mut cx), &format!("idle frame {index}")).err(),
+                    );
                 }
                 if failures.len() >= 5 {
                     panic!("{}", failures.join("\n"));

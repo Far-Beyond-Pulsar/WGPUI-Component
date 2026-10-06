@@ -8,8 +8,8 @@
 //! the probes below show the difference deterministically.
 
 use gpui::{
-    App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, TestAppContext, Window, div, px,
+    div, px, App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    ScrollHandle, StatefulInteractiveElement as _, Styled as _, TestAppContext, Window,
 };
 
 /// What `Scrollbar` requests: absolute, 100 % x 100 %, grow / shrink 1.
@@ -54,7 +54,9 @@ impl Render for Harness {
 #[gpui::test]
 fn an_overlay_without_insets_lands_below_the_list(cx: &mut TestAppContext) {
     cx.update(ui::init);
-    let (_, window) = cx.add_window_view(|_, _| Harness { list: ScrollHandle::new() });
+    let (_, window) = cx.add_window_view(|_, _| Harness {
+        list: ScrollHandle::new(),
+    });
     window.update(|window, cx: &mut App| window.draw(cx).clear());
     window.update(|window, cx: &mut App| window.draw(cx).clear());
 
@@ -68,5 +70,9 @@ fn an_overlay_without_insets_lands_below_the_list(cx: &mut TestAppContext) {
     assert_eq!(zero.size.height, container.size.height - px(2.));
 
     // With none it is pushed down by the in-flow list above it.
-    assert_eq!(auto.origin.y, zero.origin.y + px(300.), "static position is after the list");
+    assert_eq!(
+        auto.origin.y,
+        zero.origin.y + px(300.),
+        "static position is after the list"
+    );
 }
