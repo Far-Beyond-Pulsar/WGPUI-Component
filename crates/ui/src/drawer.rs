@@ -45,6 +45,7 @@ pub struct Drawer {
     margin_top: Pixels,
     overlay: bool,
     overlay_closable: bool,
+    floating: bool,
 }
 
 impl Drawer {
@@ -60,6 +61,7 @@ impl Drawer {
             margin_top: TITLE_BAR_HEIGHT,
             overlay: true,
             overlay_closable: true,
+            floating: false,
             on_close: Rc::new(|_, _, _| {}),
         }
     }
@@ -105,6 +107,13 @@ impl Drawer {
     /// Set whether the drawer should be closable by clicking the overlay, default is `true`.
     pub fn overlay_closable(mut self, overlay_closable: bool) -> Self {
         self.overlay_closable = overlay_closable;
+        self
+    }
+
+    /// Present the drawer as an inset floating panel instead of attaching it
+    /// flush to the viewport edge. The mode works with every placement.
+    pub fn floating(mut self, floating: bool) -> Self {
+        self.floating = floating;
         self
     }
 
@@ -184,20 +193,44 @@ impl RenderOnce for Drawer {
                             .border_color(cx.theme().border)
                             .shadow_xl()
                             .map(|this| {
-                                // Set the size of the drawer.
-                                if placement.is_horizontal() {
+                                if self.floating {
+                                    // Keep the same requested drawer dimension while
+                                    // leaving a consistent gutter around the panel.
+                                    let gutter = px(16.);
+                                    let panel = if placement.is_horizontal() {
+                                        this.h(size.height - gutter * 2.).w(self.size)
+                                    } else {
+                                        this.w(size.width - gutter * 2.).h(self.size)
+                                    };
+                                    let panel = if placement == Placement::Bottom {
+                                        panel.rounded_tl(px(8.)).rounded_tr(px(8.))
+                                    } else {
+                                        panel.rounded_lg()
+                                    };
+                                    panel.border_1().overflow_hidden()
+                                } else if placement.is_horizontal() {
                                     this.h_full().w(self.size)
                                 } else {
                                     this.w_full().h(self.size)
                                 }
                             })
-                            .map(|this| match self.placement {
-                                Placement::Top => this.top_0().left_0().right_0().border_b_1(),
-                                Placement::Right => this.top_0().right_0().bottom_0().border_l_1(),
-                                Placement::Bottom => {
+                            .map(|this| match (self.placement, self.floating) {
+                                (Placement::Top, true) => this.top_4().left_4().right_4(),
+                                (Placement::Right, true) => this.top_4().right_4().bottom_4(),
+                                (Placement::Bottom, true) => this.bottom_0().left_4().right_4(),
+                                (Placement::Left, true) => this.top_4().left_4().bottom_4(),
+                                (Placement::Top, false) => {
+                                    this.top_0().left_0().right_0().border_b_1()
+                                }
+                                (Placement::Right, false) => {
+                                    this.top_0().right_0().bottom_0().border_l_1()
+                                }
+                                (Placement::Bottom, false) => {
                                     this.bottom_0().left_0().right_0().border_t_1()
                                 }
-                                Placement::Left => this.top_0().left_0().bottom_0().border_r_1(),
+                                (Placement::Left, false) => {
+                                    this.top_0().left_0().bottom_0().border_r_1()
+                                }
                             })
                             .child(
                                 // TitleBar
