@@ -145,3 +145,20 @@ fn a_hidden_tab_strip_leaves_only_the_active_panel(cx: &mut TestAppContext) {
         "showing it again restores the layout"
     );
 }
+
+#[gpui::test]
+fn a_tab_drag_can_start_outside_the_strip(cx: &mut TestAppContext) {
+    let mut f = open(cx);
+    let tabs = f.tabs.clone();
+    tabs.update(&mut f.cx, |tabs, cx| tabs.set_tab_bar_hidden(true, cx));
+
+    let second = f.cx.update(|_, cx| TabPanel::tab_drag(&tabs, 1, cx));
+    let second = second.expect("a drag of the second tab");
+    let name = f.cx.update(|_, cx| second.panel().panel_name(cx));
+    assert_eq!(name, "second");
+
+    assert!(f
+        .cx
+        .update(|_, cx| TabPanel::tab_drag(&tabs, 2, cx))
+        .is_none());
+}

@@ -53,8 +53,11 @@ impl Default for DockChannel {
     }
 }
 
+/// What a dragged tab carries. The dock's drop targets (split zones over a
+/// panel, other tab strips) accept it. Start one from outside a tab strip with
+/// [`TabPanel::tab_drag`].
 #[derive(Clone)]
-pub(crate) struct DragPanel {
+pub struct DragPanel {
     pub(crate) panel: Arc<dyn PanelView>,
     pub(crate) tab_panel: Entity<TabPanel>,
     pub(crate) source_index: usize,
@@ -82,9 +85,15 @@ impl DragPanel {
         self
     }
 
-    pub(crate) fn with_start_position(mut self, position: Point<Pixels>) -> Self {
+    /// Record where the drag started, as a tab strip's drag does.
+    pub fn with_start_position(mut self, position: Point<Pixels>) -> Self {
         self.drag_start_position = Some(position);
         self
+    }
+
+    /// The panel being dragged.
+    pub fn panel(&self) -> &Arc<dyn PanelView> {
+        &self.panel
     }
 }
 
@@ -212,6 +221,15 @@ impl TabPanel {
             self.tab_bar_hidden = hidden;
             cx.notify();
         }
+    }
+
+    /// A drag of the tab at `ix`, as dragging it in the tab strip would start.
+    /// Lets something other than the strip (a sidebar listing the tabs) drag a
+    /// tab into a split or another tab group. `None` when there is no such tab.
+    pub fn tab_drag(this: &Entity<Self>, ix: usize, cx: &App) -> Option<DragPanel> {
+        let tabs = this.read(cx);
+        let panel = tabs.panels.get(ix)?.clone();
+        Some(DragPanel::new(panel, this.clone(), tabs.channel).with_index(ix))
     }
 
     /// Whether the tab strip is hidden; see [`Self::set_tab_bar_hidden`].
