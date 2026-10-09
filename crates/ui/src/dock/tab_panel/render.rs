@@ -445,26 +445,28 @@ impl TabPanel {
                         })
                     });
 
-                    tab = tab.when(!lock_close, |tab| tab.suffix(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new(("close-tab", orig_ix))
-                                    .icon(IconName::Close)
-                                    .ghost()
-                                    .xsmall()
-                                    .on_click({
-                                        let p = panel.clone();
-                                        let v = view_for_dnd.clone();
-                                        move |_, window, cx| {
-                                            v.update(cx, |this, cx| {
-                                                this.remove_panel(p.clone(), window, cx);
-                                            });
-                                        }
-                                    }),
-                            )
-                            .into_any_element(),
-                    ));
+                    tab = tab.when(!lock_close, |tab| {
+                        tab.suffix(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new(("close-tab", orig_ix))
+                                        .icon(IconName::Close)
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click({
+                                            let p = panel.clone();
+                                            let v = view_for_dnd.clone();
+                                            move |_, window, cx| {
+                                                v.update(cx, |this, cx| {
+                                                    this.remove_panel(p.clone(), window, cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                                .into_any_element(),
+                        )
+                    });
 
                     tab
                 }
@@ -542,7 +544,9 @@ impl TabPanel {
 
                         let can_close = panels_for_menu
                             .get(tab_index)
-                            .map(|p| p.closable(cx) && p.panel_name(cx) != "Level Editor" && !lock_close)
+                            .map(|p| {
+                                p.closable(cx) && p.panel_name(cx) != "Level Editor" && !lock_close
+                            })
                             .unwrap_or(false);
 
                         let mut result = menu;
