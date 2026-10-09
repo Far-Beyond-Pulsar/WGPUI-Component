@@ -124,10 +124,15 @@ fn a_hidden_tab_strip_leaves_only_the_active_panel(cx: &mut TestAppContext) {
     tabs.update(&mut f.cx, |tabs, cx| tabs.set_tab_bar_hidden(true, cx));
     draw(&mut f);
     let hidden = bounds(&mut f.cx, "first").expect("first page without the strip");
-    assert_eq!(hidden.origin.y, host.origin.y, "the page takes the strip's place");
+    assert_eq!(
+        hidden.origin.y, host.origin.y,
+        "the page takes the strip's place"
+    );
     assert!(hidden.size.height > shown.size.height);
 
-    tabs.update_in(&mut f.cx, |tabs, window, cx| tabs.set_active_tab(1, window, cx));
+    tabs.update_in(&mut f.cx, |tabs, window, cx| {
+        tabs.set_active_tab(1, window, cx)
+    });
     draw(&mut f);
     let second = bounds(&mut f.cx, "second").expect("tabs still switch");
     assert_eq!(second.origin.y, host.origin.y, "still without the strip");
@@ -135,5 +140,8 @@ fn a_hidden_tab_strip_leaves_only_the_active_panel(cx: &mut TestAppContext) {
     tabs.update(&mut f.cx, |tabs, cx| tabs.set_tab_bar_hidden(false, cx));
     draw(&mut f);
     let back = bounds(&mut f.cx, "second").expect("second page with the strip");
-    assert_eq!(back.origin.y, shown.origin.y, "showing it again restores the layout");
+    assert_eq!(
+        back.origin.y, shown.origin.y,
+        "showing it again restores the layout"
+    );
 }
