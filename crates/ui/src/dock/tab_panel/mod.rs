@@ -53,8 +53,11 @@ impl Default for DockChannel {
     }
 }
 
+/// What a dragged tab carries. The dock's drop targets (split zones over a
+/// panel, other tab strips) accept it. Start one from outside a tab strip with
+/// [`TabPanel::tab_drag`].
 #[derive(Clone)]
-pub(crate) struct DragPanel {
+pub struct DragPanel {
     pub(crate) panel: Arc<dyn PanelView>,
     pub(crate) tab_panel: Entity<TabPanel>,
     pub(crate) source_index: usize,
@@ -82,9 +85,15 @@ impl DragPanel {
         self
     }
 
-    pub(crate) fn with_start_position(mut self, position: Point<Pixels>) -> Self {
+    /// Record where the drag started, as a tab strip's drag does.
+    pub fn with_start_position(mut self, position: Point<Pixels>) -> Self {
         self.drag_start_position = Some(position);
         self
+    }
+
+    /// The panel being dragged.
+    pub fn panel(&self) -> &Arc<dyn PanelView> {
+        &self.panel
     }
 }
 
@@ -162,6 +171,9 @@ pub struct TabPanel {
     /// last remaining tab be closed. Used by the editor's center area so going
     /// between one tab and many does not change how the bar looks.
     pub(crate) persistent_tabs: bool,
+    /// Draw no tab strip at all, only the active panel. Used when something
+    /// else lists and switches the tabs (the editor's left sidebar).
+    pub(crate) tab_bar_hidden: bool,
 }
 
 impl TabPanel {
@@ -192,6 +204,7 @@ impl TabPanel {
             extraction_in_flight: false,
             extracted_window: None,
             persistent_tabs: false,
+            tab_bar_hidden: false,
         }
     }
 
@@ -199,6 +212,29 @@ impl TabPanel {
     pub fn set_persistent_tabs(&mut self, persistent: bool, cx: &mut Context<Self>) {
         self.persistent_tabs = persistent;
         cx.notify();
+    }
+
+    /// Hide or show the tab strip; see the field docs. The panels, the active
+    /// tab and every tab action keep working while it is hidden.
+    pub fn set_tab_bar_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        if self.tab_bar_hidden != hidden {
+            self.tab_bar_hidden = hidden;
+            cx.notify();
+        }
+    }
+
+    /// A drag of the tab at `ix`, as dragging it in the tab strip would start.
+    /// Lets something other than the strip (a sidebar listing the tabs) drag a
+    /// tab into a split or another tab group. `None` when there is no such tab.
+    pub fn tab_drag(this: &Entity<Self>, ix: usize, cx: &App) -> Option<DragPanel> {
+        let tabs = this.read(cx);
+        let panel = tabs.panels.get(ix)?.clone();
+        Some(DragPanel::new(panel, this.clone(), tabs.channel).with_index(ix))
+    }
+
+    /// Whether the tab strip is hidden; see [`Self::set_tab_bar_hidden`].
+    pub fn tab_bar_hidden(&self) -> bool {
+        self.tab_bar_hidden
     }
 
     /// Returns the index of the panel with the given entity_id, or None if not found.
