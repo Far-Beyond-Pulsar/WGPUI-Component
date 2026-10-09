@@ -776,7 +776,9 @@ impl Render for TabPanel {
                 }),
             )
             // NO BACKGROUND - allow transparency for viewports
-            .child(self.render_title_bar(&state, window, cx))
+            .when(!self.tab_bar_hidden, |this| {
+                this.child(self.render_title_bar(&state, window, cx))
+            })
             .child(self.render_active_panel(&state, window, cx))
     }
 }
