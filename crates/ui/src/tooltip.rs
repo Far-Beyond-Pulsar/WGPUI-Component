@@ -2,13 +2,9 @@ use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, Action, AnyElement, AnyView, App,
     AppContext, Bounds, Context, Corner, Element, ElementId, GlobalElementId, Hitbox,
     HitboxBehavior, InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Point,
-    Render, SharedString, StyleRefinement, Styled, Window,
+    Render, SharedString, StyleRefinement, Styled, Task, Window,
 };
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use crate::{h_flex, text::Text, ActiveTheme, Kbd, StyledExt};
 
@@ -114,7 +110,10 @@ struct HoverTooltipSharedState {
     hovered: bool,
     visible: bool,
     mouse_position: Point<Pixels>,
-    hover_started_at: Option<Instant>,
+    /// Shows the tooltip once the pointer has rested for
+    /// [`TOOLTIP_STATIONARY_DELAY`]; replaced when it moves, dropped (and so
+    /// cancelled) when it leaves.
+    show_task: Option<Task<()>>,
 }
 
 pub struct HoverTooltip {
@@ -308,22 +307,11 @@ impl Element for HoverTooltip {
         // Invalidate only the view that owns this tooltip. `window.refresh()`
         // discards every cached view in the window, so hovering any
         // tooltip-bearing control rebuilt the whole editor UI (~10 ms+) on each
-        // pointer move, even with no keyboard or panel interaction.
+        // pointer move, even with no keyboard or panel interaction. The delay
+        // is one timer, not a frame loop: requesting an animation frame on
+        // every paint until it ran out re-rendered the owner ~15 times per
+        // hover.
         let owner_view = window.current_view();
-
-        {
-            let mut state = request_layout.hover_state.borrow_mut();
-            if state.hovered && !state.visible {
-                if let Some(hover_started_at) = state.hover_started_at {
-                    if hover_started_at.elapsed() >= TOOLTIP_STATIONARY_DELAY {
-                        state.visible = true;
-                        cx.notify(owner_view);
-                    } else {
-                        window.request_animation_frame();
-                    }
-                }
-            }
-        }
 
         let hitbox = prepaint.hitbox.clone();
         let hover_state = request_layout.hover_state.clone();
@@ -339,13 +327,28 @@ impl Element for HoverTooltip {
                 let mouse_moved =
                     !state.hovered || moved_significantly(state.mouse_position, event.position);
                 if mouse_moved {
+                    let was_visible = state.visible;
                     state.hovered = true;
                     state.visible = false;
                     state.mouse_position = event.position;
-                    state.hover_started_at = Some(Instant::now());
-
-                    // Kick the next paint so the delay loop can run in paint context.
-                    cx.notify(owner_view);
+                    let hover_state = hover_state.clone();
+                    state.show_task = Some(window.spawn(cx, async move |cx| {
+                        cx.background_executor()
+                            .timer(TOOLTIP_STATIONARY_DELAY)
+                            .await;
+                        let show = {
+                            let mut state = hover_state.borrow_mut();
+                            let show = state.hovered && !state.visible;
+                            state.visible |= show;
+                            show
+                        };
+                        if show {
+                            _ = cx.update(|_, cx| cx.notify(owner_view));
+                        }
+                    }));
+                    if was_visible {
+                        cx.notify(owner_view);
+                    }
                 }
                 return;
             }
@@ -354,7 +357,7 @@ impl Element for HoverTooltip {
                 let was_visible = state.visible;
                 state.hovered = false;
                 state.visible = false;
-                state.hover_started_at = None;
+                state.show_task = None;
                 if was_visible {
                     cx.notify(owner_view);
                 }

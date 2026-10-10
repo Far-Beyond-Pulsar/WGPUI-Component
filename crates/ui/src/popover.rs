@@ -269,6 +269,9 @@ impl<M: ManagedView> Element for Popover<M> {
                 let mut popover_layout_id = None;
                 let mut popover_element = None;
                 let mut is_open = false;
+                // Opening and closing change only what this view draws.
+                // `window.refresh()` here rebuilt every cached view.
+                let owner_view = window.current_view();
 
                 if let Some(content_view) = element_state.content_view.borrow_mut().as_mut() {
                     is_open = true;
@@ -299,11 +302,11 @@ impl<M: ManagedView> Element for Popover<M> {
                                     })
                                     .child(content_view.clone())
                                     .when(!no_style, |this| {
-                                        this.on_mouse_down_out(move |_, window, _| {
+                                        this.on_mouse_down_out(move |_, _, cx| {
                                             // Update the element_state.content_view to `None`,
                                             // so that the `paint`` method will not paint it.
                                             *content_view_mut.borrow_mut() = None;
-                                            window.refresh();
+                                            cx.notify(owner_view);
                                         })
                                     }),
                             ),
@@ -408,6 +411,7 @@ impl<M: ManagedView> Element for Popover<M> {
                 let old_content_view = element_state.content_view.clone();
                 let hitbox_id = prepaint.hitbox.id;
                 let mouse_button = this.mouse_button;
+                let owner_view = window.current_view();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase == DispatchPhase::Bubble
                         && event.button == mouse_button
@@ -435,14 +439,14 @@ impl<M: ManagedView> Element for Popover<M> {
                                     }
                                     *old_content_view1.borrow_mut() = None;
 
-                                    window.refresh();
+                                    cx.notify(owner_view);
                                 },
                             )
                             .detach();
 
                         window.focus(&new_content_view.focus_handle(cx), cx);
                         *old_content_view.borrow_mut() = Some(new_content_view);
-                        window.refresh();
+                        cx.notify(owner_view);
                     }
                 });
             },
