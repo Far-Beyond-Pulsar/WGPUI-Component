@@ -181,21 +181,12 @@ impl DockItem {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let mut items = items;
         let stack_panel = cx.new(|cx| {
             let mut stack_panel = StackPanel::new(axis, window, cx);
-            for (i, item) in items.iter_mut().enumerate() {
-                let view = item.view();
-                let size = sizes.get(i).copied().flatten();
-                stack_panel.add_panel(view.clone(), size, dock_area.clone(), window, cx)
-            }
-
             for (i, item) in items.iter().enumerate() {
-                let view = item.view();
                 let size = sizes.get(i).copied().flatten();
-                stack_panel.add_panel(view.clone(), size, dock_area.clone(), window, cx)
+                stack_panel.add_panel(item.view(), size, dock_area.clone(), window, cx)
             }
-
             stack_panel
         });
 
@@ -949,31 +940,46 @@ impl DockArea {
         self.remove_panel(panel.clone(), DockPlacement::Bottom, window, cx);
     }
 
-    /// Load the state of the DockArea from the DockAreaState.
-    ///
-    /// See also [DockeArea::dump].
+    /// Replace `this` dock area's layout with `state` (see [DockArea::dump]).
+    /// Docks `state` has no entry for are kept.
     pub fn load(
-        &mut self,
+        this: &Entity<Self>,
         state: DockAreaState,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Result<()> {
-        self.version = state.version;
-        let weak_self = cx.entity().downgrade();
+        // The items are built outside an update of `this`: building tabs reads
+        // the dock area (its channel), which an update would have leased.
+        let weak = this.downgrade();
+        let left_dock = state.left_dock.map(|dock| dock.to_dock(weak.clone(), window, cx));
+        let right_dock = state.right_dock.map(|dock| dock.to_dock(weak.clone(), window, cx));
+        let bottom_dock = state.bottom_dock.map(|dock| dock.to_dock(weak.clone(), window, cx));
+        let center = state.center.to_item(weak, window, cx);
 
-        if let Some(left_dock_state) = state.left_dock {
-            self.left_dock = Some(left_dock_state.to_dock(weak_self.clone(), window, cx));
+        // Subscribed like `set_center` and the `set_*_dock`s do; without it,
+        // layout changes in the loaded panels never reach the dock area
+        // (#1017).
+        let mut loaded = vec![center.clone()];
+        for dock in [&left_dock, &right_dock, &bottom_dock].into_iter().flatten() {
+            loaded.push(dock.read(cx).panel.clone());
         }
-
-        if let Some(right_dock_state) = state.right_dock {
-            self.right_dock = Some(right_dock_state.to_dock(weak_self.clone(), window, cx));
-        }
-
-        if let Some(bottom_dock_state) = state.bottom_dock {
-            self.bottom_dock = Some(bottom_dock_state.to_dock(weak_self.clone(), window, cx));
-        }
-
-        self.items = state.center.to_item(weak_self, window, cx);
+        this.update(cx, |this, cx| {
+            this.version = state.version;
+            if left_dock.is_some() {
+                this.left_dock = left_dock;
+            }
+            if right_dock.is_some() {
+                this.right_dock = right_dock;
+            }
+            if bottom_dock.is_some() {
+                this.bottom_dock = bottom_dock;
+            }
+            this.items = center;
+            for item in &loaded {
+                this.subscribe_item(item, window, cx);
+            }
+            cx.notify();
+        });
         Ok(())
     }
 
