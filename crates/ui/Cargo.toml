@@ -96,7 +96,7 @@ mathjax-svg-rs = "0.4"
 mermaid-rs-renderer = { version = "0.2.2", default-features = false }
 rust_decimal = "1.37"
 streaming-iterator = "0.1"
-tree-sitter = "0.24"
+tree-sitter = "0.25"
 tree-sitter-json = "0.24"
 
 # Tree-sitter language grammars (all optional, enabled by tree-sitter-languages feature)
