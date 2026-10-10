@@ -1,6 +1,6 @@
 use crate::{
     actions::{Cancel, SelectLeft, SelectRight},
-    button::{Button, ButtonVariants},
+    button::{Button, ButtonVariant, ButtonVariants},
     h_flex,
     popup_menu::PopupMenu,
     Selectable, Sizable,
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui::{
     anchored, deferred, div, img, prelude::FluentBuilder, px, App, AppContext as _, ClickEvent,
-    Context, DismissEvent, ImageSource, ObjectFit, StyledImage as _, Entity, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
+    Context, DismissEvent, ImageSource, MouseButton, ObjectFit, Pixels, StyledImage as _, Entity, Focusable, Global, InteractiveElement as _, IntoElement, KeyBinding,
     OwnedMenu, ParentElement, Render, RenderImage, SharedString, StatefulInteractiveElement, Styled,
     Subscription, Window,
 };
@@ -263,31 +263,82 @@ impl AppMenu {
     }
 }
 
+/// Side of the logo image drawn as the app menu trigger.
+const LOGO_SIZE: Pixels = px(44.);
+/// Margin between the logo and the edge of its hover/selected highlight.
+const LOGO_INSET: Pixels = px(4.);
+
+impl AppMenu {
+    /// The logo as the app menu trigger. A [`Button`] keeps its fixed
+    /// small-button height whatever its child, so the 44 px logo overflowed a
+    /// 24 px-tall highlight and only that strip was clickable. This trigger is
+    /// a square that wraps the logo, so the highlight and hitbox match it.
+    fn render_logo_trigger(
+        &self,
+        logo: Arc<RenderImage>,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ghost = ButtonVariant::Ghost;
+        let selected_bg = ghost.selected(false, cx).bg;
+        let hover_bg = ghost.hovered(false, cx).bg;
+        let active_bg = ghost.active(false, cx).bg;
+        // The logo is a rounded square; round the highlight to follow it.
+        let radius = LOGO_SIZE * 0.25 + LOGO_INSET;
+
+        div()
+            .id("menu")
+            .debug_selector(|| "app-menu-logo".into())
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .size(LOGO_SIZE + LOGO_INSET * 2.)
+            .rounded(radius)
+            .cursor_default()
+            .map(|this| {
+                if is_selected {
+                    this.bg(selected_bg)
+                } else {
+                    this.hover(|this| this.bg(hover_bg))
+                        .active(|this| this.bg(active_bg))
+                }
+            })
+            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                // Like Button: don't move focus on mouse down.
+                window.prevent_default();
+            })
+            .on_click(cx.listener(Self::handle_trigger_click))
+            .child(
+                img(ImageSource::Render(logo))
+                    .size(LOGO_SIZE)
+                    .object_fit(ObjectFit::Contain),
+            )
+    }
+}
+
 impl Render for AppMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_bar = self.menu_bar.read(cx);
         let is_selected = menu_bar.selected_ix == Some(self.ix);
 
+        let trigger = match self.logo.clone() {
+            Some(logo) => self.render_logo_trigger(logo, is_selected, cx).into_any_element(),
+            None => Button::new("menu")
+                .small()
+                .py_0p5()
+                .compact()
+                .ghost()
+                .label(self.name.clone())
+                .selected(is_selected)
+                .on_click(cx.listener(Self::handle_trigger_click))
+                .into_any_element(),
+        };
+
         div()
             .id(self.ix)
             .relative()
-            .child(
-                Button::new("menu")
-                    .small()
-                    .py_0p5()
-                    .compact()
-                    .ghost()
-                    .map(|this| match self.logo.clone() {
-                        Some(logo) => this.child(
-                            img(ImageSource::Render(logo))
-                                .size(px(44.))
-                                .object_fit(ObjectFit::Contain),
-                        ),
-                        _ => this.label(self.name.clone()),
-                    })
-                    .selected(is_selected)
-                    .on_click(cx.listener(Self::handle_trigger_click)),
-            )
+            .child(trigger)
             .on_hover(cx.listener(Self::handle_hover))
             .when(is_selected, |this| {
                 this.child(deferred(
@@ -296,6 +347,7 @@ impl Render for AppMenu {
                         .snap_to_window_with_margin(px(8.))
                         .child(
                             div()
+                                .debug_selector(|| "app-menu-popup".into())
                                 .size_full()
                                 .occlude()
                                 .top_1()
