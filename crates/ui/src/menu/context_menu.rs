@@ -225,6 +225,10 @@ impl Element for ContextMenu {
             cx,
             |_view, state: &mut ContextMenuState, window, _| {
                 let shared_state = state.shared_state.clone();
+                // Opening and closing change only what this view draws: the
+                // menu is part of it. `window.refresh()` here rebuilt every
+                // cached view in the window.
+                let owner_view = window.current_view();
 
                 // When right mouse click, to build content menu, and show it at the mouse position.
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
@@ -246,15 +250,15 @@ impl Element for ContextMenu {
                         window
                             .subscribe(&menu, cx, {
                                 let shared_state = shared_state.clone();
-                                move |_, _: &DismissEvent, window, _| {
+                                move |_, _: &DismissEvent, _, cx| {
                                     shared_state.borrow_mut().open = false;
-                                    window.refresh();
+                                    cx.notify(owner_view);
                                 }
                             })
                             .detach();
 
                         shared_state.borrow_mut().menu_view = Some(menu.clone());
-                        window.refresh();
+                        cx.notify(owner_view);
                     }
                 });
             },
