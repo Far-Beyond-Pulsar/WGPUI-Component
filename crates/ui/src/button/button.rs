@@ -633,8 +633,8 @@ impl RenderOnce for Button {
     }
 }
 
-struct ButtonVariantStyle {
-    bg: Hsla,
+pub(crate) struct ButtonVariantStyle {
+    pub(crate) bg: Hsla,
     border: Hsla,
     fg: Hsla,
     underline: bool,
@@ -793,7 +793,7 @@ impl ButtonVariant {
         }
     }
 
-    fn hovered(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
+    pub(crate) fn hovered(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
         let bg = match self {
             ButtonVariant::Primary => {
                 if outline {
@@ -867,7 +867,7 @@ impl ButtonVariant {
         }
     }
 
-    fn active(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
+    pub(crate) fn active(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
         let bg = match self {
             ButtonVariant::Primary => {
                 if outline {
@@ -940,7 +940,7 @@ impl ButtonVariant {
         }
     }
 
-    fn selected(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
+    pub(crate) fn selected(&self, outline: bool, cx: &mut App) -> ButtonVariantStyle {
         let bg = match self {
             ButtonVariant::Primary => cx.theme().primary_active,
             ButtonVariant::Secondary | ButtonVariant::Ghost => cx.theme().secondary_active,
