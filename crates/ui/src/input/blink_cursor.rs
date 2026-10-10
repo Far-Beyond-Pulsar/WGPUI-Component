@@ -43,6 +43,12 @@ impl BlinkCursor {
         cx.notify();
     }
 
+    /// Whether a blink chain is running.
+    #[cfg(test)]
+    pub(crate) fn is_running(&self) -> bool {
+        self.epoch != 0
+    }
+
     fn next_epoch(&mut self) -> usize {
         self.epoch += 1;
         self.epoch

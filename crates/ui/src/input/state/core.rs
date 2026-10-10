@@ -980,11 +980,11 @@ impl InputState {
     }
 
     /// Focus the input field.
+    /// Focus this input. The cursor starts blinking when the focus actually
+    /// arrives (`on_focus`): starting it here left a blink chain running on
+    /// every input focused while it was not on screen (#816).
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
-        self.blink_cursor.update(cx, |cursor, cx| {
-            cursor.start(cx);
-        });
     }
     pub fn cursor(&self) -> usize {
         if let Some(ime_marked_range) = &self.ime_marked_range {
@@ -1164,5 +1164,41 @@ impl Render for InputState {
             .children(self.diagnostic_popover.clone())
             .children(self.context_menu.as_ref().map(|menu| menu.render()))
             .children(self.hover_popover.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{div, AppContext as _, IntoElement, Render, TestAppContext};
+
+    use super::InputState;
+
+    struct Empty;
+
+    impl Render for Empty {
+        fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// An input asked to focus while it is not on screen never gets the
+    /// focus, so it must not start blinking (#816).
+    #[gpui::test]
+    fn focusing_an_input_that_is_not_shown_starts_no_blink(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| cx.new(|_| Empty))
+                .expect("window")
+        });
+        let input = window
+            .update(cx, |_, window, cx| {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                input.update(cx, |input, cx| input.focus(window, cx));
+                input
+            })
+            .expect("window");
+        cx.run_until_parked();
+        let blinking = cx.update(|cx| input.read(cx).blink_cursor.read(cx).is_running());
+        assert!(!blinking, "an input that never got the focus has no blink chain");
     }
 }
