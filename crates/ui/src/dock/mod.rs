@@ -1247,6 +1247,7 @@ impl DockArea {
                                     popout::origin_under_cursor(popout_position),
                                     DockChannel::default(),
                                     Some(popout_source.clone()),
+                                    None,
                                     cx,
                                 );
                             });
@@ -1257,6 +1258,7 @@ impl DockArea {
                                 popout::origin_under_cursor(popout_position),
                                 DockChannel::default(),
                                 Some(popout_source),
+                                None,
                                 cx,
                             );
                         }

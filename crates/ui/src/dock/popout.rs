@@ -304,6 +304,16 @@ struct PopoutRegistry(Vec<PopoutRecord>);
 
 impl Global for PopoutRegistry {}
 
+/// The window a pop-out belongs to, for a window that may itself be a pop-out:
+/// a tab dragged out of a pop-out belongs to the same editor window as that
+/// pop-out does, so it is saved with the window and not lost.
+fn root_parent(window: AnyWindowHandle, cx: &App) -> AnyWindowHandle {
+    cx.try_global::<PopoutRegistry>()
+        .and_then(|popouts| popouts.0.iter().find(|record| record.window == window))
+        .and_then(|record| record.parent)
+        .unwrap_or(window)
+}
+
 /// Every pop-out window that is currently open.
 pub fn live_popouts(cx: &App) -> Vec<PopoutInfo> {
     let (Some(popouts), Some(docks)) = (
@@ -402,7 +412,9 @@ pub fn open_popout_with(spec: PopoutSpec, cx: &mut App) -> Option<AnyWindowHandl
         channel,
         parent,
     } = spec;
-    let parent = parent.or(source.as_ref().map(|source| source.parent_window));
+    let parent = parent
+        .or(source.as_ref().map(|source| source.parent_window))
+        .map(|parent| root_parent(parent, cx));
 
     let options = WindowOptions {
         window_bounds: Some(bounds),
@@ -514,15 +526,19 @@ pub(crate) fn open_popout_window(
     origin: gpui::Point<Pixels>,
     channel: DockChannel,
     source: Option<PanelSource>,
+    parent: Option<AnyWindowHandle>,
     cx: &mut App,
 ) -> Option<AnyWindowHandle> {
     open_popout_with(
-        PopoutSpec::panel(
-            panel,
-            WindowBounds::Windowed(Bounds::new(origin, POPOUT_SIZE)),
-            channel,
-            source,
-        ),
+        PopoutSpec {
+            parent,
+            ..PopoutSpec::panel(
+                panel,
+                WindowBounds::Windowed(Bounds::new(origin, POPOUT_SIZE)),
+                channel,
+                source,
+            )
+        },
         cx,
     )
 }
