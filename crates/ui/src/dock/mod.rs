@@ -1282,11 +1282,14 @@ impl DockArea {
         cx: &mut Context<Self>,
     ) {
         self.zoom_view = Some(panel.into());
+        // Zoom is part of the persisted layout, so it counts as a layout change.
+        cx.emit(DockEvent::LayoutChanged);
         cx.notify();
     }
 
     pub fn set_zoomed_out(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.zoom_view = None;
+        cx.emit(DockEvent::LayoutChanged);
         cx.notify();
     }
 
