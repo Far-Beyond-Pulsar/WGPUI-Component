@@ -27,7 +27,7 @@ pub use popout::{
 pub use stack_panel::*;
 pub use state::*;
 pub use tab_drag::{
-    deposit_panel_into_window, drag_screen_position, find_target_window, register_dock_window,
+    all_dock_areas, deposit_panel_into_window, DockAreaInfo, drag_screen_position, find_target_window, register_dock_window,
     set_drag_screen_position, unregister_dock_window, DockWindowRegistry,
 };
 pub use tab_panel::*;
@@ -554,7 +554,8 @@ impl DockArea {
         // Register with the global window registry so cross-window drags work.
         let weak_self = cx.entity().downgrade();
         let window_handle = window.window_handle();
-        tab_drag::register_dock_window(window_handle, weak_self, channel, cx);
+        tab_drag::register_dock_window(window_handle, weak_self.clone(), channel, cx);
+        tab_drag::track_dock_area(window_handle, weak_self, cx);
 
         this
     }

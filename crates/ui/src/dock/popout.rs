@@ -314,6 +314,12 @@ fn root_parent(window: AnyWindowHandle, cx: &App) -> AnyWindowHandle {
         .unwrap_or(window)
 }
 
+/// Whether `window` is a pop-out window.
+pub(super) fn is_popout_window(window: AnyWindowHandle, cx: &App) -> bool {
+    cx.try_global::<PopoutRegistry>()
+        .is_some_and(|popouts| popouts.0.iter().any(|record| record.window == window))
+}
+
 /// Every pop-out window that is currently open.
 pub fn live_popouts(cx: &App) -> Vec<PopoutInfo> {
     let (Some(popouts), Some(docks)) = (

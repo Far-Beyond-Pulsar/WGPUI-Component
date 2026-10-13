@@ -292,12 +292,62 @@ impl PanelState {
         }
     }
 
+    /// Mark this leaf as an *owned* panel: one of the inner panels of the editor
+    /// that edits `owner_file` (the Blueprint editor's graph canvas, a level
+    /// editor's hierarchy...). It has no file or restore key of its own; on
+    /// restore it is found again among the live panels of that editor by
+    /// `(panel_name, owner file, nth)` rather than rebuilt.
+    ///
+    /// `nth` tells apart several panels of the same name owned by one editor (a
+    /// Blueprint with several graph tabs). Panels leave it at 0; the layout code
+    /// assigns the real value when it saves. Merges with the other leaf keys.
+    pub fn with_owner(mut self, owner_file: impl Into<String>, nth: usize) -> Self {
+        self.leaf_object_mut().insert(
+            "owner".to_string(),
+            serde_json::json!({ "file": owner_file.into(), "nth": nth }),
+        );
+        self
+    }
+
+    /// The owner marker `(owner file, nth)` of a leaf, if it recorded one.
+    pub fn owner(&self) -> Option<(&str, usize)> {
+        let owner = match &self.info {
+            PanelInfo::Panel(value) => value.get("owner")?,
+            _ => return None,
+        };
+        let nth = owner.get("nth").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
+        Some((owner.get("file")?.as_str()?, nth))
+    }
+
+    /// Mutable access to the owner's file, for rewriting paths on save / load.
+    pub fn owner_file_mut(&mut self) -> Option<&mut serde_json::Value> {
+        match &mut self.info {
+            PanelInfo::Panel(value) => value.get_mut("owner")?.get_mut("file"),
+            _ => None,
+        }
+    }
+
+    /// Set the `nth` of an existing owner marker. `false` if the leaf has none.
+    pub fn set_owner_nth(&mut self, nth: usize) -> bool {
+        match &mut self.info {
+            PanelInfo::Panel(value) => match value.get_mut("owner") {
+                Some(owner) if owner.is_object() => {
+                    owner["nth"] = serde_json::Value::from(nth);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Whether `self` and `other` name the same panel: same `panel_name`, same
-    /// recorded file and same restore key.
+    /// recorded file, same restore key and same owner marker.
     pub fn same_identity(&self, other: &PanelState) -> bool {
         self.panel_name == other.panel_name
             && self.file() == other.file()
             && self.restore_key() == other.restore_key()
+            && self.owner() == other.owner()
     }
 
     /// Mutable access to the recorded file, for rewriting paths on save / load.
@@ -405,6 +455,59 @@ mod tests {
         assert!(leaf("P").same_identity(&leaf("P")));
         assert!(leaf("P").restore_key().is_none());
         assert!(leaf("P").restore_data_mut_is_none());
+    }
+
+    #[test]
+    fn owner_merges_with_file_and_restore_in_any_order() {
+        let a = leaf("graph-canvas")
+            .with_owner("/p/A.class", 2)
+            .with_file("x.rs")
+            .with_restore("k", serde_json::Value::Null);
+        let b = leaf("graph-canvas")
+            .with_restore("k", serde_json::Value::Null)
+            .with_file("x.rs")
+            .with_owner("/p/A.class", 2);
+        assert_eq!(a, b);
+        assert_eq!(a.owner(), Some(("/p/A.class", 2)));
+        assert_eq!(a.file(), Some("x.rs"));
+        assert!(a.restore_key().is_some());
+        assert!(leaf("g").owner().is_none());
+        assert!(leaf("g").with_file("f").owner().is_none());
+    }
+
+    #[test]
+    fn owner_round_trips_through_json_and_old_files_have_none() {
+        let s = leaf("graph-canvas").with_owner("A.class", 1);
+        let back: PanelState = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.owner(), Some(("A.class", 1)));
+        // A missing nth reads as 0; a marker without a file is no marker.
+        let mut loose = leaf("g");
+        loose.info = PanelInfo::Panel(serde_json::json!({ "owner": { "file": "a" } }));
+        assert_eq!(loose.owner(), Some(("a", 0)));
+        loose.info = PanelInfo::Panel(serde_json::json!({ "owner": { "nth": 3 } }));
+        assert_eq!(loose.owner(), None);
+    }
+
+    #[test]
+    fn owner_file_and_nth_are_mutable_and_part_of_the_identity() {
+        let mut s = leaf("g").with_owner("A", 0);
+        *s.owner_file_mut().unwrap() = serde_json::Value::from("B");
+        assert_eq!(s.owner(), Some(("B", 0)));
+        assert!(s.set_owner_nth(4));
+        assert_eq!(s.owner(), Some(("B", 4)));
+        assert!(!leaf("g").set_owner_nth(1));
+        assert!(leaf("g").owner_file_mut_is_none());
+
+        assert!(s.same_identity(&leaf("g").with_owner("B", 4)));
+        assert!(!s.same_identity(&leaf("g").with_owner("B", 5)));
+        assert!(!s.same_identity(&leaf("g").with_owner("C", 4)));
+        assert!(!s.same_identity(&leaf("g")));
+    }
+
+    impl PanelState {
+        fn owner_file_mut_is_none(mut self) -> bool {
+            self.owner_file_mut().is_none()
+        }
     }
 
     #[test]

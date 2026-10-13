@@ -479,6 +479,27 @@ impl TabPanel {
         }
     }
 
+    /// Take `panel` out of this tab panel so it can be shown elsewhere (what
+    /// dragging a tab out into a pop-out does): the panel is detached without
+    /// being closed, and the tab panel removes itself from its stack if that
+    /// left it empty. `false` (and nothing changes) if the panel is not here.
+    pub fn take_panel(
+        &mut self,
+        panel: Arc<dyn PanelView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let id = panel.view().entity_id();
+        if !self.panels.iter().any(|p| p.view().entity_id() == id) {
+            return false;
+        }
+        self.detach_panel(panel, window, cx);
+        self.remove_self_if_empty(window, cx);
+        cx.emit(PanelEvent::LayoutChanged);
+        cx.notify();
+        true
+    }
+
     pub(crate) fn detach_panel(
         &mut self,
         panel: Arc<dyn PanelView>,

@@ -168,6 +168,16 @@ pub trait Panel: EventEmitter<PanelEvent> + Render + Focusable {
         PanelState::new(self)
     }
 
+    /// For a panel that lives inside another editor (an editor's own inner dock:
+    /// the Blueprint graph canvas, the level editor's hierarchy...), the file of
+    /// the editor that owns it. The dock adds it to [`Self::dump`] as an owner
+    /// marker ([`PanelState::with_owner`]), which lets the layout restore find
+    /// this panel again after it was popped out or moved. `None` (the default)
+    /// for ordinary panels and for an owner without a file yet.
+    fn owner_file(&self, cx: &App) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Whether the panel has inner padding when the panel is in the tabs layout, default is `true`.
     fn inner_padding(&self, cx: &App) -> bool {
         true
@@ -319,7 +329,15 @@ impl<T: Panel> PanelView for Entity<T> {
     }
 
     fn dump(&self, cx: &App) -> PanelState {
-        self.read(cx).dump(cx)
+        let panel = self.read(cx);
+        let state = panel.dump(cx);
+        // An owned panel names its owner without every `dump()` repeating it.
+        match panel.owner_file(cx) {
+            Some(owner) if state.owner().is_none() => {
+                state.with_owner(owner.to_string_lossy().into_owned(), 0)
+            }
+            _ => state,
+        }
     }
 
     fn inner_padding(&self, cx: &App) -> bool {

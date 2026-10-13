@@ -73,6 +73,73 @@ pub fn unregister_dock_window(window_handle: AnyWindowHandle, cx: &mut App) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Every live dock area
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A live [`DockArea`] and the window it is in; see [`all_dock_areas`].
+#[derive(Clone)]
+pub struct DockAreaInfo {
+    pub window: AnyWindowHandle,
+    pub dock_area: gpui::WeakEntity<DockArea>,
+    /// Whether the window is a pop-out window (its dock area is a pop-out's).
+    pub popout: bool,
+}
+
+/// Every dock area ever constructed, in construction order. Unlike
+/// [`DockWindowRegistry`] (one entry per window, for cross-window drags) this
+/// also lists the dock areas an editor builds inside its own tab.
+#[derive(Default)]
+struct LiveDockAreas(Vec<(AnyWindowHandle, gpui::WeakEntity<DockArea>)>);
+
+impl Global for LiveDockAreas {}
+
+/// Remember a dock area (called when it is constructed). Dead entries are
+/// dropped on the way.
+pub(super) fn track_dock_area(
+    window_handle: AnyWindowHandle,
+    dock_area: gpui::WeakEntity<DockArea>,
+    cx: &mut App,
+) {
+    if !cx.has_global::<LiveDockAreas>() {
+        cx.set_global(LiveDockAreas::default());
+    }
+    let live = cx.global_mut::<LiveDockAreas>();
+    live.0.retain(|(_, area)| area.upgrade().is_some());
+    live.0.push((window_handle, dock_area));
+}
+
+/// Every live dock area of the app: the main window's, the ones editors keep
+/// inside their own tabs, and pop-outs'. Ordered for deterministic matching:
+/// dock areas of ordinary windows first, then pop-outs, each group in
+/// construction order. This is how the layout restore finds the inner panels of
+/// an editor (see [`PanelState::with_owner`](super::PanelState::with_owner)).
+pub fn all_dock_areas(cx: &App) -> Vec<DockAreaInfo> {
+    let Some(live) = cx.try_global::<LiveDockAreas>() else {
+        return Vec::new();
+    };
+    let (mut ordinary, mut popouts) = (Vec::new(), Vec::new());
+    for (window, area) in &live.0 {
+        if area.upgrade().is_none() {
+            continue;
+        }
+        let popout = super::popout::is_popout_window(*window, cx);
+        let info = DockAreaInfo {
+            window: *window,
+            dock_area: area.clone(),
+            popout,
+        };
+        if popout {
+            popouts.push(info);
+        } else {
+            ordinary.push(info);
+        }
+    }
+    ordinary.extend(popouts);
+    ordinary
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Drag position tracking
 // ─────────────────────────────────────────────────────────────────────────────
 
