@@ -728,15 +728,13 @@ impl InputState {
     ) {
         self.pause_blink_cursor(cx);
 
-        //FIX: This patched the inability to type in WINIT windows
-        let text = event.keystroke.key_char.clone().unwrap_or("".into());
-
-        if text.is_empty() && self.is_context_menu_open(cx) {
+        // Character input is routed through the platform's input handler, which
+        // replaces any active selection. Here we only refresh completions when a
+        // non-character key (e.g. an arrow or escape) was pressed.
+        if event.keystroke.key_char.is_none() {
             let cursor = self.cursor();
             self.handle_completion_trigger(&(cursor..cursor), "", window, cx);
         }
-
-        self.replace(text, window, cx);
     }
 
     pub(in crate::input) fn on_drag_move(

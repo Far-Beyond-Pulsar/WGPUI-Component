@@ -801,6 +801,8 @@ impl InputState {
 
     /// Insert text at the current cursor position.
     ///
+    /// If the selection is not empty, the selected text is replaced.
+    ///
     /// And the cursor will be moved to the end of inserted text.
     pub fn insert(
         &mut self,
@@ -809,12 +811,14 @@ impl InputState {
         cx: &mut Context<Self>,
     ) {
         let text: SharedString = text.into();
-        let range_utf16 = self.range_to_utf16(&(self.cursor()..self.cursor()));
+        let range_utf16 = self.range_to_utf16(&self.insertion_range());
         self.replace_text_in_range_silent(Some(range_utf16), &text, window, cx);
         self.selected_range = (self.selected_range.end..self.selected_range.end).into();
     }
 
     /// Replace text at the current cursor position.
+    ///
+    /// If the selection is not empty, the selected text is replaced.
     ///
     /// And the cursor will be moved to the end of replaced text.
     pub fn replace(
@@ -824,10 +828,19 @@ impl InputState {
         cx: &mut Context<Self>,
     ) {
         let text: SharedString = text.into();
-        let cursor_utf16 = self.range_to_utf16(&(self.cursor()..self.cursor()));
+        let range_utf16 = self.range_to_utf16(&self.insertion_range());
 
-        self.replace_text_in_range_silent(Some(cursor_utf16), &text, window, cx);
+        self.replace_text_in_range_silent(Some(range_utf16), &text, window, cx);
         self.selected_range = (self.selected_range.end..self.selected_range.end).into();
+    }
+
+    fn insertion_range(&self) -> Range<usize> {
+        if self.selected_range.is_empty() {
+            let cursor = self.cursor();
+            cursor..cursor
+        } else {
+            self.selected_range.into()
+        }
     }
 
     pub(in crate::input::state) fn replace_text(
