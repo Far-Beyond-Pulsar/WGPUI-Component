@@ -126,8 +126,8 @@ fn render_mermaid_svg(value: &str) -> Option<SharedString> {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
-    use super::{normalize_katex_default_delimiters, parse_paragraph, render_math_svg};
-    use crate::text::{node::NodeContext, node::Paragraph};
+    use super::{ast_to_node, normalize_katex_default_delimiters, parse_paragraph, render_math_svg};
+    use crate::text::{node::Node, node::NodeContext, node::Paragraph};
     use markdown::{mdast, ParseOptions};
 
     fn parse_inline(source: &str) -> Paragraph {
@@ -209,6 +209,24 @@ mod tests {
         let expected =
             "$outside$\n~~~math\n\\(tilde code\\)\n~~~\n````text\n\\(long fence\\)\n````\n";
         assert_eq!(normalize_katex_default_delimiters(source), expected);
+    }
+
+    #[test]
+    fn ordered_list_start_number_is_preserved() {
+        let ast = markdown::to_mdast("5. first\n6. second", &ParseOptions::gfm())
+            .expect("valid markdown");
+        let mut cx = NodeContext::default();
+        let style = crate::text::TextViewStyle::default();
+        let theme = crate::highlighter::HighlightTheme::default_dark();
+        let node = ast_to_node(ast, &style, &mut cx, &theme);
+
+        let Node::Root { children } = node else {
+            panic!("expected markdown root");
+        };
+        let Node::List { start, .. } = &children[0] else {
+            panic!("expected ordered list");
+        };
+        assert_eq!(*start, 5);
     }
 
     #[test]
