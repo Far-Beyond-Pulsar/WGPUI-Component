@@ -678,13 +678,21 @@ fn paragraph_plain_text_of_node(node: &mdast::Node) -> String {
         mdast::Node::InlineMath(math) => math.value.clone(),
         mdast::Node::Break(_) => "\n".to_string(),
         mdast::Node::Image(image) => image.alt.clone(),
-        mdast::Node::Strong(value) | mdast::Node::Emphasis(value) | mdast::Node::Delete(value) => {
-            value
-                .children
-                .iter()
-                .map(paragraph_plain_text_of_node)
-                .collect()
-        }
+        mdast::Node::Strong(value) => value
+            .children
+            .iter()
+            .map(paragraph_plain_text_of_node)
+            .collect(),
+        mdast::Node::Emphasis(value) => value
+            .children
+            .iter()
+            .map(paragraph_plain_text_of_node)
+            .collect(),
+        mdast::Node::Delete(value) => value
+            .children
+            .iter()
+            .map(paragraph_plain_text_of_node)
+            .collect(),
         mdast::Node::Link(value) => value
             .children
             .iter()
