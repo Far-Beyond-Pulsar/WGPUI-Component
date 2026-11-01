@@ -580,6 +580,7 @@ pub(crate) enum Node {
         /// Only contains ListItem, others will be ignored
         children: Vec<Node>,
         ordered: bool,
+        start: usize,
     },
     ListItem {
         children: Vec<Node>,
@@ -989,11 +990,22 @@ impl Paragraph {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct ListState {
     todo: bool,
     ordered: bool,
     depth: usize,
+    start: usize,
+}
+
+impl Default for ListState {
+    fn default() -> Self {
+        Self {
+            todo: false,
+            ordered: false,
+            depth: 0,
+            start: 1,
+        }
+    }
 }
 
 impl Node {
@@ -1012,6 +1024,8 @@ impl Node {
                 checked,
             } => v_flex()
                 .id("li")
+                .w_full()
+                .min_w_0()
                 .when(*spread, |this| this.child(div()))
                 .children({
                     let mut items: Vec<Div> = Vec::with_capacity(children.len());
@@ -1031,6 +1045,7 @@ impl Node {
                                         depth: state.depth + 1,
                                         ordered: state.ordered,
                                         todo: checked.is_some(),
+                                        start: state.start,
                                     }),
                                     false,
                                     true,
@@ -1041,24 +1056,31 @@ impl Node {
 
                                 // merge content into last item.
                                 if last_not_list {
-                                    if let Some(item_item) = items.last_mut() {
-                                        item_item.extend(vec![div()
-                                            .overflow_hidden()
-                                            .child(text)
-                                            .into_any_element()]);
+                                    if let Some(preceding_row) = items.pop() {
+                                        items.push(
+                                            v_flex().w_full().min_w_0().child(preceding_row).child(
+                                                div()
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .pl(rems(1.))
+                                                    .overflow_hidden()
+                                                    .child(text),
+                                            ),
+                                        );
                                         continue;
                                     }
                                 }
 
                                 items.push(
                                     h_flex()
-                                        .flex_1()
+                                        .w_full()
+                                        .min_w_0()
                                         .relative()
                                         .items_start()
                                         .content_start()
                                         .when(!state.todo && checked.is_none(), |this| {
                                             this.child(list_item_prefix(
-                                                ix,
+                                                ix + state.start.saturating_sub(1),
                                                 state.ordered,
                                                 state.depth,
                                             ))
@@ -1086,15 +1108,18 @@ impl Node {
                                                     }),
                                             )
                                         })
-                                        .child(div().overflow_hidden().child(text)),
+                                        .child(
+                                            div().flex_1().min_w_0().overflow_hidden().child(text),
+                                        ),
                                 );
                             }
                             Node::List { .. } => {
-                                items.push(div().ml(rems(1.)).child(child.render(
+                                items.push(div().min_w_0().ml(rems(1.)).child(child.render(
                                     Some(ListState {
                                         depth: state.depth + 1,
                                         ordered: state.ordered,
                                         todo: checked.is_some(),
+                                        start: 1,
                                     }),
                                     true,
                                     true,
@@ -1103,7 +1128,47 @@ impl Node {
                                     cx,
                                 )));
                             }
-                            _ => {}
+                            Node::Root { .. }
+                            | Node::Heading { .. }
+                            | Node::Blockquote { .. }
+                            | Node::Callout { .. }
+                            | Node::CodeBlock(_)
+                            | Node::Table(_)
+                            | Node::Divider => {
+                                let block = child.render(
+                                    Some(ListState {
+                                        depth: state.depth + 1,
+                                        ordered: state.ordered,
+                                        todo: checked.is_some(),
+                                        start: state.start,
+                                    }),
+                                    false,
+                                    true,
+                                    node_cx,
+                                    window,
+                                    cx,
+                                );
+
+                                if child_ix == 0 {
+                                    items.push(
+                                        h_flex()
+                                            .w_full()
+                                            .min_w_0()
+                                            .items_start()
+                                            .when(!state.todo && checked.is_none(), |this| {
+                                                this.child(list_item_prefix(
+                                                    ix + state.start.saturating_sub(1),
+                                                    state.ordered,
+                                                    state.depth,
+                                                ))
+                                            })
+                                            .child(div().flex_1().min_w_0().child(block)),
+                                    );
+                                } else {
+                                    items.push(div().w_full().min_w_0().pl(rems(1.)).child(block));
+                                }
+                            }
+                            Node::Break { .. } | Node::Definition { .. } | Node::Unknown => {}
                         }
                     }
                     items
@@ -1318,8 +1383,14 @@ impl Node {
                     }))
                     .into_any_element()
             }
-            Node::List { children, ordered } => v_flex()
+            Node::List {
+                children,
+                ordered,
+                start,
+            } => v_flex()
                 .id(if *ordered { "ol" } else { "ul" })
+                .w_full()
+                .min_w_0()
                 .mb(mb)
                 .children({
                     let mut items = Vec::with_capacity(children.len());
@@ -1335,6 +1406,7 @@ impl Node {
                                 ordered: *ordered,
                                 todo: list_state.todo,
                                 depth: list_state.depth,
+                                start: (*start).max(1),
                             },
                             node_cx,
                             window,
@@ -1470,12 +1542,16 @@ impl Node {
                         .join("\n")
                 )
             }
-            Node::List { children, ordered } => children
+            Node::List {
+                children,
+                ordered,
+                start,
+            } => children
                 .iter()
                 .enumerate()
                 .map(|(i, child)| {
                     let prefix = if *ordered {
-                        format!("{}. ", i + 1)
+                        format!("{}. ", i + *start)
                     } else {
                         "- ".to_string()
                     };

@@ -455,8 +455,19 @@ fn parse_node(
             }
             local_name!("ul") | local_name!("ol") => {
                 let ordered = name.local == local_name!("ol");
+                let start = if ordered {
+                    attr_value(attrs, local_name!("start"))
+                        .and_then(|value| value.parse::<usize>().ok())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
                 let children = consume_children_nodes(node, paragraph, cx);
-                Some(node::Node::List { children, ordered })
+                Some(node::Node::List {
+                    children,
+                    ordered,
+                    start,
+                })
             }
             local_name!("li") => {
                 let mut children = vec![];

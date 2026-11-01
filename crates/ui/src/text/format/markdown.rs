@@ -126,7 +126,90 @@ fn render_mermaid_svg(value: &str) -> Option<SharedString> {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
-    use super::render_math_svg;
+    use super::{normalize_katex_default_delimiters, parse_paragraph, render_math_svg};
+    use crate::text::{node::NodeContext, node::Paragraph};
+    use markdown::{mdast, ParseOptions};
+
+    fn parse_inline(source: &str) -> Paragraph {
+        let ast = markdown::to_mdast(source, &ParseOptions::gfm()).expect("valid markdown");
+        let mdast::Node::Root(root) = ast else {
+            panic!("expected markdown root");
+        };
+        let mdast::Node::Paragraph(source_paragraph) = &root.children[0] else {
+            panic!("expected markdown paragraph");
+        };
+
+        let mut paragraph = Paragraph::default();
+        let mut cx = NodeContext::default();
+        for child in &source_paragraph.children {
+            parse_paragraph(&mut paragraph, child, &mut cx);
+        }
+        paragraph
+    }
+
+    #[test]
+    fn triple_asterisks_preserve_bold_and_italic() {
+        let paragraph = parse_inline("***bold italic***");
+        assert_eq!(paragraph.text_len(), "bold italic".len());
+        assert!(paragraph
+            .children
+            .iter()
+            .all(|node| { node.marks.iter().any(|(_, mark)| mark.bold && mark.italic) }));
+    }
+
+    #[test]
+    fn nested_emphasis_preserves_outer_and_inner_marks() {
+        let paragraph = parse_inline("**bold _and italic_**");
+        let italic = paragraph
+            .children
+            .iter()
+            .find(|node| node.text.as_ref() == "and italic")
+            .expect("italic text run");
+        assert!(italic
+            .marks
+            .iter()
+            .any(|(_, mark)| mark.bold && mark.italic));
+
+        let plain_bold = paragraph
+            .children
+            .iter()
+            .find(|node| node.text.as_ref() == "bold ")
+            .expect("bold text run");
+        assert!(plain_bold.marks.iter().any(|(_, mark)| mark.bold));
+        assert!(!plain_bold.marks.iter().any(|(_, mark)| mark.italic));
+    }
+
+    #[test]
+    fn emphasis_keeps_inline_code_mark() {
+        let paragraph = parse_inline("**bold `code`**");
+        let code = paragraph
+            .children
+            .iter()
+            .find(|node| node.text.as_ref() == "code")
+            .expect("code text run");
+        assert!(code.marks.iter().any(|(_, mark)| mark.bold && mark.code));
+    }
+
+    #[test]
+    fn math_delimiter_normalization_skips_inline_code_spans() {
+        assert_eq!(
+            normalize_katex_default_delimiters("`\\(code\\)` and \\(math\\)"),
+            "`\\(code\\)` and $math$"
+        );
+        assert_eq!(
+            normalize_katex_default_delimiters("`` `\\(code\\)` ``"),
+            "`` `\\(code\\)` ``"
+        );
+    }
+
+    #[test]
+    fn math_delimiter_normalization_skips_tilde_and_long_fences() {
+        let source =
+            "\\(outside\\)\n~~~math\n\\(tilde code\\)\n~~~\n````text\n\\(long fence\\)\n````\n";
+        let expected =
+            "$outside$\n~~~math\n\\(tilde code\\)\n~~~\n````text\n\\(long fence\\)\n````\n";
+        assert_eq!(normalize_katex_default_delimiters(source), expected);
+    }
 
     #[test]
     fn print_math_svg_debug_output() {
@@ -144,7 +227,7 @@ static INLINE_DELIM_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\\\((.*?)\\\)").expect("valid inline math regex"));
 
 fn normalize_katex_default_delimiters(raw: &str) -> String {
-    fn normalize_non_code_span(segment: &str) -> String {
+    fn normalize_text(segment: &str) -> String {
         // Convert KaTeX default delimiters to markdown-math delimiters.
         // \[...\] -> $$...$$, \(...\) -> $...$
         let with_blocks = BLOCK_DELIM_RE
@@ -160,30 +243,97 @@ fn normalize_katex_default_delimiters(raw: &str) -> String {
             .into_owned()
     }
 
-    // Skip fenced code blocks when normalizing delimiters.
-    let mut out = String::with_capacity(raw.len());
-    let mut rest = raw;
-    let mut in_fence = false;
+    fn normalize_outside_code(segment: &str) -> String {
+        let mut out = String::with_capacity(segment.len());
+        let mut cursor = 0;
 
-    while let Some(ix) = rest.find("```") {
-        let (segment, tail) = rest.split_at(ix);
-        if in_fence {
-            out.push_str(segment);
-        } else {
-            out.push_str(&normalize_non_code_span(segment));
+        while let Some(relative_start) = segment[cursor..].find('`') {
+            let start = cursor + relative_start;
+            out.push_str(&normalize_text(&segment[cursor..start]));
+
+            let run_end = start
+                + segment[start..]
+                    .bytes()
+                    .take_while(|byte| *byte == b'`')
+                    .count();
+            let run_len = run_end - start;
+
+            // CommonMark code spans close with a backtick run of the same
+            // length. Longer or shorter runs inside the span are content.
+            let mut search = run_end;
+            let mut closing = None;
+            while let Some(relative_close) = segment[search..].find('`') {
+                let close_start = search + relative_close;
+                let close_end = close_start
+                    + segment[close_start..]
+                        .bytes()
+                        .take_while(|byte| *byte == b'`')
+                        .count();
+                if close_end - close_start == run_len {
+                    closing = Some(close_end);
+                    break;
+                }
+                search = close_end;
+            }
+
+            out.push_str(&segment[start..closing.unwrap_or(run_end)]);
+            cursor = closing.unwrap_or(run_end);
         }
 
-        out.push_str("```");
-        rest = &tail[3..];
-        in_fence = !in_fence;
+        out.push_str(&normalize_text(&segment[cursor..]));
+        out
     }
 
-    if in_fence {
-        out.push_str(rest);
-    } else {
-        out.push_str(&normalize_non_code_span(rest));
+    fn fence_run(line: &str) -> Option<(u8, usize, usize)> {
+        let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+        if indent > 3 {
+            return None;
+        }
+        let rest = &line[indent..];
+        let marker = *rest.as_bytes().first()?;
+        if marker != b'`' && marker != b'~' {
+            return None;
+        }
+        let count = rest.bytes().take_while(|byte| *byte == marker).count();
+        (count >= 3).then_some((marker, count, indent + count))
     }
 
+    fn closes_fence(line: &str, marker: u8, min_len: usize) -> bool {
+        let Some((found_marker, count, end)) = fence_run(line) else {
+            return false;
+        };
+        found_marker == marker && count >= min_len && line[end..].trim().is_empty()
+    }
+
+    // Keep fenced blocks untouched, including tilde fences and fences longer
+    // than three backticks. Normalize inline code spans separately below.
+    let mut out = String::with_capacity(raw.len());
+    let mut outside_code = String::new();
+    let mut fence: Option<(u8, usize)> = None;
+
+    for line in raw.split_inclusive('\n') {
+        if let Some((marker, min_len)) = fence {
+            out.push_str(line);
+            if closes_fence(
+                line.trim_end_matches(|c| c == '\r' || c == '\n'),
+                marker,
+                min_len,
+            ) {
+                fence = None;
+            }
+        } else if let Some((marker, count, _)) =
+            fence_run(line.trim_end_matches(|c| c == '\r' || c == '\n'))
+        {
+            out.push_str(&normalize_outside_code(&outside_code));
+            outside_code.clear();
+            out.push_str(line);
+            fence = Some((marker, count));
+        } else {
+            outside_code.push_str(line);
+        }
+    }
+
+    out.push_str(&normalize_outside_code(&outside_code));
     out
 }
 
@@ -256,31 +406,23 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             paragraph.push_str(&val.value)
         }
         Node::Emphasis(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().italic())]),
+            text = parse_children_with_mark(
+                paragraph,
+                &val.children,
+                TextMark::default().italic(),
+                cx,
             );
         }
         Node::Strong(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().bold())]),
-            );
+            text =
+                parse_children_with_mark(paragraph, &val.children, TextMark::default().bold(), cx);
         }
         Node::Delete(val) => {
-            let mut child_paragraph = Paragraph::default();
-            for child in val.children.iter() {
-                text.push_str(&parse_paragraph(&mut child_paragraph, &child, cx));
-            }
-            paragraph.push(
-                InlineNode::new(&text)
-                    .marks(vec![(0..text.len(), TextMark::default().strikethrough())]),
+            text = parse_children_with_mark(
+                paragraph,
+                &val.children,
+                TextMark::default().strikethrough(),
+                cx,
             );
         }
         Node::InlineCode(val) => {
@@ -320,6 +462,7 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
             paragraph.merge(child_paragraph);
         }
         Node::Image(raw) => {
+            text = raw.alt.clone();
             paragraph.push_image(ImageNode {
                 url: raw.url.clone().into(),
                 title: raw.title.clone().map(|t| t.into()),
@@ -352,26 +495,39 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                 .push(InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default())]));
         }
         Node::Html(val) => match super::html::parse(&val.value, cx) {
-            Ok(el) => {
-                if el.is_break() {
+            Ok(el) => match el {
+                node::Node::Break { .. } => {
                     text = "\n".to_owned();
                     paragraph.push(InlineNode::new(&text));
-                } else {
-                    if cfg!(debug_assertions) {
-                        tracing::warn!("unsupported inline html tag: {:#?}", el);
-                    }
                 }
-            }
+                node::Node::Paragraph(html_paragraph) => {
+                    text = html_paragraph
+                        .children
+                        .iter()
+                        .map(|child| child.text.as_ref())
+                        .collect();
+                    paragraph.merge(html_paragraph);
+                }
+                other => {
+                    if cfg!(debug_assertions) {
+                        tracing::warn!("unsupported inline html tag: {:#?}", other);
+                    }
+                    text = val.value.clone();
+                    paragraph.push_str(&text);
+                }
+            },
             Err(err) => {
                 if cfg!(debug_assertions) {
                     tracing::warn!("failed parsing html: {:#?}", err);
                 }
 
-                text.push_str(&val.value);
+                text = val.value.clone();
+                paragraph.push_str(&text);
             }
         },
         Node::FootnoteReference(foot) => {
             let prefix = format!("[{}]", foot.identifier);
+            text = prefix.clone();
             paragraph.push(InlineNode::new(&prefix).marks(vec![(
                 0..prefix.len(),
                 TextMark {
@@ -382,9 +538,8 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
         }
         Node::LinkReference(link) => {
             let mut child_paragraph = Paragraph::default();
-            let mut child_text = String::new();
             for child in link.children.iter() {
-                child_text.push_str(&parse_paragraph(&mut child_paragraph, child, cx));
+                text.push_str(&parse_paragraph(&mut child_paragraph, child, cx));
             }
 
             let link_mark = LinkMark {
@@ -393,19 +548,62 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
                 identifier: Some(link.identifier.clone().into()),
             };
 
-            paragraph.push(InlineNode::new(&child_text).marks(vec![(
-                0..child_text.len(),
-                TextMark {
-                    link: Some(link_mark),
-                    ..Default::default()
-                },
-            )]));
+            for child in child_paragraph.children.iter_mut() {
+                child.marks.push((
+                    0..child.text.len(),
+                    TextMark {
+                        link: Some(link_mark.clone()),
+                        ..Default::default()
+                    },
+                ));
+            }
+            paragraph.merge(child_paragraph);
         }
         _ => {
             if cfg!(debug_assertions) {
                 tracing::warn!("unsupported inline node: {:#?}", node);
             }
         }
+    }
+
+    text
+}
+
+/// Parse a formatting node without flattening its children. Flattening loses
+/// nested marks (`***bold italic***`) and inline objects such as code and links.
+fn parse_children_with_mark(
+    paragraph: &mut Paragraph,
+    children: &[mdast::Node],
+    mark: TextMark,
+    cx: &mut NodeContext,
+) -> String {
+    let mut text = String::new();
+    let mut parsed_children = Paragraph::default();
+    for child in children {
+        text.push_str(&parse_paragraph(&mut parsed_children, child, cx));
+    }
+
+    for mut child in parsed_children.children {
+        let len = child.text.len();
+        if len > 0 {
+            let has_full_range_mark = child
+                .marks
+                .last()
+                .is_some_and(|(range, _)| range.start == 0 && range.end == len);
+            if has_full_range_mark {
+                let (_, existing) = child.marks.last_mut().expect("checked above");
+                existing.bold |= mark.bold;
+                existing.italic |= mark.italic;
+                existing.strikethrough |= mark.strikethrough;
+                existing.code |= mark.code;
+                if mark.link.is_some() {
+                    existing.link = mark.link.clone();
+                }
+            } else {
+                child.marks.push((0..len, mark.clone()));
+            }
+        }
+        paragraph.push(child);
     }
 
     text
@@ -448,31 +646,38 @@ fn callout_kind_and_remainder(text: &str) -> Option<(crate::text::node::CalloutK
 /// Concatenate the plain text of a paragraph's inline children (enough to
 /// detect a leading callout token).
 fn paragraph_plain_text(paragraph: &mdast::Paragraph) -> String {
-    let mut out = String::new();
-    for child in &paragraph.children {
-        match child {
-            mdast::Node::Text(t) => out.push_str(&t.value),
-            mdast::Node::InlineCode(c) => out.push_str(&c.value),
-            mdast::Node::Strong(s) => {
-                for c in &s.children {
-                    out.push_str(&paragraph_plain_text_of_node(c));
-                }
-            }
-            mdast::Node::Emphasis(s) => {
-                for c in &s.children {
-                    out.push_str(&paragraph_plain_text_of_node(c));
-                }
-            }
-            _ => {}
-        }
-    }
-    out
+    paragraph
+        .children
+        .iter()
+        .map(paragraph_plain_text_of_node)
+        .collect()
 }
 
 fn paragraph_plain_text_of_node(node: &mdast::Node) -> String {
     match node {
         mdast::Node::Text(t) => t.value.clone(),
         mdast::Node::InlineCode(c) => c.value.clone(),
+        mdast::Node::InlineMath(math) => math.value.clone(),
+        mdast::Node::Break(_) => "\n".to_string(),
+        mdast::Node::Image(image) => image.alt.clone(),
+        mdast::Node::Strong(value) | mdast::Node::Emphasis(value) | mdast::Node::Delete(value) => {
+            value
+                .children
+                .iter()
+                .map(paragraph_plain_text_of_node)
+                .collect()
+        }
+        mdast::Node::Link(value) => value
+            .children
+            .iter()
+            .map(paragraph_plain_text_of_node)
+            .collect(),
+        mdast::Node::LinkReference(value) => value
+            .children
+            .iter()
+            .map(paragraph_plain_text_of_node)
+            .collect(),
+        mdast::Node::Html(value) => value.value.clone(),
         _ => String::new(),
     }
 }
@@ -532,6 +737,7 @@ fn ast_to_node(
                 .collect();
             node::Node::List {
                 ordered: list.ordered,
+                start: list.start.unwrap_or(1) as usize,
                 children,
             }
         }
