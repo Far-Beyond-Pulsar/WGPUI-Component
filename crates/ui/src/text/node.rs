@@ -1168,7 +1168,10 @@ impl Node {
                                     items.push(div().w_full().min_w_0().pl(rems(1.)).child(block));
                                 }
                             }
-                            Node::Break { .. } | Node::Definition { .. } | Node::Unknown => {}
+                            Node::ListItem { .. }
+                            | Node::Break { .. }
+                            | Node::Definition { .. }
+                            | Node::Unknown => {}
                         }
                     }
                     items
