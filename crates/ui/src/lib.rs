@@ -17,7 +17,7 @@ mod index_path;
     not(target_family = "wasm")
 ))]
 mod inspector;
-mod kbd;
+pub mod kbd;
 pub mod menu;
 #[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
 mod profiler;
