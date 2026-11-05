@@ -1,5 +1,6 @@
 mod dock;
 mod invalid_panel;
+pub mod lazy_panel;
 mod popout;
 mod panel;
 mod stack_panel;
@@ -18,6 +19,7 @@ use gpui::{
 use std::sync::{Arc, OnceLock};
 
 pub use dock::*;
+pub use lazy_panel::{set_icon_resolver, sleeping_leaf_color, sweep_idle, with_sleeping_badge, LazyBuilder, LazyPanel, TabLife};
 pub use panel::*;
 pub use popout::{
     live_popouts, open_popout_with, popout_events, reset_popout_decorations,

@@ -184,6 +184,18 @@ pub trait Panel: EventEmitter<PanelEvent> + Render + Focusable {
         true
     }
 
+    /// Whether the tab holds a live panel. Only the lazy-tab wrapper is ever
+    /// anything but [`TabLife::Awake`].
+    fn life(&self) -> super::TabLife {
+        super::TabLife::Awake
+    }
+
+    /// Drop the live panel if this tab is idle and can be rebuilt from its
+    /// saved state. Returns whether it fell asleep.
+    fn try_sleep(&mut self, cx: &mut App) -> bool {
+        false
+    }
+
     // TODO This is cursed. When we do plugins their tabs will provide ALL RPC data to avoid this conditional garbage
     /// The Discord Rich Presence icon key for this panel type.
     ///
@@ -236,6 +248,8 @@ pub trait PanelView: 'static + Send + Sync {
     fn dump(&self, cx: &App) -> PanelState;
     fn inner_padding(&self, cx: &App) -> bool;
     fn discord_icon_key(&self, cx: &App) -> &'static str;
+    fn life(&self, cx: &App) -> super::TabLife;
+    fn try_sleep(&self, cx: &mut App) -> bool;
 }
 
 impl<T: Panel> PanelView for Entity<T> {
@@ -339,6 +353,20 @@ impl<T: Panel> PanelView for Entity<T> {
             }
             _ => state,
         }
+    }
+
+    fn life(&self, cx: &App) -> super::TabLife {
+        self.read(cx).life()
+    }
+
+    fn try_sleep(&self, cx: &mut App) -> bool {
+        self.update(cx, |this, cx| {
+            let slept = this.try_sleep(cx);
+            if slept {
+                cx.notify();
+            }
+            slept
+        })
     }
 
     fn inner_padding(&self, cx: &App) -> bool {

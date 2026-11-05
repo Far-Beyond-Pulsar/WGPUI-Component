@@ -407,6 +407,7 @@ pub struct Tab {
     pub(super) disabled: bool,
     pub(super) selected: bool,
     pub(super) unsaved: bool,
+    sleeping: bool,
     on_click: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     element_wrapper: Option<Arc<dyn Fn(AnyElement, &mut Window, &mut App) -> AnyElement + 'static>>,
 }
@@ -454,6 +455,7 @@ impl Default for Tab {
             disabled: false,
             selected: false,
             unsaved: false,
+            sleeping: false,
             prefix: None,
             suffix: None,
             variant: TabVariant::default(),
@@ -547,6 +549,13 @@ impl Tab {
     /// Set unsaved state to the tab (shows unsaved indicator)
     pub fn unsaved(mut self, unsaved: bool) -> Self {
         self.unsaved = unsaved;
+        self
+    }
+
+    /// Mark the tab as sleeping: its content is not loaded. Drawn in italics,
+    /// slightly greyer, with a leaf in place of its icon.
+    pub fn sleeping(mut self, sleeping: bool) -> Self {
+        self.sleeping = sleeping;
         self
     }
 
@@ -644,7 +653,12 @@ impl RenderOnce for Tab {
             .overflow_hidden()
             .h(height)
             .overflow_hidden()
-            .text_color(tab_style.fg)
+            .text_color(if self.sleeping {
+                tab_style.fg.opacity(0.6)
+            } else {
+                tab_style.fg
+            })
+            .when(self.sleeping, |this| this.italic())
             .map(|this| match self.size {
                 Size::XSmall => this.text_xs(),
                 Size::Large => this.text_base(),
@@ -699,14 +713,23 @@ impl RenderOnce for Tab {
                     Size::Large => px(8.),
                     _ => px(6.),
                 })
-                .when_some(self.icon, |this, icon| {
-                    this.child(icon.map(|this| match self.size {
-                        Size::XSmall => this.size_2p5(),
-                        Size::Small => this.size_3p5(),
-                        Size::Large => this.size_4(),
-                        _ => this.size_3p5(),
-                    }))
-                })
+                .when_some(
+                    self.icon
+                        .or_else(|| self.sleeping.then(|| IconName::Page.into())),
+                    |this, icon| {
+                        let icon = icon.map(|this| match self.size {
+                            Size::XSmall => this.size_2p5(),
+                            Size::Small => this.size_3p5(),
+                            Size::Large => this.size_4(),
+                            _ => this.size_3p5(),
+                        });
+                        if self.sleeping {
+                            this.child(crate::dock::with_sleeping_badge(icon, px(9.)))
+                        } else {
+                            this.child(icon)
+                        }
+                    },
+                )
                 .when_some(self.label, |this, label| this.child(label))
                 .when(self.unsaved, |this| {
                     // Show unsaved indicator: a small dot with warning color
