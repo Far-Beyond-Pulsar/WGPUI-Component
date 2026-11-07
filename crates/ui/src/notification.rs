@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     any::TypeId,
     collections::{HashMap, VecDeque},
@@ -27,6 +28,16 @@ pub enum NotificationType {
     Success,
     Warning,
     Error,
+}
+
+/// A persisted, plain-text notification entry suitable for a project history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationHistoryEntry {
+    pub id: String,
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub severity: String,
+    pub created_at: String,
 }
 
 impl NotificationType {
@@ -84,6 +95,7 @@ pub struct Notification {
     content_builder: Option<Rc<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     closing: bool,
+    dismissed_by_user: bool,
 }
 
 impl From<String> for Notification {
@@ -140,6 +152,7 @@ impl Notification {
             content_builder: None,
             on_click: None,
             closing: false,
+            dismissed_by_user: false,
         }
     }
 
@@ -276,6 +289,11 @@ impl Notification {
         .detach()
     }
 
+    fn dismiss_by_user(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismissed_by_user = true;
+        self.dismiss(window, cx);
+    }
+
     /// Set the content of the notification.
     pub fn content(
         mut self,
@@ -370,7 +388,9 @@ impl Render for Notification {
                             .icon(IconName::Close)
                             .ghost()
                             .xsmall()
-                            .on_click(cx.listener(|this, _, window, cx| this.dismiss(window, cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.dismiss_by_user(window, cx)),
+                            ),
                     ),
             )
             // ── Progress bar ─────────────────────────────────────────────────
@@ -450,14 +470,33 @@ pub struct NotificationList {
     pub(crate) notifications: VecDeque<Entity<Notification>>,
     expanded: bool,
     _subscriptions: HashMap<NotificationId, Subscription>,
+    history: VecDeque<NotificationHistoryEntry>,
 }
 
 impl NotificationList {
+    fn archive(&mut self, note: &Notification) {
+        let severity = match note.type_.unwrap_or_default() {
+            NotificationType::Info => "info",
+            NotificationType::Success => "success",
+            NotificationType::Warning => "warning",
+            NotificationType::Error => "error",
+        };
+        self.history.push_front(NotificationHistoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: note.title.as_ref().map(ToString::to_string),
+            message: note.message.as_ref().map(ToString::to_string),
+            severity: severity.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        });
+        self.history.truncate(1000);
+    }
+
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
             notifications: VecDeque::new(),
             expanded: false,
             _subscriptions: HashMap::new(),
+            history: VecDeque::new(),
         }
     }
 
@@ -474,13 +513,26 @@ impl NotificationList {
         let is_complete = notification.progress.map(|p| p >= 1.0).unwrap_or(false);
 
         // Remove the notification by id, for keep unique.
+        let replaced: Vec<_> = self
+            .notifications
+            .iter()
+            .filter(|note| note.read(cx).id == id)
+            .cloned()
+            .collect();
+        for note in replaced {
+            self.archive(note.read(cx));
+        }
         self.notifications.retain(|note| note.read(cx).id != id);
 
         let notification = cx.new(|_| notification);
 
         self._subscriptions.insert(
             id.clone(),
-            cx.subscribe(&notification, move |view, _, _: &DismissEvent, cx| {
+            cx.subscribe(&notification, move |view, note, _: &DismissEvent, cx| {
+                let note = note.read(cx);
+                if !note.dismissed_by_user {
+                    view.archive(note);
+                }
                 view.notifications.retain(|note| id != note.read(cx).id);
                 view._subscriptions.remove(&id);
             }),
@@ -557,12 +609,32 @@ impl NotificationList {
     }
 
     pub fn clear(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let active: Vec<_> = self.notifications.iter().cloned().collect();
+        for note in active {
+            self.archive(note.read(cx));
+        }
         self.notifications.clear();
         cx.notify();
     }
 
     pub fn notifications(&self) -> Vec<Entity<Notification>> {
         self.notifications.iter().cloned().collect()
+    }
+
+    pub fn history(&self) -> Vec<NotificationHistoryEntry> {
+        self.history.iter().cloned().collect()
+    }
+    pub fn restore_history(
+        &mut self,
+        entries: Vec<NotificationHistoryEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        self.history = entries.into_iter().take(1000).collect();
+        cx.notify();
+    }
+    pub fn dismiss_history(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.history.retain(|entry| entry.id != id);
+        cx.notify();
     }
 }
 
