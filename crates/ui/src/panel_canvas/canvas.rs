@@ -13,7 +13,7 @@ use gpui::{
 use super::{
     rnd_panel::RndPanel,
     state::{
-        clamp_origin, Geometry, InteractionKind, PanelCanvasState, PanelFrame, Placement, Slot,
+        clamp_origin, preview_size, Geometry, InteractionKind, PanelCanvasState, PanelFrame, Placement, Slot,
         SlotAnchor, SlotFit, SlotFlow, SlotGroup,
     },
 };
@@ -137,7 +137,11 @@ fn pack(el: Div, flow: SlotFlow, anchor: SlotAnchor) -> Div {
 /// How the slot under a dragged card is lit.
 #[derive(Clone, Copy)]
 enum Light {
+    /// A drop zone while a card is dragged: it would take the card.
+    Available,
+    /// The drop zone under the pointer: dropping snaps the card in.
     Accepts,
+    /// A full slot under the pointer: dropping sends the card back.
     Full,
 }
 
@@ -149,13 +153,15 @@ fn slot_box(
     slot: &Slot,
     anchor: SlotAnchor,
     members: Vec<AnyElement>,
-    dragging: bool,
+    dragged: Option<gpui::Size<Pixels>>,
+    grouped: bool,
     light: Option<Light>,
     colors: (Hsla, Hsla, Pixels),
     geometry: &Rc<RefCell<Geometry>>,
     generation: u64,
 ) -> Option<Div> {
     let empty = members.is_empty();
+    let dragging = dragged.is_some();
     if empty && !dragging {
         return None;
     }
@@ -163,13 +169,17 @@ fn slot_box(
     let el = pack(div().relative().flex_shrink_0().gap(slot.gap), slot.flow, anchor);
     let el = match slot.fit {
         SlotFit::Shrink => el.w(slot.size.width).h(slot.size.height),
-        // Empty, it opens as a drop target at the size it last picked (its
-        // own size until it held something larger); holding cards, it is as
-        // large as they are.
+        // Empty, it opens as a drop target at the room the dragged card would
+        // take there (the slot's own size if the card is smaller), so it shows
+        // where the card will sit; holding cards, it is as large as they are.
         SlotFit::Expand if empty => {
-            let preview = geometry.borrow().preview_size(slot);
+            let preview = preview_size(slot, dragged);
             el.w(preview.width).h(preview.height)
         }
+        // During a drag, a slot on its own outlines its whole drop zone (its
+        // cards are packed to its anchor, so nothing moves); in a group that
+        // would push the neighbours, so it hugs its cards.
+        SlotFit::Expand if dragging && !grouped => el.min_w(slot.size.width).min_h(slot.size.height),
         SlotFit::Expand => el,
     };
     let recorded = slot.clone();
@@ -181,16 +191,19 @@ fn slot_box(
                 .record_slot(&recorded, generation, frame.bounds, empty);
         })
         .when_some(light, |el, light| {
-            let color = match light {
-                Light::Accepts => accept,
-                Light::Full => refuse,
+            // (border colour, fill opacity): every drop zone faint, the one
+            // under the pointer strong.
+            let (color, fill) = match light {
+                Light::Available => (accept.opacity(0.45), 0.03),
+                Light::Accepts => (accept, 0.08),
+                Light::Full => (refuse, 0.08),
             };
             el.child(
                 div()
                     .absolute()
                     .inset_0()
                     .rounded(radius)
-                    .bg(color.opacity(0.08))
+                    .bg(color.opacity(fill))
                     .border_2()
                     .border_dashed()
                     .border_color(color),
@@ -209,6 +222,16 @@ impl RenderOnce for PanelCanvas {
         let slots: Vec<Slot> = state.slots().to_vec();
         let groups: Vec<SlotGroup> = state.groups().to_vec();
         let canvas_bounds = geometry.borrow().canvas;
+        // Which slots are full, from the frame just drawn (before this frame
+        // starts recording): a full slot is no drop zone.
+        let full: Vec<SharedString> = {
+            let geometry = geometry.borrow();
+            slots
+                .iter()
+                .filter(|slot| geometry.slot_full(slot))
+                .map(|slot| slot.id.clone())
+                .collect()
+        };
         let generation = {
             let mut geometry = geometry.borrow_mut();
             geometry.generation += 1;
@@ -307,15 +330,18 @@ impl RenderOnce for PanelCanvas {
 
         let theme = cx.theme();
         let colors = (theme.drag_border, theme.danger, theme.radius);
-        let dragging = interaction.as_ref().is_some_and(|i| i.is_move());
+        // The dragged card's size, while a card is being moved.
+        let dragged = interaction.as_ref().filter(|i| i.is_move()).map(|i| i.bounds.size);
         let light_of = |slot: &Slot| {
             let i = interaction.as_ref().filter(|i| i.is_move())?;
             if i.hover_slot.as_ref() == Some(&slot.id) {
                 Some(Light::Accepts)
             } else if i.blocked_slot.as_ref() == Some(&slot.id) {
                 Some(Light::Full)
-            } else {
+            } else if full.contains(&slot.id) {
                 None
+            } else {
+                Some(Light::Available)
             }
         };
         let mut members_of = |slot: &Slot| {
@@ -324,10 +350,16 @@ impl RenderOnce for PanelCanvas {
             members.into_iter().map(|(_, _, el)| el).collect::<Vec<_>>()
         };
 
-        // Slot groups: one strip each, its slots in order.
+        // Slot groups: one strip each, its slots in order from its anchor (a
+        // strip packed to the right or bottom fills right to left, or bottom
+        // to top: its first slot is in the anchored corner).
         let mut strips = Vec::new();
         for group in &groups {
-            let boxes: Vec<Div> = slots
+            let from_end = match group.flow {
+                SlotFlow::Row => group.anchor.h() > 0,
+                SlotFlow::Column => group.anchor.v() > 0,
+            };
+            let mut boxes: Vec<Div> = slots
                 .iter()
                 .filter(|slot| slot.group.as_ref() == Some(&group.id))
                 .filter_map(|slot| {
@@ -335,7 +367,8 @@ impl RenderOnce for PanelCanvas {
                         slot,
                         group.anchor,
                         members_of(slot),
-                        dragging,
+                        dragged,
+                        true,
                         light_of(slot),
                         colors,
                         &geometry,
@@ -343,6 +376,9 @@ impl RenderOnce for PanelCanvas {
                     )
                 })
                 .collect();
+            if from_end {
+                boxes.reverse();
+            }
             strips.push(
                 pack(hang(group.anchor, group.inset, Some(group.flow)), group.flow, group.anchor)
                     .gap(group.gap)
@@ -358,7 +394,8 @@ impl RenderOnce for PanelCanvas {
                     slot,
                     slot.anchor,
                     members_of(slot),
-                    dragging,
+                    dragged,
+                    false,
                     light_of(slot),
                     colors,
                     &geometry,

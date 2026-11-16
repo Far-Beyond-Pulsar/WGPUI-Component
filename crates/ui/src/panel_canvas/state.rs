@@ -291,10 +291,6 @@ pub(crate) struct Geometry {
     pub(crate) panels: HashMap<SharedString, PanelFrame>,
     /// Each drawn slot's box, as of the frame it was drawn in.
     pub(crate) slots: HashMap<SharedString, SlotDraw>,
-    /// The size each slot last picked while holding cards: never below its
-    /// own size. An empty slot's drop preview keeps it until a card dropped
-    /// into the slot sets it again.
-    pub(crate) picked: HashMap<SharedString, Size<Pixels>>,
 }
 
 /// Where a slot's box was drawn.
@@ -314,27 +310,28 @@ impl Geometry {
             .copied()
     }
 
-    /// Record a slot box drawn this frame. Around cards, the box is the size
-    /// the slot picks (its own size at least) for its later empty previews.
+    /// Record a slot box drawn this frame.
     pub(crate) fn record_slot(&mut self, slot: &Slot, generation: u64, bounds: Bounds<Pixels>, empty: bool) {
         self.slots
             .insert(slot.id.clone(), SlotDraw { generation, bounds, empty });
-        if !empty {
-            self.picked.insert(
-                slot.id.clone(),
-                size(
-                    bounds.size.width.max(slot.size.width),
-                    bounds.size.height.max(slot.size.height),
-                ),
-            );
-        }
     }
+}
 
-    /// The size an empty `slot` previews at: the size it last picked, or
-    /// its own.
-    pub(crate) fn preview_size(&self, slot: &Slot) -> Size<Pixels> {
-        self.picked.get(&slot.id).copied().unwrap_or(slot.size)
+/// The size an empty `slot` previews at while `dragged` (the dragged card's
+/// size) is held over the canvas: the room the card would take there, so the
+/// preview shows where it will sit. Per axis, the card's size, or the slot's
+/// own when the card is smaller; a shrinking slot never grows.
+pub(crate) fn preview_size(slot: &Slot, dragged: Option<Size<Pixels>>) -> Size<Pixels> {
+    match (slot.fit, dragged) {
+        (SlotFit::Expand, Some(card)) => size(
+            card.width.max(slot.size.width),
+            card.height.max(slot.size.height),
+        ),
+        _ => slot.size,
     }
+}
+
+impl Geometry {
 
     /// Where `slot` takes drops: its drawn box (when it was drawn this
     /// frame), joined, for a slot outside a group, with its nominal rectangle
@@ -859,22 +856,24 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_slot_previews_at_the_size_it_last_picked() {
+    fn an_empty_slot_previews_at_the_dragged_cards_size() {
         let slot = Slot::new("s", SlotAnchor::BottomRight, size(px(160.), px(120.)));
-        let mut geometry = Geometry::default();
-        assert_eq!(geometry.preview_size(&slot), slot.size);
-        let at = |w: f32, h: f32| Bounds::new(point(px(0.), px(0.)), size(px(w), px(h)));
-        // Grown by a big card, it keeps that size once emptied...
-        geometry.record_slot(&slot, 1, at(300., 200.), false);
-        geometry.record_slot(&slot, 2, at(300., 200.), true);
-        assert_eq!(geometry.preview_size(&slot), size(px(300.), px(200.)));
-        // ...until a card is dropped in: a smaller one takes it back to its
-        // own size, never below.
-        geometry.record_slot(&slot, 3, at(90., 60.), false);
-        assert_eq!(geometry.preview_size(&slot), slot.size);
-        // A larger one picks the larger size (per axis).
-        geometry.record_slot(&slot, 4, at(250., 80.), false);
-        assert_eq!(geometry.preview_size(&slot), size(px(250.), px(120.)));
+        // Nothing dragged: its own size.
+        assert_eq!(preview_size(&slot, None), slot.size);
+        // A larger card: the room it would take there.
+        assert_eq!(
+            preview_size(&slot, Some(size(px(300.), px(200.)))),
+            size(px(300.), px(200.))
+        );
+        // A smaller card: never below the slot's own size (per axis).
+        assert_eq!(preview_size(&slot, Some(size(px(90.), px(60.)))), slot.size);
+        assert_eq!(
+            preview_size(&slot, Some(size(px(250.), px(80.)))),
+            size(px(250.), px(120.))
+        );
+        // A shrinking slot keeps its size: its cards are held to it.
+        let shrink = slot.clone().fit(SlotFit::Shrink);
+        assert_eq!(preview_size(&shrink, Some(size(px(300.), px(200.)))), shrink.size);
     }
 
     #[test]

@@ -31,13 +31,15 @@ use ui::{h_flex, v_flex, ActiveTheme, Root, Sizable as _};
 
 const TABS: [&str; 5] = ["Slots", "Free area", "Nested", "Viewport HUD", "Dashboard"];
 
-/// The HUD tab's bottom overlays: id, title, width.
-const HUD_BOTTOM: [(&str, &str, f32); 5] = [
-    ("perf", "Performance", 190.),
-    ("pipeline", "Pipeline", 170.),
-    ("stats", "Render stats", 210.),
-    ("nerds", "Nerds", 220.),
-    ("net", "Network", 160.),
+/// The HUD tab's bottom overlays: id, title, width, home slot. The render
+/// performance panels fill the bottom-left strip rightwards; the others the
+/// bottom-right strip leftwards.
+const HUD_BOTTOM: [(&str, &str, f32, &str); 5] = [
+    ("perf", "Performance", 190., "bl-0"),
+    ("pipeline", "Pipeline", 170., "bl-1"),
+    ("stats", "Render stats", 210., "bl-2"),
+    ("nerds", "Nerds", 220., "br-0"),
+    ("net", "Network", 160., "br-1"),
 ];
 
 struct Gallery {
@@ -113,11 +115,16 @@ impl Gallery {
                     .inset(px(8.), px(60.))
                     .flow(SlotFlow::Column),
             ];
-            slots.extend((0..6).map(|n| {
-                Slot::new(format!("bottom-{n}"), SlotAnchor::BottomRight, sz(140., 110.)).group("bottom")
-            }));
+            // Two strips of one slot size: bottom-left fills rightwards,
+            // bottom-right leftwards (a group orders slots from its anchor).
+            let bottom = sz(200., 120.);
+            slots.extend((0..4).map(|n| Slot::new(format!("bl-{n}"), SlotAnchor::BottomLeft, bottom).group("bottom-left")));
+            slots.extend((0..3).map(|n| Slot::new(format!("br-{n}"), SlotAnchor::BottomRight, bottom).group("bottom-right")));
             PanelCanvasState::new()
-                .with_groups([SlotGroup::new("bottom", SlotAnchor::BottomRight).inset(px(8.), px(8.))])
+                .with_groups([
+                    SlotGroup::new("bottom-left", SlotAnchor::BottomLeft).inset(px(8.), px(8.)),
+                    SlotGroup::new("bottom-right", SlotAnchor::BottomRight).inset(px(8.), px(8.)),
+                ])
                 .with_slots(slots)
         });
         let dashboard = cx.new(|_| {
@@ -454,16 +461,16 @@ impl Gallery {
             .panel(titled_card(p("debug-b"), "Light probes", lines(3, "probe"), cx).default_slot("right").default_size(sz(260., 90.)));
         // The bottom strip: each overlay turned on takes its slot and pushes
         // the ones to its left further left.
-        for (ix, (name, title, width)) in HUD_BOTTOM.into_iter().enumerate() {
+        for (ix, (name, title, width, home)) in HUD_BOTTOM.into_iter().enumerate() {
             if self.hud_shown[ix] {
                 canvas = canvas.panel(
                     titled_card(p(name), title, lines(4, "value"), cx)
-                        .default_slot(format!("bottom-{}", ix + 1))
+                        .default_slot(home)
                         .default_size(sz(width, 110.)),
                 );
             }
         }
-        let toggles = h_flex().p_2().gap_2().children(HUD_BOTTOM.into_iter().enumerate().map(|(ix, (_, title, _))| {
+        let toggles = h_flex().p_2().gap_2().children(HUD_BOTTOM.into_iter().enumerate().map(|(ix, (_, title, _, _))| {
             let on = self.hud_shown[ix];
             Button::new(("hud-toggle", ix))
                 .label(title)
@@ -476,7 +483,7 @@ impl Gallery {
                 }))
         }))
         .child(div().text_xs().text_color(theme.muted_foreground).child(
-            "Toggle overlays: the bottom strip grows and pushes left. A toolbar slot holding a toolbar is full: drag the other toolbar over it.",
+            "Toggle overlays: the bottom-left strip fills rightwards, the bottom-right leftwards; each pushes its strip along. A toolbar slot holding a toolbar is full: drag the other toolbar over it.",
         ));
         v_flex()
             .size_full()

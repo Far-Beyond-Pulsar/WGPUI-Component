@@ -41,7 +41,7 @@ pub fn deduplicate_hierarchy_ids<Id: PartialEq>(ids: impl IntoIterator<Item = Id
 
 /// Trait for items that can be displayed in a hierarchical tree
 pub trait HierarchyItem: Clone + 'static {
-    type Id: Clone + PartialEq + std::fmt::Display + 'static;
+    type Id: Clone + Eq + std::hash::Hash + std::fmt::Display + 'static;
     type DragPayload: Clone + Render + 'static;
 
     fn id(&self) -> Self::Id;
@@ -141,11 +141,79 @@ struct FlatTreeEntry {
     depth: usize,
 }
 
+/// The rows of a panel-layout tree as a persistent `gpui::list`, the list the
+/// properties inspector uses. The host keeps one across renders and passes it
+/// with [`HierarchicalTreeView::with_list_state`], so the scroll position
+/// survives every render, only the rows on screen are built, and a panel
+/// resize keeps the measured row heights.
+#[derive(Clone)]
+pub struct HierarchyListState<Id> {
+    list: ListState,
+    scrollbar: ScrollbarState,
+    /// The ids of the rows last shown, in order, to tell the list which range
+    /// changed (so expanding a node keeps the rows above it where they are).
+    shown: Rc<std::cell::RefCell<Vec<(Id, usize)>>>,
+}
+
+impl<Id: Clone + PartialEq> HierarchyListState<Id> {
+    pub fn new() -> Self {
+        Self {
+            // The overdraw keeps rows just outside the viewport measured, so
+            // a scroll does not pop rows in.
+            list: ListState::new(0, ListAlignment::Top, px(200.0)),
+            scrollbar: ScrollbarState::default(),
+            shown: Rc::default(),
+        }
+    }
+
+    /// Bring the list in step with the rows to show: splice only the range
+    /// that differs from the rows shown last time.
+    fn sync(&self, rows: Vec<(Id, usize)>) {
+        let mut shown = self.shown.borrow_mut();
+        let prefix = shown.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+        let suffix = shown[prefix..]
+            .iter()
+            .rev()
+            .zip(rows[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if prefix != shown.len() || prefix != rows.len() {
+            self.list.splice(
+                prefix..shown.len() - suffix,
+                rows.len() - prefix - suffix,
+            );
+        }
+        *shown = rows;
+    }
+
+    /// Scroll the list by `distance` (positive scrolls down).
+    pub fn scroll_by(&self, distance: Pixels) {
+        self.list.scroll_by(distance);
+    }
+
+    /// The row at the top of the viewport.
+    pub fn first_visible_row(&self) -> usize {
+        self.list.logical_scroll_top().item_ix
+    }
+
+    /// The number of rows the list holds.
+    pub fn row_count(&self) -> usize {
+        self.list.item_count()
+    }
+}
+
+impl<Id: Clone + PartialEq> Default for HierarchyListState<Id> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Generic hierarchical tree view component
 pub struct HierarchicalTreeView<Item: HierarchyItem> {
     config: HierarchyConfig<Item>,
     scroll_handle: VirtualListScrollHandle,
     scrollbar_state: ScrollbarState,
+    list_state: Option<HierarchyListState<Item::Id>>,
 }
 
 impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
@@ -154,50 +222,68 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             config,
             scroll_handle: VirtualListScrollHandle::new(),
             scrollbar_state: ScrollbarState::default(),
+            list_state: None,
         }
     }
 
-    fn get_root_item_indices(&self) -> Vec<usize> {
-        self.config
-            .items
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, item)| {
-                if self.config.root_ids.contains(&item.id()) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect()
+    /// Show the panel layout's rows in `state`'s persistent list (see
+    /// [`HierarchyListState`]). Without it the rows go in a virtual list
+    /// rebuilt each render, whose scroll position does not survive one.
+    pub fn with_list_state(mut self, state: HierarchyListState<Item::Id>) -> Self {
+        self.list_state = Some(state);
+        self
     }
 
-    fn find_item(&self, id: &Item::Id) -> Option<&Item> {
-        self.config.items.iter().find(|item| item.id() == *id)
-    }
-
-    fn find_item_index(&self, id: &Item::Id) -> Option<usize> {
-        self.config.items.iter().position(|item| item.id() == *id)
-    }
-
+    /// The rows shown, in order: every root item (in item order), each
+    /// followed by its expanded descendants.
+    ///
+    /// Runs on every render of the view (a panel resize re-renders it each
+    /// frame), so it is O(items + shown rows): one id → index map, one root
+    /// set, and a set per expanded node to drop repeated children. It used to
+    /// scan the item list per root and per child, which was O(n²).
     fn flatten_tree(&self) -> Vec<FlatTreeEntry> {
+        use std::collections::{HashMap, HashSet};
+
+        let items = &self.config.items;
+        let mut index: HashMap<Item::Id, usize> = HashMap::with_capacity(items.len());
+        let ids: Vec<Item::Id> = items.iter().map(|item| item.id()).collect();
+        for (ix, id) in ids.iter().enumerate() {
+            // The first item with an id is the one a child id refers to.
+            index.entry(id.clone()).or_insert(ix);
+        }
+        let roots: HashSet<&Item::Id> = self.config.root_ids.iter().collect();
+
         let mut entries = Vec::new();
-        for idx in self.get_root_item_indices() {
-            self.flatten_node(idx, 0, &mut entries);
+        for (ix, id) in ids.iter().enumerate() {
+            if roots.contains(id) {
+                self.flatten_node(ix, 0, &ids, &index, &mut entries);
+            }
         }
         entries
     }
 
-    fn flatten_node(&self, item_index: usize, depth: usize, entries: &mut Vec<FlatTreeEntry>) {
+    fn flatten_node(
+        &self,
+        item_index: usize,
+        depth: usize,
+        ids: &[Item::Id],
+        index: &std::collections::HashMap<Item::Id, usize>,
+        entries: &mut Vec<FlatTreeEntry>,
+    ) {
         entries.push(FlatTreeEntry { item_index, depth });
-        if let Some(item) = self.config.items.get(item_index) {
-            let is_expanded = (self.config.is_expanded)(&item.id());
-            if is_expanded {
-                for child_id in deduplicate_hierarchy_ids(item.children_ids()) {
-                    if let Some(child_idx) = self.find_item_index(&child_id) {
-                        self.flatten_node(child_idx, depth + 1, entries);
-                    }
-                }
+        let Some(item) = self.config.items.get(item_index) else {
+            return;
+        };
+        if !(self.config.is_expanded)(&ids[item_index]) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        for child_id in item.children_ids() {
+            if !seen.insert(child_id.clone()) {
+                continue;
+            }
+            if let Some(&child_idx) = index.get(&child_id) {
+                self.flatten_node(child_idx, depth + 1, ids, index, entries);
             }
         }
     }
@@ -219,8 +305,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         V: 'static + Render,
     {
         let flat_entries = Rc::new(self.flatten_tree());
-        let items = Arc::new(self.config.items.clone());
-        let item_sizes = Rc::new(vec![size(px(0.0), px(28.0)); flat_entries.len()]);
+        let items = Arc::new(std::mem::take(&mut self.config.items));
 
         let is_expanded = self.config.is_expanded.clone();
         let on_toggle_expand = self.config.on_toggle_expand.clone();
@@ -233,6 +318,89 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         let root_drop_zone = self.config.root_drop_zone.clone();
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_state = self.scrollbar_state.clone();
+
+        // The rows, and the scrollbar that follows them.
+        let (rows, scrollbar): (AnyElement, AnyElement) = match self.list_state.take() {
+            Some(state) => {
+                state.sync(
+                    flat_entries
+                        .iter()
+                        .map(|entry| (items[entry.item_index].id(), entry.depth))
+                        .collect(),
+                );
+                let flat_entries = flat_entries.clone();
+                let items = items.clone();
+                let is_expanded = is_expanded.clone();
+                let on_toggle_expand = on_toggle_expand.clone();
+                let on_select = on_select.clone();
+                let on_drop = on_drop.clone();
+                let rows = list(
+                    state.list.clone(),
+                    cx.processor(move |_view: &mut V, ix: usize, _window, cx| {
+                        let Some(entry) = flat_entries.get(ix) else {
+                            return div().into_any_element();
+                        };
+                        // The 1px gap the virtual list put between rows.
+                        div()
+                            .w_full()
+                            .pb(px(1.0))
+                            .child(render_single_item(
+                                &items[entry.item_index],
+                                entry.depth,
+                                is_expanded.clone(),
+                                on_toggle_expand.clone(),
+                                on_select.clone(),
+                                on_drop.clone(),
+                                cx,
+                            ))
+                            .into_any_element()
+                    }),
+                )
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .into_any_element();
+                let scrollbar = Scrollbar::vertical(&state.scrollbar, &state.list).into_any_element();
+                (rows, scrollbar)
+            }
+            None => {
+                let flat_entries = flat_entries.clone();
+                let items = items.clone();
+                let is_expanded = is_expanded.clone();
+                let on_toggle_expand = on_toggle_expand.clone();
+                let on_select = on_select.clone();
+                let on_drop = on_drop.clone();
+                let item_sizes = Rc::new(vec![size(px(0.0), px(28.0)); flat_entries.len()]);
+                let rows = v_virtual_list(
+                    view,
+                    "hierarchy-panel-list",
+                    item_sizes,
+                    move |_v, range, _window, cx| {
+                        range
+                            .map(|flat_idx| {
+                                let entry = &flat_entries[flat_idx];
+                                let item = &items[entry.item_index];
+                                render_single_item(
+                                    item,
+                                    entry.depth,
+                                    is_expanded.clone(),
+                                    on_toggle_expand.clone(),
+                                    on_select.clone(),
+                                    on_drop.clone(),
+                                    cx,
+                                )
+                                .into_any_element()
+                            })
+                            .collect()
+                    },
+                )
+                .gap(px(1.0))
+                .track_scroll(&scroll_handle)
+                .into_any_element();
+                let scrollbar = Scrollbar::vertical(&scrollbar_state, &scroll_handle).into_any_element();
+                (rows, scrollbar)
+            }
+        };
 
         v_flex()
             .size_full()
@@ -329,33 +497,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                                         ),
                                 )
                             })
-                            .child(
-                                v_virtual_list(
-                                    view,
-                                    "hierarchy-panel-list",
-                                    item_sizes,
-                                    move |_v, range, _window, cx| {
-                                        range
-                                            .map(|flat_idx| {
-                                                let entry = &flat_entries[flat_idx];
-                                                let item = &items[entry.item_index];
-                                                render_single_item(
-                                                    item,
-                                                    entry.depth,
-                                                    is_expanded.clone(),
-                                                    on_toggle_expand.clone(),
-                                                    on_select.clone(),
-                                                    on_drop.clone(),
-                                                    cx,
-                                                )
-                                                .into_any_element()
-                                            })
-                                            .collect()
-                                    },
-                                )
-                                .gap(px(1.0))
-                                .track_scroll(&scroll_handle),
-                            ),
+                            .child(rows),
                     )
                     .child(
                         div()
@@ -364,7 +506,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
                             .left_0()
                             .right_0()
                             .bottom_0()
-                            .child(Scrollbar::vertical(&scrollbar_state, &scroll_handle)),
+                            .child(scrollbar),
                     ),
             )
     }

@@ -179,7 +179,7 @@ pub use form::{SettingCard, SettingRow};
 pub use accordion::{Accordion, AccordionItem, CollapsibleSection};
 pub use component::*;
 pub use hierarchical_list_view::{
-    HierarchicalTreeView, HierarchyConfig, HierarchyItem, HierarchyLayout,
+    HierarchicalTreeView, HierarchyConfig, HierarchyItem, HierarchyLayout, HierarchyListState,
 };
 pub use hierarchical_tree::{
     render_tree_category, render_tree_folder, render_tree_item, tree_colors,

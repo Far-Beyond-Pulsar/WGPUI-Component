@@ -1138,11 +1138,17 @@ impl InputState {
                     last_layout.wrap_width
                 };
 
-                if self.text_wrapper.set_wrap_width(wrap_width, cx) {
+                let rewrapped = self.text_wrapper.set_wrap_width(wrap_width, cx);
+                if rewrapped {
                     self.line_cache.borrow_mut().clear();
                 }
                 self.mode.update_auto_grow(&self.text_wrapper);
-                cx.notify();
+                // A single-line field does not wrap: a new width changes
+                // nothing a render reads (its text is laid out from the
+                // current bounds in prepaint), so it does not notify.
+                if rewrapped || !self.mode.is_single_line() {
+                    cx.notify();
+                }
             }
         }
     }
