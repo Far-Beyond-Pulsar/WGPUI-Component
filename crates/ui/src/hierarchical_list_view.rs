@@ -153,6 +153,9 @@ pub struct HierarchyListState<Id> {
     /// The ids of the rows last shown, in order, to tell the list which range
     /// changed (so expanding a node keeps the rows above it where they are).
     shown: Rc<std::cell::RefCell<Vec<(Id, usize)>>>,
+    /// The flattened rows and the host's content key they were built for
+    /// (see [`HierarchicalTreeView::with_list_state`]).
+    flat: Rc<std::cell::RefCell<Option<(u64, Rc<Vec<FlatTreeEntry>>)>>>,
 }
 
 impl<Id: Clone + PartialEq> HierarchyListState<Id> {
@@ -163,6 +166,7 @@ impl<Id: Clone + PartialEq> HierarchyListState<Id> {
             list: ListState::new(0, ListAlignment::Top, px(200.0)),
             scrollbar: ScrollbarState::default(),
             shown: Rc::default(),
+            flat: Rc::default(),
         }
     }
 
@@ -214,6 +218,7 @@ pub struct HierarchicalTreeView<Item: HierarchyItem> {
     scroll_handle: VirtualListScrollHandle,
     scrollbar_state: ScrollbarState,
     list_state: Option<HierarchyListState<Item::Id>>,
+    content_key: u64,
 }
 
 impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
@@ -223,14 +228,23 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             scroll_handle: VirtualListScrollHandle::new(),
             scrollbar_state: ScrollbarState::default(),
             list_state: None,
+            content_key: 0,
         }
     }
 
     /// Show the panel layout's rows in `state`'s persistent list (see
     /// [`HierarchyListState`]). Without it the rows go in a virtual list
     /// rebuilt each render, whose scroll position does not survive one.
-    pub fn with_list_state(mut self, state: HierarchyListState<Item::Id>) -> Self {
+    ///
+    /// `content_key` names what the rows are built from: the items, their
+    /// order and children, and which nodes are expanded. While it stays the
+    /// same, the flattened rows of the last render are reused and the tree is
+    /// not walked again, so a render that only changes the panel's size (each
+    /// frame of a resize) costs no work proportional to the tree. The host
+    /// must change it whenever any of those change.
+    pub fn with_list_state(mut self, state: HierarchyListState<Item::Id>, content_key: u64) -> Self {
         self.list_state = Some(state);
+        self.content_key = content_key;
         self
     }
 
@@ -304,9 +318,19 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
     where
         V: 'static + Render,
     {
-        let flatten_scope = gpui::render_stats::scope("hierarchy tree: flatten");
-        let flat_entries = Rc::new(self.flatten_tree());
-        drop(flatten_scope);
+        // The rows of the last render, while the host says nothing they are
+        // built from changed.
+        let content_key = self.content_key;
+        let reused = self.list_state.as_ref().and_then(|state| {
+            let flat = state.flat.borrow();
+            let (key, rows) = flat.as_ref()?;
+            (*key == content_key).then(|| rows.clone())
+        });
+        let fresh = reused.is_none();
+        let flat_entries = reused.unwrap_or_else(|| {
+            let _scope = gpui::render_stats::scope("hierarchy tree: flatten");
+            Rc::new(self.flatten_tree())
+        });
         let items = Arc::new(std::mem::take(&mut self.config.items));
 
         let is_expanded = self.config.is_expanded.clone();
@@ -324,13 +348,16 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         // The rows, and the scrollbar that follows them.
         let (rows, scrollbar): (AnyElement, AnyElement) = match self.list_state.take() {
             Some(state) => {
-                let _sync_scope = gpui::render_stats::scope("hierarchy tree: list sync");
-                state.sync(
-                    flat_entries
-                        .iter()
-                        .map(|entry| (items[entry.item_index].id(), entry.depth))
-                        .collect(),
-                );
+                if fresh {
+                    let _scope = gpui::render_stats::scope("hierarchy tree: list sync");
+                    state.sync(
+                        flat_entries
+                            .iter()
+                            .map(|entry| (items[entry.item_index].id(), entry.depth))
+                            .collect(),
+                    );
+                    *state.flat.borrow_mut() = Some((content_key, flat_entries.clone()));
+                }
                 let flat_entries = flat_entries.clone();
                 let items = items.clone();
                 let is_expanded = is_expanded.clone();
