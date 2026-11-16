@@ -304,7 +304,9 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
     where
         V: 'static + Render,
     {
+        let flatten_scope = gpui::render_stats::scope("hierarchy tree: flatten");
         let flat_entries = Rc::new(self.flatten_tree());
+        drop(flatten_scope);
         let items = Arc::new(std::mem::take(&mut self.config.items));
 
         let is_expanded = self.config.is_expanded.clone();
@@ -322,6 +324,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         // The rows, and the scrollbar that follows them.
         let (rows, scrollbar): (AnyElement, AnyElement) = match self.list_state.take() {
             Some(state) => {
+                let _sync_scope = gpui::render_stats::scope("hierarchy tree: list sync");
                 state.sync(
                     flat_entries
                         .iter()
