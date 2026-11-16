@@ -135,6 +135,25 @@ pub struct HierarchyConfig<Item: HierarchyItem> {
     pub on_drop: Arc<dyn Fn(Item::DragPayload, &Item::Id, &Modifiers, &mut Window, &mut App)>,
 }
 
+impl<Item: HierarchyItem> HierarchyConfig<Item> {
+    /// A content key for [`HierarchicalTreeView::with_list_state`] read off
+    /// the tree itself: a hash of the roots, each item's id and children, and
+    /// which items are expanded. It walks every item, so it suits a small
+    /// tree; a large one should keep a generation of its own instead.
+    pub fn content_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.root_ids.hash(&mut hasher);
+        for item in &self.items {
+            let id = item.id();
+            id.hash(&mut hasher);
+            item.children_ids().hash(&mut hasher);
+            (self.is_expanded)(&id).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
 /// A flattened entry in the tree for virtual list rendering
 struct FlatTreeEntry {
     item_index: usize,
