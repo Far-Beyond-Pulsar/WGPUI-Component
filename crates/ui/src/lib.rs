@@ -102,6 +102,7 @@ pub mod list;
 pub mod minimap;
 pub mod modal;
 pub mod notification;
+pub mod panel_canvas;
 pub mod plot;
 pub mod popover;
 pub mod progress;
