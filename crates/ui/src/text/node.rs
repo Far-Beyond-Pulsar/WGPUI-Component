@@ -410,31 +410,33 @@ impl CodeBlock {
         let copied = *copied_state.read(cx);
 
         // Split code into lines to preserve line breaks (StyledText doesn't preserve \n)
-        let lines: Vec<&str> = code.as_str().lines().collect();
 
-        // Render each line as a separate Inline element to preserve line breaks
+        // The highlighter produces ordered, non-overlapping ranges. Advance
+        // through them once instead of scanning every range for every line.
+        let mut highlights = self.styles.iter().peekable();
         let mut line_elements = Vec::new();
         let mut current_offset = 0;
 
-        for (line_idx, line) in lines.iter().enumerate() {
+        for (line_idx, raw_line) in code.split_inclusive('\n').enumerate() {
+            let line = raw_line
+                .strip_suffix('\n')
+                .map_or(raw_line, |line| line.strip_suffix('\r').unwrap_or(line));
             let line_len = line.len();
             let line_end = current_offset + line_len;
 
-            let line_highlights: Vec<(Range<usize>, HighlightStyle)> = self
-                .styles
-                .iter()
+            while highlights
+                .peek()
+                .is_some_and(|(range, _)| range.end <= current_offset)
+            {
+                highlights.next();
+            }
+            let line_highlights = highlights
+                .clone()
+                .take_while(|(range, _)| range.start < line_end)
                 .filter_map(|(range, style)| {
-                    if range.start < line_end && range.end > current_offset {
-                        let start = range.start.saturating_sub(current_offset).min(line_len);
-                        let end = (range.end - current_offset).min(line_len);
-                        if start < end {
-                            Some((start..end, *style))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
+                    let start = range.start.saturating_sub(current_offset);
+                    let end = (range.end - current_offset).min(line_len);
+                    (start < end).then_some((start..end, *style))
                 })
                 .collect();
 
@@ -453,8 +455,7 @@ impl CodeBlock {
                 line_highlights,
             ));
 
-            // +1 for the newline character (except for the last line)
-            current_offset = line_end + 1;
+            current_offset += raw_line.len();
         }
 
         let copy_button = div()
