@@ -2,7 +2,7 @@ use crate::{
     drawer::Drawer,
     input::InputState,
     modal::Modal,
-    notification::{Notification, NotificationList},
+    notification::{Notification, NotificationHistoryEntry, NotificationList},
     window_border, ActiveTheme, Placement,
 };
 use gpui::{
@@ -78,6 +78,13 @@ pub trait ContextModal: Sized {
 
     /// Returns number of notifications.
     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
+    fn notification_history(&mut self, cx: &mut App) -> Vec<NotificationHistoryEntry>;
+    fn restore_notification_history(
+        &mut self,
+        entries: Vec<NotificationHistoryEntry>,
+        cx: &mut App,
+    );
+    fn dismiss_notification_history(&mut self, id: String, cx: &mut App);
 
     /// Return current focused Input entity.
     fn focused_input(&mut self, cx: &mut App) -> Option<Entity<InputState>>;
@@ -223,6 +230,25 @@ impl ContextModal for Window {
     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>> {
         let entity = Root::read(self, cx).notification.clone();
         Rc::new(entity.read(cx).notifications())
+    }
+
+    fn notification_history(&mut self, cx: &mut App) -> Vec<NotificationHistoryEntry> {
+        let entity = Root::read(self, cx).notification.clone();
+        entity.read(cx).history()
+    }
+
+    fn restore_notification_history(
+        &mut self,
+        entries: Vec<NotificationHistoryEntry>,
+        cx: &mut App,
+    ) {
+        let entity = Root::read(self, cx).notification.clone();
+        entity.update(cx, |list, cx| list.restore_history(entries, cx));
+    }
+
+    fn dismiss_notification_history(&mut self, id: String, cx: &mut App) {
+        let entity = Root::read(self, cx).notification.clone();
+        entity.update(cx, |list, cx| list.dismiss_history(&id, cx));
     }
 
     fn has_focused_input(&mut self, cx: &mut App) -> bool {

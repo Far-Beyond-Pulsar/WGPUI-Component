@@ -17,7 +17,7 @@ mod index_path;
     not(target_family = "wasm")
 ))]
 mod inspector;
-mod kbd;
+pub mod kbd;
 pub mod menu;
 #[cfg(all(any(feature = "inspector", debug_assertions), feature = "flamegraph"))]
 mod profiler;
@@ -102,6 +102,7 @@ pub mod list;
 pub mod minimap;
 pub mod modal;
 pub mod notification;
+pub mod panel_canvas;
 pub mod plot;
 pub mod popover;
 pub mod progress;
@@ -178,7 +179,7 @@ pub use form::{SettingCard, SettingRow};
 pub use accordion::{Accordion, AccordionItem, CollapsibleSection};
 pub use component::*;
 pub use hierarchical_list_view::{
-    HierarchicalTreeView, HierarchyConfig, HierarchyItem, HierarchyLayout,
+    HierarchicalTreeView, HierarchyConfig, HierarchyItem, HierarchyLayout, HierarchyListState,
 };
 pub use hierarchical_tree::{
     render_tree_category, render_tree_folder, render_tree_item, tree_colors,

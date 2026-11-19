@@ -1,0 +1,1 @@
+sleeping-leaf.svg: Lucide 'leaf' icon, https://lucide.dev, ISC License, Copyright (c) Lucide Contributors.

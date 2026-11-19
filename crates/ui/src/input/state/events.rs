@@ -728,15 +728,12 @@ impl InputState {
     ) {
         self.pause_blink_cursor(cx);
 
-        //FIX: This patched the inability to type in WINIT windows
-        let text = event.keystroke.key_char.clone().unwrap_or("".into());
-
-        if text.is_empty() && self.is_context_menu_open(cx) {
+        // Printable text is inserted by GPUI's platform input handler. Doing
+        // it here as well duplicates every key in WGPUI's winit backend.
+        if event.keystroke.key_char.is_none() && self.is_context_menu_open(cx) {
             let cursor = self.cursor();
             self.handle_completion_trigger(&(cursor..cursor), "", window, cx);
         }
-
-        self.replace(text, window, cx);
     }
 
     pub(in crate::input) fn on_drag_move(
