@@ -349,8 +349,10 @@ impl TabPanel {
                     let (orig_ix, ref panel) = panels[ix];
                     let is_active = active.as_ref() == Some(panel) && !collapsed_self;
 
+                    let asleep = panel.life(cx) == crate::dock::TabLife::Sleeping;
                     let mut tab = Tab::empty()
                         .when_some(panel.tab_icon(cx), |this, icon| this.with_icon(icon))
+                        .sleeping(asleep)
                         .unsaved(panel.tab_unsaved(cx))
                         .map(|this| {
                             if let Some(tab_name) = panel.tab_name(cx) {

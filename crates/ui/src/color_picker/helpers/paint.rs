@@ -122,7 +122,7 @@ fn bake_swatches(key: BakeKey, cell: f32, gap: f32, colors: &[Vec<Hsla>]) -> Opt
                         * overlap(y, top + scale, bottom - scale);
                     let border_coverage = outer - inner;
                     let mix = |a: f32, b: f32| a * fill.a * inner + b * border.a * border_coverage;
-                    put_bgra(
+                    put_rgba(
                         &mut out,
                         (y * key.width_px + x) as usize,
                         mix(fill.r, border.r),
@@ -200,19 +200,21 @@ fn local_geometry(bounds: Bounds<Pixels>, geometry: PickerGeometry) -> PickerGeo
     }
 }
 
-/// Write one premultiplied BGRA pixel (the byte order `RenderImage` expects).
+/// Convert a premultiplied bake sample to straight RGBA for WGPUI's
+/// `Rgba8Unorm` sprite atlas. The sprite shader applies alpha when blending.
 #[inline]
-fn put_bgra(out: &mut [u8], index: usize, r: f32, g: f32, b: f32, a: f32) {
+fn put_rgba(out: &mut [u8], index: usize, r: f32, g: f32, b: f32, a: f32) {
     let o = index * 4;
-    out[o] = (clamp01(b) * 255.0 + 0.5) as u8;
-    out[o + 1] = (clamp01(g) * 255.0 + 0.5) as u8;
-    out[o + 2] = (clamp01(r) * 255.0 + 0.5) as u8;
+    let unpremultiply = if a > 0.0 { 1.0 / a } else { 0.0 };
+    out[o] = (clamp01(r * unpremultiply) * 255.0 + 0.5) as u8;
+    out[o + 1] = (clamp01(g * unpremultiply) * 255.0 + 0.5) as u8;
+    out[o + 2] = (clamp01(b * unpremultiply) * 255.0 + 0.5) as u8;
     out[o + 3] = (clamp01(a) * 255.0 + 0.5) as u8;
 }
 
-fn to_render_image(width: u32, height: u32, bgra: Vec<u8>) -> Option<Arc<gpui::RenderImage>> {
-    // `RgbaImage` is only the byte container here; `RenderImage` frames are BGRA.
-    let buffer = image::RgbaImage::from_raw(width, height, bgra)?;
+fn to_render_image(width: u32, height: u32, rgba: Vec<u8>) -> Option<Arc<gpui::RenderImage>> {
+    // Keep the RGBA byte order used by decoded images and the sprite atlas.
+    let buffer = image::RgbaImage::from_raw(width, height, rgba)?;
     Some(Arc::new(gpui::RenderImage::new(smallvec::smallvec![
         image::Frame::new(buffer)
     ])))
@@ -264,7 +266,7 @@ fn bake_wheel(width_px: u32, height_px: u32, scale: f32, g: PickerGeometry) -> O
                 }
             }
             if ca > 0.0 {
-                put_bgra(&mut out, (y * width_px + x) as usize, cr, cg, cb, ca);
+                put_rgba(&mut out, (y * width_px + x) as usize, cr, cg, cb, ca);
             }
         }
     }
@@ -335,7 +337,7 @@ fn bake_triangle(
             let v = clamp01(wa + wb);
             let s = if v <= 0.0001 { 0.0 } else { clamp01(wa / v) };
             let (r, g, b_) = hsv_to_rgb(hue, s, v);
-            put_bgra(
+            put_rgba(
                 &mut out,
                 (y * w + x) as usize,
                 r * coverage,
@@ -566,7 +568,7 @@ fn bake_checkerboard(key: BakeKey) -> Option<Baked> {
             let col = (((x as f32 + 0.5) / scale) / CHECKER_CELL_SIZE) as u32;
             let row = (((y as f32 + 0.5) / scale) / CHECKER_CELL_SIZE) as u32;
             let value = if (col + row) % 2 == 0 { 0.30 } else { 0.18 };
-            put_bgra(
+            put_rgba(
                 &mut out,
                 (y * key.width_px + x) as usize,
                 value,
@@ -719,11 +721,11 @@ mod bake_tests {
                 if let Some(directory) = std::env::var_os("PULSAR_PICKER_PREVIEW_DIR") {
                     let mut bytes = warmup.image.as_bytes(0).unwrap().to_vec();
                     for pixel in bytes.chunks_exact_mut(4) {
-                        pixel.swap(0, 2);
                         let alpha = pixel[3] as f32 / 255.0;
                         for channel in &mut pixel[..3] {
-                            // Composite the premultiplied pixel over neutral gray.
-                            *channel = (*channel as f32 + 32.0 * (1.0 - alpha)).round() as u8;
+                            // Composite the straight-alpha pixel over neutral gray.
+                            *channel =
+                                (*channel as f32 * alpha + 32.0 * (1.0 - alpha)).round() as u8;
                         }
                         pixel[3] = 255;
                     }
@@ -773,11 +775,44 @@ mod bake_tests {
         }
     }
 
-    /// Read a premultiplied BGRA pixel back as straight (r, g, b, a) bytes.
+    /// Read RGBA bytes in the same channel order as the sprite atlas.
     fn pixel(baked: &Baked, x: u32, y: u32, width_px: u32) -> (u8, u8, u8, u8) {
         let bytes = baked.image.as_bytes(0).unwrap();
         let o = ((y * width_px + x) * 4) as usize;
-        (bytes[o + 2], bytes[o + 1], bytes[o], bytes[o + 3])
+        (bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3])
+    }
+
+    #[test]
+    fn bake_samples_use_straight_rgba_for_the_sprite_atlas() {
+        let mut bytes = [0; 4];
+        // A half-covered orange sample must retain its straight RGB color.
+        put_rgba(&mut bytes, 0, 0.5, 0.25, 0.0, 0.5);
+        let image = to_render_image(1, 1, bytes.to_vec()).unwrap();
+        assert_eq!(image.as_bytes(0).unwrap(), &[255, 128, 0, 128]);
+        put_rgba(&mut bytes, 0, 0.0, 0.0, 0.0, 0.0);
+        assert_eq!(bytes, [0; 4]);
+    }
+
+    #[test]
+    fn wheel_pixels_match_selected_hue_at_each_scale() {
+        for scale in [1.0, 1.25, 2.0] {
+            let key = key(scale, 0);
+            let geometry = geometry();
+            let baked = bake_wheel(key.width_px, key.height_px, scale, geometry).unwrap();
+            for hue in [0.0, 1.0 / 6.0, 1.0 / 3.0, 0.5, 2.0 / 3.0, 5.0 / 6.0] {
+                let angle = hue * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                let radius = (geometry.outer_r + geometry.inner_r) * 0.5;
+                let x = ((geometry.cx + angle.cos() * radius) * scale) as u32;
+                let y = ((geometry.cy + angle.sin() * radius) * scale) as u32;
+                let (r, g, b, a) = pixel(&baked, x, y, key.width_px);
+                let selected: gpui::Rgba =
+                    super::super::math::hsva_to_hsla(hue, 1.0, 1.0, 1.0).into();
+                for (actual, expected) in [(r, selected.r), (g, selected.g), (b, selected.b)] {
+                    assert!((actual as f32 - expected * 255.0).abs() < 4.0);
+                }
+                assert_eq!(a, 255);
+            }
+        }
     }
 
     #[test]

@@ -59,7 +59,9 @@ impl RenderOnce for TextViewElement {
                         .child("Failed to parse content")
                         .child(err.to_string()),
                 ),
-                None => this,
+                None => this.when_some(state.loading_source.clone(), |this, source| {
+                    this.w_full().min_w_0().whitespace_normal().child(source)
+                }),
             })
         })
     }
@@ -88,6 +90,7 @@ pub struct TextView {
     state: Entity<TextViewState>,
     selectable: bool,
     debounce_ms: u64,
+    defer_initial_parse: bool,
 }
 
 #[derive(PartialEq)]
@@ -222,6 +225,7 @@ pub(crate) struct TextViewState {
     #[cfg(not(target_family = "wasm"))]
     tx: Option<smol::channel::Sender<Update>>,
     parsed_result: Option<Result<ParsedContent, SharedString>>,
+    loading_source: Option<SharedString>,
     focus_handle: Option<FocusHandle>,
 
     /// The bounds of the text view
@@ -241,6 +245,7 @@ impl TextViewState {
             #[cfg(not(target_family = "wasm"))]
             tx: None,
             parsed_result: None,
+            loading_source: None,
             focus_handle: Some(focus_handle),
             bounds: Bounds::default(),
             selection_positions: (None, None),
@@ -428,6 +433,7 @@ impl TextView {
             state,
             selectable: false,
             debounce_ms: 200,
+            defer_initial_parse: false,
         }
     }
 
@@ -441,6 +447,13 @@ impl TextView {
     ) -> Self {
         Self::markdown(id, markdown, window, cx)
             .style(TextViewStyle::default().code_font_family(code_font_family))
+    }
+
+    /// Parse the first document on the background executor, showing plain
+    /// source text until the formatted document is ready.
+    pub fn defer_initial_parse(mut self) -> Self {
+        self.defer_initial_parse = true;
+        self
     }
 
     /// Set the debounce delay in milliseconds for text parsing.
@@ -476,6 +489,7 @@ impl TextView {
             state,
             selectable: false,
             debounce_ms: 200,
+            defer_initial_parse: false,
         }
     }
 
@@ -563,12 +577,15 @@ impl Element for TextView {
             let (tx, rx) = smol::channel::unbounded::<Update>();
             let (tx_result, rx_result) =
                 smol::channel::unbounded::<Result<ParsedContent, SharedString>>();
-            let parsed_result = parse_content(type_, &text, style.clone(), &highlight_theme);
+            let parsed_result = (!self.defer_initial_parse)
+                .then(|| parse_content(type_, &text, style.clone(), &highlight_theme));
+            let loading_source = self.defer_initial_parse.then(|| text.clone());
 
             self.state.update(cx, {
                 let tx = tx.clone();
                 |state, _| {
-                    state.parsed_result = Some(parsed_result);
+                    state.parsed_result = parsed_result;
+                    state.loading_source = loading_source;
                     state.tx = Some(tx);
                 }
             });
@@ -580,6 +597,7 @@ impl Element for TextView {
                         if let Some(state) = state.upgrade() {
                             _ = state.update(cx, |state, cx| {
                                 state.parsed_result = Some(parsed_result);
+                                state.loading_source = None;
                                 if let Some(parent_entity) = state.parent_entity {
                                     let app = &mut **cx;
                                     app.notify(parent_entity);
@@ -595,7 +613,7 @@ impl Element for TextView {
             })
             .detach();
 
-            cx.background_spawn(UpdateFuture::new(
+            let mut update = UpdateFuture::new(
                 type_,
                 style,
                 text,
@@ -603,8 +621,11 @@ impl Element for TextView {
                 rx,
                 tx_result,
                 Duration::from_millis(self.debounce_ms),
-            ))
-            .detach();
+            );
+            if self.defer_initial_parse {
+                update.timer.set_after(Duration::ZERO);
+            }
+            cx.background_spawn(update).detach();
 
             self.init_state = Some(InitState::Initialized { tx });
         }

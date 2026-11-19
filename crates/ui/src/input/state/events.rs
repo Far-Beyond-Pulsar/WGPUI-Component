@@ -728,10 +728,9 @@ impl InputState {
     ) {
         self.pause_blink_cursor(cx);
 
-        // Character input is routed through the platform's input handler, which
-        // replaces any active selection. Here we only refresh completions when a
-        // non-character key (e.g. an arrow or escape) was pressed.
-        if event.keystroke.key_char.is_none() {
+        // Printable text is inserted by GPUI's platform input handler. Doing
+        // it here as well duplicates every key in WGPUI's winit backend.
+        if event.keystroke.key_char.is_none() && self.is_context_menu_open(cx) {
             let cursor = self.cursor();
             self.handle_completion_trigger(&(cursor..cursor), "", window, cx);
         }
