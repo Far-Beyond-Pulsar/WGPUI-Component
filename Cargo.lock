@@ -2496,7 +2496,7 @@ dependencies = [
 [[package]]
 name = "gpui-ce"
 version = "1.0.0"
-source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=f9c1ab1b471d21cb6ccd20343cb358b87d11a4b6#f9c1ab1b471d21cb6ccd20343cb358b87d11a4b6"
+source = "git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=ab05d4a01222b7f7f0e0e8ece663132b6ef9c606#ab05d4a01222b7f7f0e0e8ece663132b6ef9c606"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2505,6 +2505,7 @@ dependencies = [
  "bincode",
  "bytemuck",
  "circular-buffer",
+ "clipboard-rs",
  "core-video",
  "cosmic-text",
  "ctor",
@@ -2561,8 +2562,11 @@ dependencies = [
  "spin 0.10.1",
  "stacksafe",
  "strum",
+ "sys-locale",
  "taffy",
  "thiserror 2.0.20",
+ "unicode-script",
+ "unicode-segmentation",
  "usvg",
  "uuid",
  "waker-fn",
@@ -7457,7 +7461,7 @@ dependencies = [
  "env_logger",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "gpui-ce 1.0.0 (git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=f9c1ab1b471d21cb6ccd20343cb358b87d11a4b6)",
+ "gpui-ce 1.0.0 (git+https://github.com/Far-Beyond-Pulsar/WGPUI?rev=ab05d4a01222b7f7f0e0e8ece663132b6ef9c606)",
  "gpui_sum_tree",
  "html5ever 0.39.0",
  "image",

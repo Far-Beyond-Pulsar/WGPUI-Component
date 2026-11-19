@@ -267,13 +267,7 @@ impl From<ThemeColor> for Theme {
             mode: ThemeMode::default(),
             transparent: Hsla::transparent_black(),
             font_size: px(14.),
-            font_family: if cfg!(target_os = "macos") {
-                ".SystemUIFont".into()
-            } else if cfg!(target_os = "windows") {
-                "Segoe UI".into()
-            } else {
-                "FreeMono".into()
-            },
+            font_family: ".SystemUIFont".into(),
             radius: px(6.),
             radius_lg: px(8.),
             shadow: true,
