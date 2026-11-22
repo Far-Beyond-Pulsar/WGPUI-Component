@@ -3,8 +3,10 @@ resolver = "2"
 members = [
     "crates/ui",
     "crates/ui-macros",
-    "crates/ui_dylib",
 ]
+# The shared library crate builds inside Pulsar-Native's workspace (its dependencies on the other
+# shared libraries resolve there, through its `[patch]` entries): it is not a member of this one.
+exclude = ["crates/ui_dylib"]
 
 [workspace.package]
 edition = "2021"
