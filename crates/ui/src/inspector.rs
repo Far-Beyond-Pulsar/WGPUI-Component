@@ -689,6 +689,10 @@ fn inspector_tab_icon(tab: InspectorTab) -> IconName {
         #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => IconName::Activity,
         InspectorTab::Utilities => IconName::Settings,
+        // The Profiler tab when gpui-ce's `flamegraph` is on (another crate
+        // enabled it) but this crate's is off: no profiler to show.
+        #[allow(unreachable_patterns)]
+        _ => IconName::Activity,
     }
 }
 
@@ -706,6 +710,9 @@ fn render_tab_content(
         #[cfg(feature = "flamegraph")]
         InspectorTab::Profiler => crate::profiler::render_profiler_tab(window, cx),
         InspectorTab::Utilities => render_utilities_tab(window, cx),
+        // As in `inspector_tab_icon`: gpui-ce's Profiler without this crate's.
+        #[allow(unreachable_patterns)]
+        _ => div().into_any_element(),
     };
 
     // Elements and Profiler manage their own internal scrolling (Profiler's

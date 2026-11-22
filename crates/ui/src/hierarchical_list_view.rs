@@ -108,8 +108,10 @@ pub enum HierarchyLayout {
 
 /// Configuration for hierarchical tree view
 pub struct HierarchyConfig<Item: HierarchyItem> {
-    pub items: Vec<Item>,
-    pub root_ids: Vec<Item::Id>,
+    /// Shared, so a caller that keeps its rows between frames hands them over
+    /// without copying them (an `Arc<[T]>` from a `Vec` is `.into()`).
+    pub items: Arc<[Item]>,
+    pub root_ids: Arc<[Item::Id]>,
     pub layout: HierarchyLayout,
 
     // Header config (for Panel layout)
@@ -144,7 +146,7 @@ impl<Item: HierarchyItem> HierarchyConfig<Item> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.root_ids.hash(&mut hasher);
-        for item in &self.items {
+        for item in self.items.iter() {
             let id = item.id();
             id.hash(&mut hasher);
             item.children_ids().hash(&mut hasher);
@@ -350,7 +352,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
             let _scope = gpui::render_stats::scope("hierarchy tree: flatten");
             Rc::new(self.flatten_tree())
         });
-        let items = Arc::new(std::mem::take(&mut self.config.items));
+        let items = self.config.items.clone();
 
         let is_expanded = self.config.is_expanded.clone();
         let on_toggle_expand = self.config.on_toggle_expand.clone();
@@ -568,7 +570,7 @@ impl<Item: HierarchyItem> HierarchicalTreeView<Item> {
         // Include the root drop target and padding, then reserve one row for
         // every currently visible item. Taller trees scroll inside the cap.
         let list_height = (36.0 + 28.0 * flat_entries.len() as f32).clamp(40.0, 300.0);
-        let items = Arc::new(self.config.items.clone());
+        let items = self.config.items.clone();
         let item_sizes = Rc::new(vec![size(px(0.0), px(28.0)); flat_entries.len()]);
 
         let is_expanded = self.config.is_expanded.clone();
