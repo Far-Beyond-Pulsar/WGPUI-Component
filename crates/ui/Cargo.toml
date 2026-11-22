@@ -16,8 +16,11 @@ default = []
 
 # Complete upstream component surface. Keep these feature names stable because
 # engine crates select them even when the compatibility widgets are not used.
-upstream-components = ["dep:wgpui-base"]
-chat-components = ["dep:wgpui-base"]
+# wgpui-base always turns on gpui-ce/flamegraph (and so InspectorTab::Profiler),
+# so these turn on this crate's `flamegraph` too: the inspector's matches need
+# the arms for the variant (Pulsar-Native#1894).
+upstream-components = ["dep:wgpui-base", "flamegraph"]
+chat-components = ["dep:wgpui-base", "flamegraph"]
 
 # Enable syntax highlighting support for the code editor.
 tree-sitter-languages = [
