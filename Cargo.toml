@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ui",
     "crates/ui-macros",
+    "crates/ui_dylib",
 ]
 
 [workspace.package]

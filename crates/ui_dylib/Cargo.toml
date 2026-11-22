@@ -1,0 +1,17 @@
+[package]
+name = "ui_dylib"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The WGPUI component library (`ui`) and the crates it links (tree-sitter and its languages, markdown, text) as one shared Rust dylib, on top of wgpui_dylib. A binary or plugin library that links it shares one copy of the components' statics (the theme, registries). Built with `-C prefer-dynamic` (.cargo/config.toml)."
+build = "build.rs"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+# The framework comes from its own library (and one wgpu with it).
+wgpui_dylib = { git = "https://github.com/Far-Beyond-Pulsar/WGPUI" }
+# The feature set is the one every consumer builds with: features are additive, so a consumer
+# that needs one more would build a different `ui` than this library holds. Add it here.
+ui = { path = "../ui", features = ["inspector", "flamegraph", "tree-sitter-languages", "chat-components"] }
