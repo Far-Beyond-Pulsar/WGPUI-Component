@@ -1,6 +1,6 @@
 [package]
 name = "ui_dylib"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 description = "The WGPUI component library (`ui`) and the crates it links (tree-sitter and its languages, markdown, text) as one shared Rust dylib, on top of wgpui_dylib. A binary or plugin library that links it shares one copy of the components' statics (the theme, registries). Built with `-C prefer-dynamic` (.cargo/config.toml)."
