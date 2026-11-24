@@ -30,6 +30,10 @@ fn main() {
             .filter(|path| path.extension().is_some_and(|ext| ext == "txt"))
             .collect();
         files.sort();
+        // The grammars' own entry points (`tree_sitter_rust`, ...) are C functions of the crates this library links; a
+        // plugin library that calls one (the code editor's mockaco_language) resolves it here. A pattern, so a grammar
+        // the build does not link is not an error.
+        println!("cargo:rustc-link-arg=-Wl,-exported_symbol,_tree_sitter_*");
         for file in files {
             for line in fs::read_to_string(file).unwrap().lines() {
                 let name = line.trim().split(',').next().unwrap_or_default();
