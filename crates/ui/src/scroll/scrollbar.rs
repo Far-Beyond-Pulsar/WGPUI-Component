@@ -17,7 +17,7 @@ use gpui::{
     fill, point, px, relative, size, App, Axis, BorderStyle, Bounds, ContentMask, Corner,
     CursorStyle, Edges, Element, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
     IntoElement, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, Position, ScrollHandle, ScrollWheelEvent, Size, Style, Timer,
+    PathBuilder, Pixels, Point, Position, ScrollHandle, ScrollWheelEvent, Size, Style, Timer,
     UniformListScrollHandle, Window,
 };
 use schemars::JsonSchema;
@@ -54,8 +54,170 @@ const THUMB_ACTIVE_WIDTH: Pixels = px(8.);
 const THUMB_ACTIVE_RADIUS: Pixels = px(8. / 2.);
 const THUMB_ACTIVE_INSET: Pixels = px(2.);
 
-const FADE_OUT_DURATION: f32 = 3.0;
+/// How long after the last scroll the scrollbar stays before it leaves.
 const FADE_OUT_DELAY: f32 = 2.0;
+/// How long it stays interactive: the delay and the way out.
+const FADE_OUT_DURATION: f32 = 3.0;
+
+/// How long the scrollbar takes to slide in from its edge, or back out.
+const SLIDE: Duration = Duration::from_millis(180);
+/// The space at each end of the track for its arrow button.
+const ARROW: Pixels = px(14.);
+/// Half the width and the height of an arrow's triangle.
+const ARROW_HALF_WIDTH: Pixels = px(3.5);
+const ARROW_HEIGHT: Pixels = px(4.5);
+/// How far one press of an arrow scrolls.
+const ARROW_STEP: Pixels = px(40.);
+/// A held arrow starts repeating after the first, then at the second.
+const ARROW_REPEAT_DELAY: Duration = Duration::from_millis(350);
+const ARROW_REPEAT: Duration = Duration::from_millis(50);
+
+/// The scrollbar's way in from its edge (0 hidden, 1 in place).
+#[derive(Debug, Clone, Copy)]
+struct Slide {
+    from: f32,
+    to: f32,
+    since: Instant,
+    /// The thumb and track colours last shown, to draw on the way out.
+    colors: Option<(Hsla, Hsla)>,
+}
+
+impl Slide {
+    fn hidden() -> Self {
+        Self {
+            from: 0.,
+            to: 0.,
+            since: Instant::now(),
+            colors: None,
+        }
+    }
+
+    fn progress(&self, now: Instant) -> f32 {
+        (now.saturating_duration_since(self.since).as_secs_f32() / SLIDE.as_secs_f32()).min(1.)
+    }
+
+    /// Fast at first, settling at the end.
+    fn value(&self, now: Instant) -> f32 {
+        let left = 1. - self.progress(now);
+        self.from + (self.to - self.from) * (1. - left * left * left)
+    }
+
+    /// Head for `to` from wherever it is, so turning round has no jump.
+    fn aim(&mut self, to: f32, now: Instant) {
+        if self.to != to {
+            self.from = self.value(now);
+            self.to = to;
+            self.since = now;
+        }
+    }
+
+    fn settled(&self, now: Instant) -> bool {
+        self.from == self.to || self.progress(now) >= 1.
+    }
+}
+
+/// Where the thumb may travel along a track, measured from the track's start.
+#[derive(Debug, Clone, Copy)]
+struct ThumbTrack {
+    /// The length of each arrow button; zero on a track too short for them.
+    arrow: Pixels,
+    /// The length between the arrows.
+    travel: Pixels,
+    thumb_start: Pixels,
+    thumb_length: Pixels,
+}
+
+impl ThumbTrack {
+    fn new(container: Pixels, content: Pixels, position: Pixels, margin_end: Pixels) -> Self {
+        let length = container - margin_end;
+        let arrow = if length >= ARROW * 2. + px(MIN_THUMB_SIZE) {
+            ARROW
+        } else {
+            px(0.)
+        };
+        let travel = length - arrow * 2.;
+        let thumb_length = (container / content * travel)
+            .max(px(MIN_THUMB_SIZE))
+            .min(travel);
+        let scrolled = (-(position / (content - container))).clamp(0., 1.);
+        Self {
+            arrow,
+            travel,
+            thumb_start: arrow + (travel - thumb_length) * scrolled,
+            thumb_length,
+        }
+    }
+}
+
+/// The arrow buttons at the start and end of a track.
+fn arrow_bounds(track: Bounds<Pixels>, axis: Axis, arrow: Pixels) -> [Bounds<Pixels>; 2] {
+    if axis.is_vertical() {
+        let button = size(track.size.width, arrow);
+        [
+            Bounds::new(track.origin, button),
+            Bounds::new(point(track.origin.x, track.bottom() - arrow), button),
+        ]
+    } else {
+        let button = size(arrow, track.size.height);
+        [
+            Bounds::new(track.origin, button),
+            Bounds::new(point(track.right() - arrow, track.origin.y), button),
+        ]
+    }
+}
+
+/// A triangle in `button`, pointing back along the axis or forward.
+fn paint_arrow(
+    button: Bounds<Pixels>,
+    axis: Axis,
+    forward: bool,
+    color: Hsla,
+    window: &mut Window,
+) {
+    let center = button.center();
+    let direction: f32 = if forward { 1. } else { -1. };
+    let along = ARROW_HEIGHT * (direction / 2.);
+    let across = ARROW_HALF_WIDTH;
+    let corners = if axis.is_vertical() {
+        [
+            center + point(px(0.), along),
+            center + point(-across, -along),
+            center + point(across, -along),
+        ]
+    } else {
+        [
+            center + point(along, px(0.)),
+            center + point(-along, -across),
+            center + point(-along, across),
+        ]
+    };
+    let mut path = PathBuilder::fill();
+    path.move_to(corners[0]);
+    path.line_to(corners[1]);
+    path.line_to(corners[2]);
+    path.close();
+    // Three distinct corners always make a path.
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
+}
+
+/// `offset` moved one arrow step along `axis`, within `range`.
+fn stepped(
+    offset: Point<Pixels>,
+    axis: Axis,
+    forward: bool,
+    range: &std::ops::Range<Pixels>,
+) -> Point<Pixels> {
+    // Offsets grow more negative as the content scrolls forward.
+    let step = if forward { -ARROW_STEP } else { ARROW_STEP };
+    let moved = |value: Pixels| (value + step).clamp(range.start, range.end);
+    if axis.is_vertical() {
+        point(offset.x, moved(offset.y))
+    } else {
+        point(moved(offset.x), offset.y)
+    }
+}
 
 pub trait ScrollHandleOffsetable {
     fn offset(&self) -> Point<Pixels>;
@@ -131,6 +293,11 @@ pub struct ScrollbarStateInner {
     // Last update offset
     last_update: Instant,
     idle_timer_scheduled: bool,
+    /// The vertical and the horizontal scrollbar's slide.
+    slides: [Slide; 2],
+    /// The press of the arrow being held, if one is.
+    held_arrow: Option<u64>,
+    arrow_presses: u64,
 }
 
 impl Default for ScrollbarState {
@@ -144,6 +311,9 @@ impl Default for ScrollbarState {
             last_scroll_time: None,
             last_update: Instant::now(),
             idle_timer_scheduled: false,
+            slides: [Slide::hidden(); 2],
+            held_arrow: None,
+            arrow_presses: 0,
         })))
     }
 }
@@ -225,8 +395,8 @@ impl ScrollbarStateInner {
     }
 
     fn is_scrollbar_visible(&self) -> bool {
-        // On drag
-        if self.dragged_axis.is_some() {
+        // On drag, or while an arrow is held
+        if self.dragged_axis.is_some() || self.held_arrow.is_some() {
             return true;
         }
 
@@ -456,6 +626,54 @@ impl IntoElement for Scrollbar {
     }
 }
 
+/// What a press of an arrow button scrolls.
+struct ArrowPress {
+    state: ScrollbarState,
+    scroll_handle: Rc<Box<dyn ScrollHandleOffsetable>>,
+    axis: Axis,
+    forward: bool,
+    range: std::ops::Range<Pixels>,
+    view_id: gpui::EntityId,
+}
+
+impl ArrowPress {
+    fn step(&self, cx: &mut App) {
+        let offset = self.scroll_handle.offset();
+        self.scroll_handle
+            .set_offset(stepped(offset, self.axis, self.forward, &self.range));
+        cx.notify(self.view_id);
+    }
+}
+
+/// Scroll one step now, then keep stepping while the arrow is held.
+fn press_arrow(press: ArrowPress, window: &mut Window, cx: &mut App) {
+    let mut inner = press.state.get();
+    inner.arrow_presses += 1;
+    let this_press = inner.arrow_presses;
+    inner.held_arrow = Some(this_press);
+    press.state.set(inner);
+    press.step(cx);
+    window
+        .spawn(cx, async move |cx| {
+            let mut wait = ARROW_REPEAT_DELAY;
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = ARROW_REPEAT;
+                let held = cx.update(|_, cx| {
+                    let held = press.state.get().held_arrow == Some(this_press);
+                    if held {
+                        press.step(cx);
+                    }
+                    held
+                });
+                if !matches!(held, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+}
+
 pub struct PrepaintState {
     hitbox: Hitbox,
     states: Vec<AxisPrepaintState>,
@@ -466,6 +684,10 @@ pub struct AxisPrepaintState {
     bar_hitbox: Hitbox,
     bounds: Bounds<Pixels>,
     radius: Pixels,
+    /// How far the scrollbar is still outside its edge.
+    slid: Point<Pixels>,
+    presence: f32,
+    track: ThumbTrack,
     bg: Hsla,
     border: Hsla,
     thumb_bounds: Bounds<Pixels>,
@@ -560,11 +782,14 @@ impl Element for Scrollbar {
                 continue;
             }
 
-            let thumb_length =
-                (container_size / scroll_area_size * container_size).max(px(MIN_THUMB_SIZE));
-            let thumb_start = -(scroll_position / (scroll_area_size - container_size)
-                * (container_size - margin_end - thumb_length));
-            let thumb_end = (thumb_start + thumb_length).min(container_size - margin_end);
+            let track = ThumbTrack::new(
+                container_size,
+                scroll_area_size,
+                scroll_position,
+                margin_end,
+            );
+            let thumb_start = track.thumb_start;
+            let thumb_end = thumb_start + track.thumb_length;
 
             let bounds = Bounds {
                 origin: if is_vertical {
@@ -615,7 +840,7 @@ impl Element for Scrollbar {
                     }
                 } else {
                     let mut idle_state = Self::style_for_idle(cx);
-                    // Delay 2s to fade out the scrollbar thumb (in 1s)
+                    // After a scroll, stay for a while, then leave.
                     if let Some(last_time) = state.get().last_scroll_time {
                         let elapsed = Instant::now().duration_since(last_time).as_secs_f32();
                         if is_hovered_on_bar {
@@ -627,6 +852,7 @@ impl Element for Scrollbar {
                             };
                         } else if elapsed < FADE_OUT_DELAY {
                             idle_state.0 = cx.theme().scrollbar_thumb;
+                            idle_state.1 = cx.theme().scrollbar;
 
                             if !state.get().idle_timer_scheduled {
                                 let state = state.clone();
@@ -641,16 +867,40 @@ impl Element for Scrollbar {
                                     })
                                     .detach();
                             }
-                        } else if elapsed < FADE_OUT_DURATION {
-                            let opacity = 1.0 - (elapsed - FADE_OUT_DELAY).powi(10);
-                            idle_state.0 = cx.theme().scrollbar_thumb.opacity(opacity);
-
-                            window.request_animation_frame();
                         }
                     }
 
                     idle_state
                 };
+
+            // Slide in from the edge when it appears, and out when it goes.
+            let now = Instant::now();
+            let shown = thumb_bg.a > 0.;
+            let mut slides = state.get().slides;
+            let slide = &mut slides[usize::from(!is_vertical)];
+            slide.aim(if shown { 1. } else { 0. }, now);
+            if shown {
+                slide.colors = Some((thumb_bg, bar_bg));
+            }
+            let presence = slide.value(now);
+            if !slide.settled(now) {
+                window.request_animation_frame();
+            }
+            let (mut thumb_bg, mut bar_bg) = match slide.colors {
+                Some(colors) if !shown && presence > 0. => colors,
+                _ => (thumb_bg, bar_bg),
+            };
+            thumb_bg.a *= presence;
+            bar_bg.a *= presence;
+            let mut inner = state.get();
+            inner.slides = slides;
+            state.set(inner);
+            let away = WIDTH * (1. - presence);
+            let slid = if is_vertical {
+                point(away, px(0.))
+            } else {
+                point(px(0.), away)
+            };
 
             // The clickable area of the thumb
             let thumb_length = thumb_end - thumb_start - inset * 2;
@@ -669,19 +919,20 @@ impl Element for Scrollbar {
             };
 
             // The actual render area of the thumb
+            let across = (WIDTH - thumb_width) / 2.;
             let thumb_fill_bounds = if is_vertical {
                 Bounds::from_corner_and_size(
                     Corner::TopRight,
-                    bounds.top_right() + point(-inset, inset + thumb_start),
+                    bounds.top_right() + point(-across, inset + thumb_start),
                     size(thumb_width, thumb_length),
                 )
             } else {
                 Bounds::from_corner_and_size(
                     Corner::BottomLeft,
-                    bounds.bottom_left() + point(inset + thumb_start, -inset),
+                    bounds.bottom_left() + point(inset + thumb_start, -across),
                     size(thumb_length, thumb_width),
                 )
-            };
+            } + slid;
 
             let bar_hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
                 window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
@@ -692,6 +943,9 @@ impl Element for Scrollbar {
                 bar_hitbox,
                 bounds,
                 radius,
+                slid,
+                presence,
+                track,
                 bg: bar_bg,
                 border: bar_border,
                 thumb_bounds,
@@ -746,33 +1000,18 @@ impl Element for Scrollbar {
                     let scroll_area_size = state.scroll_size;
                     let container_size = state.container_size;
                     let thumb_size = state.thumb_size;
-                    let margin_end = state.margin_end;
                     let is_vertical = axis.is_vertical();
 
                     window.set_cursor_style(CursorStyle::default(), &state.bar_hitbox);
 
                     window.paint_layer(hitbox_bounds, |cx| {
-                        cx.paint_quad(fill(state.bounds, state.bg));
-
+                        // The track: a pill, with rounded ends.
+                        let track_bounds = bounds + state.slid;
                         cx.paint_quad(PaintQuad {
-                            bounds,
-                            corner_radii: (0.).into(),
-                            background: gpui::transparent_black().into(),
-                            border_widths: if is_vertical {
-                                Edges {
-                                    top: px(0.),
-                                    right: px(0.),
-                                    bottom: px(0.),
-                                    left: px(0.),
-                                }
-                            } else {
-                                Edges {
-                                    top: px(0.),
-                                    right: px(0.),
-                                    bottom: px(0.),
-                                    left: px(0.),
-                                }
-                            },
+                            bounds: track_bounds,
+                            corner_radii: (WIDTH / 2.).into(),
+                            background: state.bg.into(),
+                            border_widths: Edges::all(px(0.)),
                             border_color: state.border,
                             border_style: BorderStyle::default(),
                         });
@@ -780,6 +1019,13 @@ impl Element for Scrollbar {
                         cx.paint_quad(
                             fill(state.thumb_fill_bounds, state.thumb_bg).corner_radii(radius),
                         );
+
+                        if state.track.arrow > px(0.) && state.presence > 0. {
+                            let buttons = arrow_bounds(track_bounds, axis, state.track.arrow);
+                            for (button, forward) in buttons.into_iter().zip([false, true]) {
+                                paint_arrow(button, axis, forward, state.thumb_bg, cx);
+                            }
+                        }
                     });
 
                     window.on_mouse_event({
@@ -801,16 +1047,43 @@ impl Element for Scrollbar {
 
                     let safe_range = (-scroll_area_size + container_size)..px(0.);
 
-                    if is_hover_to_show || is_visible {
+                    let arrow = state.track.arrow;
+                    let travel = state.track.travel;
+                    let thumb_travel = travel - state.track.thumb_length;
+                    // Arrows answer only while they can be seen.
+                    let arrows = (arrow > px(0.) && state.presence > 0.5)
+                        .then(|| arrow_bounds(bounds, axis, arrow));
+
+                    if is_hover_to_show || is_visible || arrows.is_some() {
                         window.on_mouse_event({
                             let state = self.state.clone();
                             let scroll_handle = self.scroll_handle.clone();
 
-                            move |event: &MouseDownEvent, phase, _, cx| {
+                            let safe_range = safe_range.clone();
+
+                            move |event: &MouseDownEvent, phase, window, cx| {
                                 if phase.bubble() && bounds.contains(&event.position) {
                                     cx.stop_propagation();
 
-                                    if thumb_bounds.contains(&event.position) {
+                                    let pressed = arrows.and_then(|buttons| {
+                                        buttons
+                                            .iter()
+                                            .position(|button| button.contains(&event.position))
+                                    });
+                                    if let Some(button) = pressed {
+                                        press_arrow(
+                                            ArrowPress {
+                                                state: state.clone(),
+                                                scroll_handle: scroll_handle.clone(),
+                                                axis,
+                                                forward: button == 1,
+                                                range: safe_range.clone(),
+                                                view_id,
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    } else if thumb_bounds.contains(&event.position) {
                                         // click on the thumb bar, set the drag position
                                         let pos = event.position - thumb_bounds.origin;
 
@@ -822,14 +1095,14 @@ impl Element for Scrollbar {
                                         // click on the scrollbar, jump to the position
                                         // Set the thumb bar center to the click position
                                         let offset = scroll_handle.offset();
-                                        let percentage = if is_vertical {
-                                            (event.position.y - thumb_size / 2. - bounds.origin.y)
-                                                / (bounds.size.height - thumb_size)
+                                        let along = if is_vertical {
+                                            event.position.y - bounds.origin.y
                                         } else {
-                                            (event.position.x - thumb_size / 2. - bounds.origin.x)
-                                                / (bounds.size.width - thumb_size)
-                                        }
-                                        .min(1.);
+                                            event.position.x - bounds.origin.x
+                                        };
+                                        let percentage = ((along - arrow - thumb_size / 2.)
+                                            / (travel - thumb_size))
+                                            .clamp(0., 1.);
 
                                         if is_vertical {
                                             scroll_handle.set_offset(point(
@@ -853,6 +1126,7 @@ impl Element for Scrollbar {
                     window.on_mouse_event({
                         let scroll_handle = self.scroll_handle.clone();
                         let state = self.state.clone();
+                        let safe_range = safe_range.clone();
                         let max_fps_duration = Duration::from_millis((1000 / self.max_fps) as u64);
 
                         move |event: &MouseMoveEvent, _, _, cx| {
@@ -898,13 +1172,14 @@ impl Element for Scrollbar {
                                 // We need to keep the thumb bar still at the origin down position
                                 let drag_pos = state.get().drag_pos;
 
-                                let percentage = (if is_vertical {
-                                    (event.position.y - drag_pos.y - bounds.origin.y)
-                                        / (bounds.size.height - thumb_size)
+                                // Where the thumb's start is now, past the first arrow.
+                                let along = if is_vertical {
+                                    event.position.y - drag_pos.y - bounds.origin.y
                                 } else {
-                                    (event.position.x - drag_pos.x - bounds.origin.x)
-                                        / (bounds.size.width - thumb_size - margin_end)
-                                })
+                                    event.position.x - drag_pos.x - bounds.origin.x
+                                };
+                                let percentage = ((along - THUMB_ACTIVE_INSET - arrow)
+                                    / thumb_travel.max(px(1.)))
                                 .clamp(0., 1.);
 
                                 let offset = if is_vertical {
@@ -944,6 +1219,14 @@ impl Element for Scrollbar {
                         let state = self.state.clone();
 
                         move |_event: &MouseUpEvent, phase, _, cx| {
+                            // Let go of an arrow wherever the button comes up.
+                            if state.get().held_arrow.is_some() {
+                                let mut inner = state.get();
+                                inner.held_arrow = None;
+                                inner.last_scroll_time = Some(Instant::now());
+                                state.set(inner);
+                                cx.notify(view_id);
+                            }
                             if phase.bubble() {
                                 scroll_handle.end_drag();
                                 state.set(state.get().with_unset_drag_pos());
